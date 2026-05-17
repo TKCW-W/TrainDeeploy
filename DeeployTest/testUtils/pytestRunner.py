@@ -4,7 +4,7 @@
 
 import os
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from .core import DeeployTestConfig, build_binary, configure_cmake, get_test_paths, run_complete_test, run_simulation
 
@@ -52,6 +52,9 @@ def create_test_config(
     training: bool = False,
     training_num_data_inputs: Optional[int] = None,
     training_tolerance: Optional[float] = None,
+    promote_to_l2: bool = False,
+    promote_to_l2_strategy: str = "cycle-aware",
+    promote_to_l2_headroom: int = 131072,
     gen_args: Optional[List[str]] = None,
 ) -> DeeployTestConfig:
 
@@ -96,6 +99,13 @@ def create_test_config(
             gen_args_list.append("--plotMemAlloc")
         if randomized_mem_scheduler:
             gen_args_list.append("--randomizedMemoryScheduler")
+        if promote_to_l2:
+            assert default_mem_level == "L3", "promote_to_l2 requires default_mem_level='L3'"
+            gen_args_list.append("--promoteToL2")
+            gen_args_list.append(f"--promoteToL2Strategy={promote_to_l2_strategy}")
+            gen_args_list.append("--promoteToL2IncludeActivations")
+            gen_args_list.append("--promoteToL2MaxBufferBytes=0")
+            gen_args_list.append(f"--promoteToL2Headroom={promote_to_l2_headroom}")
 
     if profile_untiled and not tiling and platform == "Siracusa":
         gen_args_list.append("--profileUntiled")
@@ -122,14 +132,80 @@ def create_test_config(
     return config
 
 
-def run_and_assert_test(test_name: str, config: DeeployTestConfig, skipgen: bool, skipsim: bool) -> None:
+# Track which Markdown section headers we've already written into
+# $GITHUB_STEP_SUMMARY so each is emitted exactly once per pytest session
+# even though many tests share the same metric_section.
+_METRIC_SECTIONS_WRITTEN: set = set()
+
+
+def _emit_metric_section_header(summary_path: str, section: str, columns: list) -> None:
+    if section in _METRIC_SECTIONS_WRITTEN:
+        return
+    _METRIC_SECTIONS_WRITTEN.add(section)
+    try:
+        with open(summary_path, "a") as f:
+            f.write(f"\n## {section}\n\n")
+            f.write("| " + " | ".join(columns) + " |\n")
+            f.write("|" + "|".join(["------"] * len(columns)) + "|\n")
+    except Exception:
+        pass
+
+
+def run_and_assert_test(test_name: str,
+                        config: DeeployTestConfig,
+                        skipgen: bool,
+                        skipsim: bool,
+                        report_metric: Optional[Dict[str, str]] = None,
+                        metric_section: str = "Tensor-promotion strategy benchmark") -> None:
     """
     Shared helper function to run a test and assert its results.
+
+    If ``report_metric`` is given (a dict of label -> value) and a cycle count
+    is parseable from stdout, append a row to ``$GITHUB_STEP_SUMMARY`` (under
+    the ``metric_section`` heading) so the metric shows up in the GitHub
+    Actions run summary, and print a tagged line that survives pytest's
+    stdout capture.
+
+    ``metric_section`` lets unrelated test categories (e.g. promotion
+    benchmark vs. training cycle reference) write to separate Markdown
+    tables in the same workflow summary.
 
     Raises:
         AssertionError: If test fails or has errors
     """
     result = run_complete_test(config, skipgen = skipgen, skipsim = skipsim)
+
+    cycles = getattr(result, "runtime_cycles", None)
+    if cycles is None and getattr(result, "stdout", None):
+        # Training tests emit "BENCH train_cycles=N opt_cycles=M weight_sram=K"
+        # instead of "Runtime: N cycles"; fall back to that format so the
+        # training cycle reference table works the same as the inference one.
+        import re as _re
+        m = _re.search(r'BENCH\s+train_cycles=(\d+)', result.stdout)
+        if m:
+            cycles = int(m.group(1))
+
+    if report_metric is not None:
+        labels = " ".join(f"{k}={v}" for k, v in report_metric.items())
+        cycles_str = f"{cycles:,}" if cycles is not None else "n/a"
+        # Always print a clearly-tagged line; pytest captures stdout but shows
+        # it on failure, and `-rA` (used in CI) shows captured output for
+        # passing tests too. Embed the section so log greppers can group.
+        print(f"\n[METRIC] section={metric_section!r} test={test_name} {labels} cycles={cycles_str}", flush = True)
+        # Append a Markdown table row to GITHUB_STEP_SUMMARY when running in
+        # GitHub Actions; the file is auto-created and rendered as Markdown
+        # in the workflow summary panel. The first row in each section also
+        # writes a heading so the table renders correctly.
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_path and cycles is not None:
+            columns = ["Test"] + list(report_metric.keys()) + ["Cycles"]
+            _emit_metric_section_header(summary_path, metric_section, columns)
+            row_cells = [test_name] + [str(v) for v in report_metric.values()] + [f"{cycles:,}"]
+            try:
+                with open(summary_path, "a") as f:
+                    f.write("| " + " | ".join(row_cells) + " |\n")
+            except Exception:
+                pass
 
     assert result.success, (f"Test {test_name} failed with {result.error_count} errors out of {result.total_count}\n"
                             f"Output:\n{result.stdout}")
