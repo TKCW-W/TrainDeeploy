@@ -10,10 +10,11 @@ from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
+import onnx_graphsurgeon as gs
 from ortools.constraint_solver.pywrapcp import IntVar
 
 from Deeploy.CommonExtensions.OptimizationPasses.TopologyOptimizationPasses.LoweringOptimizationPasses import _permute
-from Deeploy.DeeployTypes import ConstantBuffer, NetworkContext, TransientBuffer
+from Deeploy.DeeployTypes import ConstantBuffer, NetworkContext, TransientBuffer, VariableBuffer, _ReferenceBuffer
 from Deeploy.MemoryLevelExtension.MemoryLevels import MemoryHierarchy
 from Deeploy.TilingExtension.MemoryConstraints import PatternMemoryConstraints, TensorMemoryConstraint
 from Deeploy.TilingExtension.TilerModel import TilerModel
@@ -419,19 +420,180 @@ class MemoryScheduler():
                     tensorLifetimeMap[key] = tensorLifetime
                     continue
 
+                if alias not in tensorLifetimeMap:
+                    # alias lives at a different memory level (e.g. promoted to L2)
+                    # and is managed by that level's scheduler; skip lifetime extension here.
+                    continue
+
                 aliasLifetime = tensorLifetimeMap[alias]
                 tensorLifetime = (aliasLifetime[0], max(aliasLifetime[1], lifetime[1]))
                 tensorLifetimeMap[alias] = tensorLifetime
 
         return tensorLifetimeMap
 
-    def getConstantTensorOffset(self, ctxt: NetworkContext, memoryLevel: str):
+    @staticmethod
+    def computeAllVariableBufferLifetimes(ctxt: NetworkContext, schedule) -> Dict[str, Tuple[int, int]]:
+        """Compute (lower, upper) lifetimes for ALL VariableBuffers across the
+        flattened schedule, regardless of their _memoryLevel.
+
+        Variant of computePromotedActivationLifetimes without the
+        non-default-level filter, so the result is usable BEFORE bind() has run
+        (i.e. before any promotion has happened, when every activation is still
+        at the default level). The pre-bind PromoteTensorsToL2 call uses this
+        to make lifetime-aware greedy decisions.
+
+        Accepts either schedule format Deeploy uses:
+          - List[List[Node]] -- the tiled / pattern-based scheduler output
+          - List[Node]       -- the simple per-deployer scheduler default
+                                (e.g. MemoryLevelAwareDeployer's
+                                ``lambda graph: list(graph.nodes)``).
+        Mixing is tolerated; non-Node, non-iterable items are silently skipped.
+        """
+        flat_steps = []
+        for item in schedule:
+            if isinstance(item, gs.Node):
+                flat_steps.append(item)
+            else:
+                try:
+                    for node in item:
+                        if isinstance(node, gs.Node):
+                            flat_steps.append(node)
+                except TypeError:
+                    pass
+
+        lifetimes: Dict[str, Tuple[int, int]] = {}
+        for stepIdx, node in enumerate(flat_steps):
+            for tensor in list(node.inputs) + list(node.outputs):
+                if tensor is None:
+                    continue
+                try:
+                    buf = ctxt.lookup(tensor.name)
+                except Exception:
+                    continue
+                if not isinstance(buf, VariableBuffer):
+                    continue
+                if isinstance(buf, (ConstantBuffer, TransientBuffer, _ReferenceBuffer)):
+                    continue
+                name = buf.name
+                if name in lifetimes:
+                    lo, _ = lifetimes[name]
+                    lifetimes[name] = (lo, stepIdx)
+                else:
+                    lifetimes[name] = (stepIdx, stepIdx)
+        return lifetimes
+
+    @staticmethod
+    def computePromotedActivationLifetimes(ctxt: NetworkContext, schedule,
+                                           defaultMemoryLevel: str) -> Dict[str, Tuple[int, int]]:
+        """Compute (lower, upper) lifetimes for standalone-promoted VariableBuffers
+        across the flattened schedule.
+
+        A buffer counts as "standalone-promoted" iff:
+          - it is a VariableBuffer (excluding ConstantBuffer / TransientBuffer / _ReferenceBuffer)
+          - its _memoryLevel is set and is not the hierarchy's default level
+
+        These are the buffers that PromoteTensorsToL2 has moved to L2; PR #19 leaves
+        their lifetime unset so they were treated as forever-alive in codegen and viz.
+        Returning a real lifetime here is the foundation for compacting them into a
+        shared L2 pool by non-overlapping reuse.
+
+        Accepts either ``List[Node]`` or ``List[List[Node]]`` schedule formats.
+        """
+        flat_steps = []
+        for item in schedule:
+            if isinstance(item, gs.Node):
+                flat_steps.append(item)
+            else:
+                try:
+                    for node in item:
+                        if isinstance(node, gs.Node):
+                            flat_steps.append(node)
+                except TypeError:
+                    pass
+
+        lifetimes: Dict[str, Tuple[int, int]] = {}
+        for stepIdx, node in enumerate(flat_steps):
+            for tensor in list(node.inputs) + list(node.outputs):
+                if tensor is None:
+                    continue
+                try:
+                    buf = ctxt.lookup(tensor.name)
+                except Exception:
+                    continue
+                if not isinstance(buf, VariableBuffer):
+                    continue
+                if isinstance(buf, (ConstantBuffer, TransientBuffer, _ReferenceBuffer)):
+                    continue
+                lvl = getattr(buf, '_memoryLevel', None)
+                if lvl is None or lvl == defaultMemoryLevel:
+                    continue
+                name = buf.name
+                if name in lifetimes:
+                    lo, _ = lifetimes[name]
+                    lifetimes[name] = (lo, stepIdx)
+                else:
+                    lifetimes[name] = (stepIdx, stepIdx)
+        return lifetimes
+
+    def getConstantTensorOffset(self, ctxt: NetworkContext, memoryLevel: str, defaultMemoryLevel: Optional[str] = None):
+        # Bytes occupied at this level by buffers that the arena does not manage:
+        #   - ConstantBuffers in globalObjects pinned here (model weights / I/O)
+        #   - Standalone-promoted VariableBuffers in localObjects (only when
+        #     defaultMemoryLevel is supplied AND memoryLevel != defaultMemoryLevel;
+        #     those activations have been explicitly moved off the default level by
+        #     PromoteTensorsToL2 and are excluded from the minimalloc input by
+        #     TilerExtension._tileNetwork).  Their static C declarations occupy
+        #     this level for the whole program, so minimalloc must subtract them
+        #     from the arena budget; otherwise arena placements physically collide
+        #     with the standalone region.
+        #     The defaultMemoryLevel guard prevents double-counting in non-promoted
+        #     runs where activations naturally live at memoryLevel == defaultLevel
+        #     and are arena-managed.
         constantTensorSize = 0
         for buffer in ctxt.globalObjects.values():
             if not "MEMORYARENA" in buffer.name and isinstance(buffer,
                                                                ConstantBuffer) and buffer._memoryLevel == memoryLevel:
                 constantTensorSize += np.prod(buffer.shape) * buffer._type.referencedType.typeWidth // 8
 
+        if defaultMemoryLevel is not None and memoryLevel != defaultMemoryLevel:
+            for buffer in ctxt.localObjects.values():
+                if not isinstance(buffer, VariableBuffer):
+                    continue
+                if isinstance(buffer, (ConstantBuffer, TransientBuffer, _ReferenceBuffer)):
+                    continue
+                if "MEMORYARENA" in buffer.name:
+                    continue
+                if getattr(buffer, "_memoryLevel", None) != memoryLevel:
+                    continue
+                # Skip activations that have already been packed into a shared
+                # pool; the pool buffer itself contributes its packed_peak via
+                # the globalObjects scan below, so counting them again here would
+                # double-charge the promoted footprint.
+                if getattr(buffer, "_packedIntoPool", None) is not None:
+                    continue
+                constantTensorSize += np.prod(buffer.shape) * buffer._type.referencedType.typeWidth // 8
+
+            # Pool buffers (PROMOTED_POOL_<level>) are added to globalObjects but
+            # they are VariableBuffers, not ConstantBuffers, so the first loop
+            # missed them. Count them here -- their shape encodes the packed_peak
+            # bytes that the level dedicates to the promoted pool.
+            poolNamePrefix = "PROMOTED_POOL_"
+            for buffer in ctxt.globalObjects.values():
+                if not isinstance(buffer, VariableBuffer):
+                    continue
+                if isinstance(buffer, (ConstantBuffer, TransientBuffer, _ReferenceBuffer)):
+                    continue
+                if not buffer.name.startswith(poolNamePrefix):
+                    continue
+                if getattr(buffer, "_memoryLevel", None) != memoryLevel:
+                    continue
+                constantTensorSize += np.prod(buffer.shape) * buffer._type.referencedType.typeWidth // 8
+
+        import os
+        if os.environ.get("DEBUG_CTO"):
+            print(
+                f"  [DEBUG getConstantTensorOffset {memoryLevel} default={defaultMemoryLevel}] = {int(constantTensorSize):,} B"
+            )
         return int(constantTensorSize)
 
     def _scheduleMemoryConstraints(self,
