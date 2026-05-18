@@ -169,6 +169,7 @@ L3_SINGLEBUFFER_TRAINING_MODELS = {
     "Models/Training/ResNet8/resnet8_train": [128000],
     "Models/Training/MobileNetV1/mobilenetv1_train": [128000],
     "Models/Training/CCT/cct_train": [128000],
+    "Models/Training/CCT_LoRA/cct_lora_train": [128000],
 }
 
 # Per-model overrides for training tests.
@@ -195,21 +196,4 @@ TRAINING_MODEL_OVERRIDES = {
         # Pretrained MLPerf Tiny VWW checkpoint (vww_96.h5): max diff 3.1e-5
         # across all 4 steps — default 1e-3 tolerance is fine.
     },
-}
-
-# Training models tested with PromoteTensorsToL2.
-# Same shape as the inference promote dict: test path -> list of
-# (l1, strategy, includeActivations). "off" = baseline (no promotion).
-L3_SINGLEBUFFER_TRAINING_PROMOTE_MODELS = {
-    "Models/Training/ResNet8/resnet8_train": [(128000, "cycle-aware", True),],
-    "Models/Training/MobileNetV1/mobilenetv1_train": [(128000, "cycle-aware", True),],
-    "Models/Training/CCT/cct_train": [(128000, "smallest", True),],
-}
-
-# Inference models tested with PromoteTensorsToL2.
-# Each entry maps test path -> list of (l1, strategy, includeActivations).
-# "off" strategy = no promotion (baseline for cycle comparison).
-L3_SINGLEBUFFER_PROMOTE_MODELS = {
-    "Models/CCT/FP32/CCT_2_32_32_128": [(128000, "greedy-score", True),],
-    "Models/MLPerf/AnomalyDetection": [(128000, "cycle-aware", True),],
 }

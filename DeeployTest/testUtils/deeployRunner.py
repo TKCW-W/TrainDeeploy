@@ -172,19 +172,6 @@ class DeeployRunnerArgumentParser(argparse.ArgumentParser):
             self.add_argument('--plotMemAlloc',
                               action = 'store_true',
                               help = 'Plot memory allocation and save in deeployState folder\n')
-            self.add_argument('--promoteToL2',
-                              action = 'store_true',
-                              help = 'Promote selected L3 tensors to L2 (requires --defaultMemLevel L3)\n')
-            self.add_argument(
-                '--promoteToL2Strategy',
-                type = str,
-                default = 'cycle-aware',
-                choices = ['cycle-aware', 'greedy-score', 'knapsack-ratio', 'smallest', 'largest', 'random'],
-                help = 'Promotion selection strategy. Default: cycle-aware\n')
-            self.add_argument('--promoteToL2Headroom',
-                              type = int,
-                              default = 131072,
-                              help = 'Bytes reserved in L2 for tile staging. Default: 131072\n')
 
         self.args = None
 
@@ -260,12 +247,6 @@ def create_config_from_args(args: argparse.Namespace,
             gen_args_list.append(f"--searchStrategy={args.searchStrategy}")
         if hasattr(args, 'plotMemAlloc') and args.plotMemAlloc:
             gen_args_list.append("--plotMemAlloc")
-        if getattr(args, 'promoteToL2', False):
-            gen_args_list.append("--promoteToL2")
-            gen_args_list.append(f"--promoteToL2Strategy={args.promoteToL2Strategy}")
-            gen_args_list.append("--promoteToL2IncludeActivations")
-            gen_args_list.append("--promoteToL2MaxBufferBytes=0")
-            gen_args_list.append(f"--promoteToL2Headroom={args.promoteToL2Headroom}")
 
     if not tiling and getattr(args, 'profileUntiled', False):
         gen_args_list.append("--profileUntiled")

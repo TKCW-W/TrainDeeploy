@@ -22,7 +22,7 @@ import Deeploy.CommonExtensions.DataTypes as BasicDataTypes
 from Deeploy.AbstractDataTypes import PointerClass
 from Deeploy.CommonExtensions.NetworkDeployers.NetworkDeployerWrapper import NetworkDeployerWrapper
 from Deeploy.DeeployTypes import ConstantBuffer, NetworkContext, NodeBinding, NodeTemplate, ONNXLayer, Schedule, \
-    SubGraph, TransientBuffer, VariableBuffer, _ReferenceBuffer
+    SubGraph, TransientBuffer
 from Deeploy.Logging import DEFAULT_LOGGER as log
 from Deeploy.Logging import SUCCESS_MARK
 from Deeploy.MemoryLevelExtension.MemoryLevels import MemoryHierarchy, MemoryLevel
@@ -183,119 +183,29 @@ class Tiler():
         def plotSingleMemoryLevel(memoryLevel: MemoryLevel):
             """ Generates a single Plotly subplot for a memory level. """
             fig = go.Figure()
+            constantBuffersOffset = 0
 
-            # Standalone-promoted buffers live at this memoryLevel but are not arena-managed
-            # (TilerExtension excludes them from minimalloc input; see _tileNetwork).
-            # Without explicit handling, promoted activations (local VariableBuffer) wouldn't
-            # be drawn at all, and the L2 panel would look near-empty even at 99% utilization.
-            arenaNames = {blk.name for step in memoryMap[memoryLevel.name] for blk in step}
-
-            def _bufBytes(b):
-                try:
-                    return int(np.prod(b.shape)) * b._type.referencedType.typeWidth // 8
-                except Exception:
-                    return 0
-
-            def _eligible(b):
-                if getattr(b, '_memoryLevel', None) != memoryLevel.name:
-                    return False
-                if b.name in arenaNames:
-                    return False  # arena loop draws it as a windowed box
-                if self.arenaName in b.name:
-                    return False  # internal allocator scratch
-                return True
-
-            promotedConsts = []  # (name, size) -- weights, always-alive is correct
-            promotedVars = []  # (name, size, lifetime, addrSpace) -- activations
-            for buf in ctxt.globalObjects.values():
-                if not isinstance(buf, ConstantBuffer) or isinstance(buf, _ReferenceBuffer):
-                    continue
-                if not _eligible(buf):
-                    continue
-                sz = _bufBytes(buf)
-                if sz > 0:
-                    promotedConsts.append((buf.name, sz))
-            for buf in ctxt.localObjects.values():
-                if not isinstance(buf, VariableBuffer):
-                    continue
-                if isinstance(buf, (ConstantBuffer, TransientBuffer, _ReferenceBuffer)):
-                    continue
-                if not _eligible(buf):
-                    continue
-                sz = _bufBytes(buf)
-                if sz > 0:
-                    promotedVars.append((buf.name, sz, getattr(buf, '_lifetime',
-                                                               None), getattr(buf, '_addrSpace', None)))
+            infiniteLifetimeBuffers = [
+                buffer for buffer in ctxt.globalObjects.values()
+                if not self.arenaName in buffer.name and isinstance(buffer, ConstantBuffer)
+            ]
 
             constantBuffersOffset = 0
-            _maxLifetime = len(memoryMap[memoryLevel.name])
-
-            # Constants are read-only weights -- always-alive draw is correct.
-            for name, sz in promotedConsts:
+            for ioBuffer in infiniteLifetimeBuffers:
+                if not ioBuffer._memoryLevel == memoryLevel.name:
+                    continue
+                _ioSize = np.prod(ioBuffer.shape) * ioBuffer._type.referencedType.typeWidth // 8
+                _maxLifetime = len(memoryMap[memoryLevel.name])
                 fig.add_trace(
                     go.Scatter(x = [-0.5, -0.5, _maxLifetime + 0.5, _maxLifetime + 0.5],
                                y = [
-                                   constantBuffersOffset, constantBuffersOffset + sz, constantBuffersOffset + sz,
-                                   constantBuffersOffset
+                                   constantBuffersOffset, constantBuffersOffset + _ioSize,
+                                   constantBuffersOffset + _ioSize, constantBuffersOffset
                                ],
-                               name = name,
-                               text = name,
-                               fillcolor = 'lightblue',
+                               name = ioBuffer.name,
+                               text = ioBuffer.name,
                                **addTraceConfig))
-                constantBuffersOffset += sz
-
-            # Promoted activations. Three rendering modes:
-            #   - With both _lifetime AND _addrSpace (packed by minimalloc):
-            #     draw the lifetime window at the addrSpace y-range. Buffers
-            #     whose lifetimes don't overlap will share y-positions, so the
-            #     plot shows the real packed footprint (e.g. 21 activations
-            #     packed into 164 KB instead of stacking up to 570 KB).
-            #   - With _lifetime only (lifetime tracked but no pack offset):
-            #     stack sequentially at the lifetime window. Should be rare.
-            #   - With neither: full-width gold-dashed, flags missing tracking.
-            poolBase = constantBuffersOffset
-            poolPeak = 0
-            stackedFallbackOffset = poolBase  # only advances for non-packed
-            varsWithoutLifetime = 0
-            for name, sz, lt, addrSpace in promotedVars:
-                if lt is None:
-                    x = [-0.5, -0.5, _maxLifetime + 0.5, _maxLifetime + 0.5]
-                    line = dict(width = 2, dash = 'dash')
-                    fillcolor = 'gold'
-                    text = f"{name} (no lifetime tracked -- treated as always-alive)"
-                    y_lo = stackedFallbackOffset
-                    y_hi = stackedFallbackOffset + sz
-                    stackedFallbackOffset = y_hi
-                    varsWithoutLifetime += 1
-                elif addrSpace is not None:
-                    x = [lt[0] - 0.5, lt[0] - 0.5, lt[1] + 0.5, lt[1] + 0.5]
-                    line = dict(width = 2)
-                    fillcolor = 'orange'
-                    text = f"{name} (pool offset {addrSpace[0]}-{addrSpace[1]})"
-                    y_lo = poolBase + addrSpace[0]
-                    y_hi = poolBase + addrSpace[1]
-                    poolPeak = max(poolPeak, addrSpace[1])
-                else:
-                    # Lifetime known but no pack offset; stack on top of the pool.
-                    x = [lt[0] - 0.5, lt[0] - 0.5, lt[1] + 0.5, lt[1] + 0.5]
-                    line = dict(width = 2)
-                    fillcolor = 'orange'
-                    text = name
-                    y_lo = stackedFallbackOffset
-                    y_hi = stackedFallbackOffset + sz
-                    stackedFallbackOffset = y_hi
-                fig.add_trace(
-                    go.Scatter(x = x,
-                               y = [y_lo, y_hi, y_hi, y_lo],
-                               name = name,
-                               text = text,
-                               fill = "toself",
-                               hoverinfo = "text",
-                               mode = "lines",
-                               line = line,
-                               fillcolor = fillcolor))
-            # Arena boxes start above whichever pool/fallback ended highest.
-            constantBuffersOffset = max(poolBase + poolPeak, stackedFallbackOffset)
+                constantBuffersOffset += _ioSize
 
             for memoryMapStep in memoryMap[memoryLevel.name]:
                 for buffer in memoryMapStep:
@@ -320,26 +230,9 @@ class Tiler():
                                    text = buffer.name,
                                    **addTraceConfig))
 
-            sumConst = sum(s for _, s in promotedConsts)
-            sumVarRaw = sum(s for _, s, _, _ in promotedVars)
-            # Real var L2 cost = pool peak (packed) + sum of any unpacked stacks
-            packedVarFootprint = poolPeak + (stackedFallbackOffset - poolBase)
-            sumTotal = sumConst + packedVarFootprint
-            pct = (sumTotal / memoryLevel.size * 100) if memoryLevel.size else 0.0
-            flag = (f" &middot; <span style='color:darkorange'>"
-                    f"{varsWithoutLifetime} var(s) drawn dashed: no _lifetime tracked"
-                    f"</span>") if varsWithoutLifetime else ""
-            packedNote = (f"  (pool peak={poolPeak:,} B, sum-if-unpacked={sumVarRaw:,} B, "
-                          f"saved={sumVarRaw - poolPeak:,} B by lifetime overlap)") if poolPeak else ""
-            title = (f"Memory Allocation - {memoryLevel.name}"
-                     f"<br><sub>standalone (lightblue=const, orange=var w/lifetime+addr, gold-dashed=var no-lifetime): "
-                     f"{sumTotal:,} B / {memoryLevel.size:,} B = {pct:.1f}%  "
-                     f"&middot;  const={len(promotedConsts)} ({sumConst:,} B), "
-                     f"var={len(promotedVars)} ({packedVarFootprint:,} B physical){packedNote}{flag}</sub>")
-
             fig.update_xaxes(title_text = "Lifetime")
             fig.update_yaxes(title_text = "Address Space (Bytes)")
-            fig.update_layout(title = title, showlegend = False)
+            fig.update_layout(title = f"Memory Allocation - {memoryLevel.name}", showlegend = False)
 
             fig.add_trace(
                 go.Scatter(
@@ -366,90 +259,6 @@ class Tiler():
 
         with open(memoryAllocPlotPath, "w", encoding = "utf-8") as f:
             f.write(outputHtml)
-
-    def _packPromotedActivationsIntoPool(self, ctxt: NetworkContext) -> NetworkContext:
-        """Pack standalone-promoted VariableBuffers (activations) into a shared
-        per-level pool whose offsets respect their non-overlapping lifetimes.
-
-        Without this pass, each promoted activation gets its own pi_l2_malloc
-        call and lives at L2 for the whole program -- a 'forever-alive'
-        treatment that's correct for ConstantBuffers (weights) but wastes L2 for
-        activations that are only live for a few schedule steps. This method
-        runs minimalloc on the (lifetime, size) tuples of all promoted
-        activations at each non-default level, creates a single pool buffer
-        sized to the resulting packed peak, and overrides each activation's
-        allocTemplate to point into the pool at its assigned offset.
-
-        Requires _lifetime to be populated on each candidate (done by
-        MemoryScheduler.computePromotedActivationLifetimes earlier in tile()).
-        Buffers without a lifetime are skipped (left in their pi_l2_malloc
-        forever-alive state).
-        """
-        defaultLevel = self.memoryHierarchy._defaultMemoryLevel.name
-
-        for level in self.memoryHierarchy.memoryLevels:
-            if level == defaultLevel:
-                continue
-
-            promoted = []
-            for buf in ctxt.localObjects.values():
-                if not isinstance(buf, VariableBuffer):
-                    continue
-                if isinstance(buf, (ConstantBuffer, TransientBuffer, _ReferenceBuffer)):
-                    continue
-                if getattr(buf, "_memoryLevel", None) != level:
-                    continue
-                if getattr(buf, "_lifetime", None) is None:
-                    continue
-                promoted.append(buf)
-
-            if not promoted:
-                continue
-
-            blocks = [MemoryBlock(b.name, level, b._lifetime, None) for b in promoted]
-            capacity = self.memoryHierarchy.memoryLevels[level].size
-
-            packed = self.minimalloc(blocks, ctxt, None, capacity, level)
-
-            packed_peak = 0
-            for blk in packed:
-                if blk._addrSpace is not None:
-                    packed_peak = max(packed_peak, blk._addrSpace[1])
-
-            if packed_peak == 0:
-                continue
-
-            poolName = f"PROMOTED_POOL_{level}"
-            poolBuf = ctxt.VariableBuffer(poolName, [packed_peak])
-            poolBuf._type = PointerClass(BasicDataTypes.int8_t)
-            ctxt.add(poolBuf, "global")
-            poolBuf._instance = poolBuf._type(poolName, ctxt)
-            poolBuf._memoryLevel = level
-            ctxt.globalObjects.move_to_end(poolBuf.name, last = False)
-
-            for blk in packed:
-                if blk._addrSpace is None:
-                    continue
-                buf = ctxt.lookup(blk.name)
-                offset = blk._addrSpace[0]
-                buf._addrSpace = blk._addrSpace
-                buf._packedIntoPool = poolName
-                buf.allocTemplate = NodeTemplate(" ${name} = (${type.typeName}) " +
-                                                 f"((char*){str(poolBuf._instance)} + {offset});")
-                buf.deallocTemplate = _deallocTemplate
-
-            log.info(f"  [PromotedPool] Packed {len(promoted)} activations at {level} "
-                     f"into {packed_peak} B pool '{poolName}' "
-                     f"(was {sum(self._bufferSizeFromShape(b) for b in promoted)} B if treated as forever-alive)")
-
-        return ctxt
-
-    @staticmethod
-    def _bufferSizeFromShape(buf):
-        try:
-            return int(np.prod(buf.shape)) * buf._type.referencedType.typeWidth // 8
-        except Exception:
-            return 0
 
     def _convertCtxtToStaticSchedule(self, ctxt: NetworkContext,
                                      memoryMap: Dict[str, List[List[MemoryBlock]]]) -> NetworkContext:
@@ -654,32 +463,6 @@ class Tiler():
             log.error(
                 f"Memory allocator failed with return code {minimallocOutput.returncode} at memory level {memoryLevel} with capacity of {capacity} bytes!"
             )
-            # Diagnostic: read back the input csv we just fed minimalloc and report the
-            # peak simultaneous footprint so the user knows whether the budget is just
-            # short (-> increase --promoteToL2Headroom) or the input itself doesn't fit
-            # (-> a different problem unrelated to promotion).
-            try:
-                with open(f"{self._minimalloc_input}.csv", mode = "r", newline = "") as f:
-                    rows = list(csv.DictReader(f))
-                if rows:
-                    events = []
-                    for r in rows:
-                        events.append((int(r["lower"]), 1, int(r["size"])))
-                        events.append((int(r["upper"]), 0, int(r["size"])))
-                    events.sort()
-                    peak = live = 0
-                    for _, isEnter, sz in events:
-                        if isEnter:
-                            live += sz
-                            peak = max(peak, live)
-                        else:
-                            live -= sz
-                    log.error(f"  arena needs at least {peak} bytes (peak simultaneous footprint of "
-                              f"{len(rows)} buffer(s)); shortfall is {peak - capacity} bytes.")
-                    log.error(f"  If running with --promoteToL2, increase --promoteToL2Headroom by "
-                              f"at least {peak - capacity} bytes to free up arena space.")
-            except Exception:
-                pass
             raise subprocess.CalledProcessError(minimallocOutput.returncode, " ".join(minimallocOutput.args))
 
         with open(f"{self._minimalloc_output}.csv", mode = "r", newline = "") as file:
@@ -767,30 +550,18 @@ class Tiler():
 
         if self.memoryAllocStrategy == "MiniMalloc":
             log.debug(" - Solve Memory Allocation with MiniMalloc")
-            defaultMemoryLevelName = self.memoryHierarchy._defaultMemoryLevel.name
             for memoryLevel in memoryMap.keys():
-                constantTensorOffset = self.outerMemoryScheduler.getConstantTensorOffset(
-                    ctxt, memoryLevel, defaultMemoryLevelName)
+                constantTensorOffset = self.outerMemoryScheduler.getConstantTensorOffset(ctxt, memoryLevel)
                 if memoryLevel == self.memoryHierarchy._defaultMemoryLevel.name:
                     memoryMap[memoryLevel][-1] = self.minimalloc(
                         memoryMap[memoryLevel][-1], ctxt, None,
                         self.memoryHierarchy.memoryLevels[memoryLevel].size - constantTensorOffset, memoryLevel)
                 else:
                     for idx, memMap in enumerate(memoryMap[memoryLevel]):
-                        # Filter out home-base non-TransientBuffers (standalone allocation; not arena-managed)
-                        arenaMemMap = [
-                            block for block in memMap
-                            if not (ctxt.lookup(block.name)._memoryLevel == memoryLevel
-                                    and not isinstance(ctxt.lookup(block.name), TransientBuffer))
-                        ]
-                        if len(arenaMemMap) != 0:
-                            nodeMemConstraint = (tilingSolution[idx].nodeConstraints[0] if idx < len(tilingSolution)
-                                                 and len(tilingSolution[idx].nodeConstraints) > 0 else None)
+                        if len(memoryMap[memoryLevel][idx]) != 0:
                             memoryMap[memoryLevel][idx] = self.minimalloc(
-                                arenaMemMap, ctxt, nodeMemConstraint,
+                                memMap, ctxt, tilingSolution[idx].nodeConstraints[0],
                                 self.memoryHierarchy.memoryLevels[memoryLevel].size - constantTensorOffset, memoryLevel)
-                        else:
-                            memoryMap[memoryLevel][idx] = arenaMemMap
             log.info(f" {SUCCESS_MARK} Memory allocation successful!")
 
         return memoryMap
@@ -1904,8 +1675,6 @@ class Tiler():
         memory allocation strategy.
         """
         for buffer in ctxt.localObjects.values():
-            if not isinstance(buffer, TransientBuffer):
-                continue  # promoted VariableBuffers have standalone allocation; not arena-managed
             if buffer._memoryLevel != defaultMemoryLevel:
                 return False
         return True
@@ -1944,11 +1713,8 @@ class Tiler():
                                           memoryConstraint.addrSpace[0]) // memoryConstraint.multiBufferCoefficient
                             assert bufferSize % byteAlignment == 0, f"Buffer in {memoryConstraint} is not {byteAlignment} byte aligned"
 
-    def testMemoryMapCorrectness(self,
-                                 memoryMap: Dict[str, List[List[MemoryBlock]]],
-                                 graph: gs.Graph,
-                                 schedule: Schedule,
-                                 ctxt: Optional[NetworkContext] = None) -> None:
+    def testMemoryMapCorrectness(self, memoryMap: Dict[str, List[List[MemoryBlock]]], graph: gs.Graph,
+                                 schedule: Schedule) -> None:
         """Test the correctness of a computed memory map.
 
         Validates that the memory map correctly represents buffer lifetimes
@@ -1980,28 +1746,13 @@ class Tiler():
             memoryBlock.name: memoryBlock for levelMemoryMap in memoryMap.values() for memoryBlock in levelMemoryMap[-1]
         }
 
-        def _isStandalonePromoted(name: str) -> bool:
-            """Return True for non-TransientBuffers at a non-default memory level (standalone allocation)."""
-            if ctxt is None:
-                return False
-            try:
-                buf = ctxt.lookup(name)
-            except Exception:
-                return False
-            defaultLevel = next(iter(memoryMap.keys()))
-            return (not isinstance(buf, TransientBuffer) and buf._memoryLevel != defaultLevel)
-
         # JUNGVI: Assert output buffers are alive until the end
         for tensor in graph.outputs:
-            if tensor.name not in memoryBlockMap and _isStandalonePromoted(tensor.name):
-                continue
             assert memoryBlockMap[tensor.name]._lifetime[-1] == len(
                 schedule), "Invalid memory map! Output buffer is not alive at the last step!"
 
         # JUNGVI: Assert input buffers are alive at the beginning
         for inputBuffer in graph.inputs:
-            if inputBuffer.name not in memoryBlockMap and _isStandalonePromoted(inputBuffer.name):
-                continue
             assert memoryBlockMap[
                 inputBuffer.name]._lifetime[0] == 0, "Invalid memory map! Input buffer is not alive at step 0!"
 
@@ -2010,8 +1761,6 @@ class Tiler():
             node = pattern[0]
             nodeIO = [node for node in node.inputs + node.outputs if not isinstance(node, gs.Constant)]
             for tensor in nodeIO:
-                if tensor.name not in memoryBlockMap and _isStandalonePromoted(tensor.name):
-                    continue  # standalone-promoted tensor is always alive
                 lifetime = memoryBlockMap[tensor.name]._lifetime
                 assert stepIdx in range(lifetime[0], lifetime[-1] +
                                         1), f"Invalid memory map! Buffer {tensor.name} is not alive at step {stepIdx}!"
@@ -2126,32 +1875,6 @@ class TilerDeployerWrapper(NetworkDeployerWrapper):
 
         schedule = self.scheduler(self.graph)
 
-        # Populate _lifetime on standalone-promoted activations so they no longer
-        # appear "always alive" downstream. This drives the visualization (orange
-        # windowed instead of gold-dashed) and is the prerequisite for any later
-        # pass that compacts the promoted pool by non-overlapping reuse.
-        defaultLevel = self.Platform.memoryHierarchy._defaultMemoryLevel.name
-        promotedLifetimes = MemoryScheduler.computePromotedActivationLifetimes(self.ctxt, schedule, defaultLevel)
-        for name, lt in promotedLifetimes.items():
-            try:
-                buf = self.ctxt.lookup(name)
-                buf._lifetime = lt
-            except Exception:
-                pass
-
-        # Pack the promoted activations (now with lifetimes) into a shared L2 pool
-        # so non-overlapping ones reuse the same physical bytes.
-        self.ctxt = self.tiler._packPromotedActivationsIntoPool(self.ctxt)
-
-        # NOTE: a greedy iterative re-promote pass to fill L2 with the bytes
-        # freed by lifetime overlap was prototyped here but cannot run safely:
-        # flipping any buffer's _memoryLevel after super().bind() corrupts
-        # runtime output (mirrors PR #19's f8f1508 issue with post-tile
-        # promotions). Doing this safely requires moving the scheduler /
-        # lifetime computation in front of bind() so the existing
-        # PromoteTensorsToL2 call 1 can already see the packed peak budget.
-        # Tracked as a follow-up; for now pack-only is the safe ceiling.
-
         if tilingSolution is None and memoryMap is None:
             # JUNGVI: Currently using MiniMalloc is only supported for layer-wise execution and all tensors in the default memory level.
             if self.tiler.memoryAllocStrategy == "MiniMalloc":
@@ -2184,7 +1907,7 @@ class TilerDeployerWrapper(NetworkDeployerWrapper):
             self.tiler.plotMemoryAlloc(memoryMap, self.ctxt, self.deeployStateDir, self.Platform.memoryHierarchy)
 
         log.debug(" - Test Memory Map Correctness")
-        self.tiler.testMemoryMapCorrectness(memoryMap, self.graph, schedule, self.ctxt)
+        self.tiler.testMemoryMapCorrectness(memoryMap, self.graph, schedule)
 
         # SCHEREMO: Annotate execution block with solution
         for layer, pattern in zip(self.layerBinding.values(), tilingSolution):
@@ -2221,10 +1944,8 @@ class TilerDeployerWrapper(NetworkDeployerWrapper):
         log.info(f"  {'Level':<14} {'Capacity (bytes)':>10} {'Total':>10} (    Static + Dynamic   ) (Usage )")
         log.info("  " + "-" * 78)
 
-        defaultMemoryLevelName = self.tiler.memoryHierarchy._defaultMemoryLevel.name
         for level, dynamicSize in self.worstCaseBufferSize.items():
-            staticSize = self.tiler.outerMemoryScheduler.getConstantTensorOffset(self.ctxt, level,
-                                                                                 defaultMemoryLevelName)
+            staticSize = self.tiler.outerMemoryScheduler.getConstantTensorOffset(self.ctxt, level)
             capacity = self.tiler.memoryHierarchy.memoryLevels[level].size
             total = staticSize + dynamicSize
 

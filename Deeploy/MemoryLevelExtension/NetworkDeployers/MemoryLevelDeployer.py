@@ -130,7 +130,6 @@ class MemoryLevelAwareDeployer(NetworkDeployer, MemorySummaryMixin):
 
     def bind(self):
         log.info("- Perform Memory Level Annotation")
-        _populateLifetimesForAnnotation(self)
         # LMACAN: Annotate before bind because during binding (specifically alignToContext) templates
         #         may expect the memoryLevel annotation already.
         self.ctxt, self.graph = self.memoryLevelAnnotationOptimizer.optimize(self.ctxt, self.graph)
@@ -175,7 +174,6 @@ class MemoryLevelAwareSignPropDeployer(SignPropDeployer, MemorySummaryMixin):
 
     def bind(self):
         log.info("- Perform Memory Level Annotation")
-        _populateLifetimesForAnnotation(self)
         # LMACAN: Annotate before bind because during binding (specifically alignToContext) templates
         #         may expect the memoryLevel annotation already.
         self.ctxt, self.graph = self.memoryLevelAnnotationOptimizer.optimize(self.ctxt, self.graph)
@@ -192,34 +190,6 @@ class MemoryLevelAwareSignPropDeployer(SignPropDeployer, MemorySummaryMixin):
     def codeTransform(self, verbose: CodeGenVerbosity = _NoVerbosity):
         self.ctxt, self.graph = self.memoryLevelAnnotationOptimizer.optimize(self.ctxt, self.graph)
         super().codeTransform(verbose)
-
-
-def _populateLifetimesForAnnotation(deployer):
-    """Run the deployer's scheduler once and write _lifetime onto every
-    VariableBuffer so the upcoming annotation passes (e.g. PromoteTensorsToL2)
-    can make lifetime-aware decisions BEFORE bind() locks anything in.
-
-    Without this, post-bind annotation passes that flip _memoryLevel cause
-    silent runtime corruption (mirrors PR #19's f8f1508 issue with post-tile
-    promotions); doing the work pre-bind is the only safe place to flip levels.
-    """
-    if not hasattr(deployer, 'scheduler') or deployer.scheduler is None:
-        return
-    try:
-        schedule = deployer.scheduler(deployer.graph)
-    except Exception:
-        return
-    from Deeploy.TilingExtension.MemoryScheduler import MemoryScheduler
-    lifetimes = MemoryScheduler.computeAllVariableBufferLifetimes(deployer.ctxt, schedule)
-    for name, lt in lifetimes.items():
-        try:
-            deployer.ctxt.lookup(name)._lifetime = lt
-        except Exception:
-            pass
-    # NOTE: do NOT stash the schedule on ctxt. ctxt gets pickled by
-    # exportDeeployState() and gs.Node has circular references that exceed
-    # Python's default recursion depth during pickling. tile() will recompute
-    # its own schedule (one extra scheduler call, microseconds).
 
 
 class MemoryDeployerWrapper(NetworkDeployerWrapper, MemorySummaryMixin):
@@ -239,7 +209,6 @@ class MemoryDeployerWrapper(NetworkDeployerWrapper, MemorySummaryMixin):
 
     def bind(self):
         log.info("- Perform Memory Level Annotation")
-        _populateLifetimesForAnnotation(self)
         # LMACAN: Annotate before bind because during binding (specifically alignToContext) templates
         #         may expect the memoryLevel annotation already.
         self.ctxt, self.graph = self.memoryLevelAnnotationOptimizer.optimize(self.ctxt, self.graph)
