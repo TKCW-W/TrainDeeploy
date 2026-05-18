@@ -161,6 +161,7 @@ L2_SINGLEBUFFER_TRAINING_MODELS = {
     "Models/Training/SimpleMLP/simplemlp_train": [64000],
     "Models/Training/Autoencoder/autoencoder_train": [128000],
     "Models/Training/DSCNN/dscnn_train": [128000, 64000],
+    "Models/Training/SpeechNet/speechnet_train": [128000],
 }
 
 # Training-enabled tiled models that need L3 spill (weights/activations don't
