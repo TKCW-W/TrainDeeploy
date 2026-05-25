@@ -180,11 +180,7 @@ L3_SINGLEBUFFER_TRAINING_MODELS = {
 #   locally; matching values pass on TP TrainingPlatform with the same
 #   model artifacts.
 TRAINING_MODEL_OVERRIDES = {
-    "Models/Training/CCT/cct_train": {
-        "num_data_inputs": 1,
-        # CCT step-0 forward drift ~1.5e-3 (FP reduction order on attention).
-        "tolerance": 5e-3,
-    },
+    "Models/Training/CCT/cct_train": {},
     "Models/Training/CCT_LoRA/cct_lora_train": {
         # Reduced from 32→4 mini-batches (2 optimizer steps, n_accum=2).
         # Steps 0-3 are all within 2.5e-5 of ORT — no tolerance override needed.

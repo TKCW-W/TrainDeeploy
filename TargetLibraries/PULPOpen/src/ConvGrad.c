@@ -1,4 +1,3 @@
-
 /*
  * SPDX-FileCopyrightText: 2023 ETH Zurich and University of Bologna
  *
@@ -9,106 +8,8 @@
 #include "pmsis.h"
 
 // ============================================================================
-// Minimal pulp-trainlib interface - avoiding pulp_train_defines.h conflicts
+// Regular (Dense) Convolution Gradient Kernels
 // ============================================================================
-
-struct blob {
-  float *data;
-  float *diff;
-  int dim;
-  int W;
-  int H;
-  int C;
-};
-
-void pulp_conv2d_fp32_bw_param_grads_cl(void *Conv2D_args);
-void pulp_conv2d_fp32_bw_input_grads_cl(void *Conv2D_args);
-
-struct Conv2D_args {
-  struct blob *input;
-  struct blob *coeff;
-  struct blob *bias;
-  struct blob *output;
-  int Lpad;
-  int Rpad;
-  int Upad;
-  int Dpad;
-  int stride_h;
-  int stride_w;
-  float *i2c_buffer;
-  float *bt_buffer;
-  int skip_wg_grad;
-  int skip_in_grad;
-  int HWC;
-  int opt_matmul_type_fw;
-  int opt_matmul_type_wg;
-  int opt_matmul_type_ig;
-  int USE_BIASES;
-  int USE_IM2COL;
-  int USE_DMA_IM2COL;
-};
-
-void pulp_conv_dw_fp32_bw_input_grads_cl(void *DepthWise_Conv_args);
-void pulp_conv_dw_fp32_bw_param_grads_cl(void *DepthWise_Conv_args);
-
-struct DepthWise_Conv_args {
-  struct blob *input;
-  struct blob *coeff;
-  struct blob *output;
-
-  int stride_h;
-  int stride_w;
-
-  int Lpad;
-  int Rpad;
-  int Upad;
-  int Dpad;
-
-  int skip_wg_grad;
-  int skip_in_grad;
-
-  int HWC;
-};
-
-void pulp_conv_pw_fp32_bw_param_grads_cl(void *PointWise_Conv_args);
-void pulp_conv_pw_fp32_bw_input_grads_cl(void *PointWise_Conv_args);
-
-struct PointWise_Conv_args {
-  struct blob *input;
-  struct blob *coeff;
-  struct blob *output;
-  float *transpose_buffer;
-  int skip_wg_grad;
-  int skip_in_grad;
-  int opt_matmul_type_fw;
-  int opt_matmul_type_wg;
-  int opt_matmul_type_ig;
-  int HWC;
-};
-
-// Minimal declarations for direct transpose + GEMM in PWConvGradX
-struct transp_args {
-  float *in_matrix;
-  float *out_matrix;
-  int N;
-  int M;
-  int *dim;
-  int *transposed_axes;
-  int n_dim;
-};
-
-struct matMul_args {
-  float *__restrict__ A;
-  float *__restrict__ B;
-  float *__restrict__ C;
-  int N;
-  int M;
-  int K;
-  int trans_B;
-};
-
-void transpose_matrix(void *void_args);
-void mm(void *void_args);
 
 void PULP_ConvGradW2d_fp32_fp32_fp32_CHW(
     const float *__restrict__ pGradOut, uint32_t H_out, uint32_t W_out,
@@ -247,167 +148,23 @@ void PULP_ConvGradW2d_fp32_fp32_fp32_CHW_Im2Col(
   pulp_conv2d_fp32_bw_param_grads_cl(&conv_args);
 }
 
-void PULP_ConvGradX2d_fp32_fp32_fp32_CHW_trainlib(
-    const float *__restrict__ pGradOut, uint32_t H_out, uint32_t W_out,
-    uint32_t C_out, const float *__restrict__ pWeight, uint32_t C_in,
-    uint32_t P, uint32_t Q, uint32_t SP, uint32_t SQ,
-    float *__restrict__ pGradIn, uint32_t H_in, uint32_t W_in, uint32_t pad_top,
-    uint32_t pad_bottom, uint32_t pad_left, uint32_t pad_right) {
+// ============================================================================
+// Regular Conv — Scatter-add tiled ConvGradX (ForkTransformer)
+// dX[ci,ih,iw] += dY[co,oh,ow] * W[co,ci,ky,kx]
+//   where ih = oh*s + ky - pad (forward index relation, no kernel flip)
+// Parallel over Cin — each core owns a dX slice, no write conflict.
+// ============================================================================
 
-  struct blob input_blob = (struct blob){0};
-  struct blob output_blob = (struct blob){0};
-  struct blob coeff_blob = (struct blob){0};
-  struct blob bias_blob = (struct blob){0};
-
-  input_blob.data = NULL;
-  input_blob.diff = (float *)pGradIn;
-  input_blob.W = (int)W_in;
-  input_blob.H = (int)H_in;
-  input_blob.C = (int)C_in;
-  input_blob.dim = (int)(C_in * H_in * W_in);
-
-  output_blob.data = NULL;
-  output_blob.diff = (float *)pGradOut;
-  output_blob.W = (int)W_out;
-  output_blob.H = (int)H_out;
-  output_blob.C = (int)C_out;
-  output_blob.dim = (int)(C_out * H_out * W_out);
-
-  coeff_blob.data = (float *)pWeight;
-  coeff_blob.diff = NULL;
-  coeff_blob.W = (int)Q;
-  coeff_blob.H = (int)P;
-  coeff_blob.C = (int)C_out;
-  coeff_blob.dim = (int)(C_out * C_in * P * Q);
-
-  bias_blob.data = NULL;
-  bias_blob.diff = NULL;
-  bias_blob.W = 1;
-  bias_blob.H = 1;
-  bias_blob.C = (int)C_out;
-  bias_blob.dim = (int)C_out;
-
-  struct Conv2D_args conv_args;
-  memset(&conv_args, 0, sizeof(conv_args));
-
-  conv_args.input = &input_blob;
-  conv_args.output = &output_blob;
-  conv_args.coeff = &coeff_blob;
-  conv_args.bias = &bias_blob;
-
-  conv_args.Lpad = (int)pad_left;
-  conv_args.Rpad = (int)pad_right;
-  conv_args.Upad = (int)pad_top;
-  conv_args.Dpad = (int)pad_bottom;
-  conv_args.stride_h = (int)SP;
-  conv_args.stride_w = (int)SQ;
-
-  conv_args.i2c_buffer = NULL;
-  conv_args.bt_buffer = NULL;
-
-  conv_args.skip_wg_grad = 1;
-  conv_args.skip_in_grad = 0;
-  conv_args.HWC = 0;
-  conv_args.USE_BIASES = 0;
-  conv_args.USE_IM2COL = 0;
-  conv_args.USE_DMA_IM2COL = 0;
-
-  pulp_conv2d_fp32_bw_input_grads_cl(&conv_args);
-}
-
-void PULP_ConvGradX2d_fp32_fp32_fp32_CHW_Im2Col(
-    const float *__restrict__ pGradOut, uint32_t H_out, uint32_t W_out,
-    uint32_t C_out, const float *__restrict__ pWeight, uint32_t C_in,
-    uint32_t P, uint32_t Q, uint32_t SP, uint32_t SQ,
-    float *__restrict__ pGradIn, uint32_t H_in, uint32_t W_in, uint32_t pad_top,
-    uint32_t pad_bottom, uint32_t pad_left, uint32_t pad_right,
-    float *__restrict__ ctxtBuffer, uint32_t ctxtBufferSize,
-    float *__restrict__ btBuffer, uint32_t btBufferSize) {
-
-  struct blob input_blob = {0};
-  struct blob output_blob = {0};
-  struct blob coeff_blob = {0};
-  struct blob bias_blob = {0};
-
-  input_blob.data = NULL;
-  input_blob.diff = (float *)pGradIn;
-  input_blob.W = (int)W_in;
-  input_blob.H = (int)H_in;
-  input_blob.C = (int)C_in;
-  input_blob.dim = (int)(C_in * H_in * W_in);
-
-  output_blob.data = NULL;
-  output_blob.diff = (float *)pGradOut;
-  output_blob.W = (int)W_out;
-  output_blob.H = (int)H_out;
-  output_blob.C = (int)C_out;
-  output_blob.dim = (int)(C_out * H_out * W_out);
-
-  coeff_blob.data = (float *)pWeight;
-  coeff_blob.diff = NULL;
-  coeff_blob.W = (int)Q;
-  coeff_blob.H = (int)P;
-  coeff_blob.C = (int)C_out;
-  coeff_blob.dim = (int)(C_out * C_in * P * Q);
-
-  bias_blob.data = NULL;
-  bias_blob.diff = NULL;
-  bias_blob.W = 1;
-  bias_blob.H = 1;
-  bias_blob.C = (int)C_out;
-  bias_blob.dim = (int)C_out;
-
-  struct Conv2D_args conv_args;
-  memset(&conv_args, 0, sizeof(conv_args));
-
-  conv_args.input = &input_blob;
-  conv_args.output = &output_blob;
-  conv_args.coeff = &coeff_blob;
-  conv_args.bias = &bias_blob;
-
-  conv_args.Lpad = (int)pad_left;
-  conv_args.Rpad = (int)pad_right;
-  conv_args.Upad = (int)pad_top;
-  conv_args.Dpad = (int)pad_bottom;
-  conv_args.stride_h = (int)SP;
-  conv_args.stride_w = (int)SQ;
-
-  conv_args.i2c_buffer = ctxtBuffer;
-  conv_args.bt_buffer = btBuffer;
-
-  conv_args.skip_wg_grad = 1;
-  conv_args.skip_in_grad = 0;
-  conv_args.HWC = 0;
-  conv_args.USE_BIASES = 0;
-  conv_args.USE_IM2COL = 1;
-  conv_args.USE_DMA_IM2COL = 0;
-
-  pulp_conv2d_fp32_bw_input_grads_cl(&conv_args);
-}
-
-static inline int32_t max_i32(int32_t a, int32_t b) { return (a > b) ? a : b; }
-static inline int32_t min_i32(int32_t a, int32_t b) { return (a < b) ? a : b; }
-
-void PULP_ConvGradX2d_fp32_fp32_fp32_CHW_tiled(
-    const float *__restrict__ pGradOut,
-    uint32_t dim_im_out_x, // H_out (tile)
-    uint32_t dim_im_out_y, // W_out (tile)
-    uint32_t ch_im_out,    // C_out (full)
-    const float *__restrict__ pWeight,
-    uint32_t ch_im_in,     // C_in (full)
-    uint32_t dim_kernel_x, // P (kernel H)
-    uint32_t dim_kernel_y, // Q (kernel W)
-    uint32_t stride_h,     // SH
-    uint32_t stride_w,     // SW
-    float *__restrict__ pGradIn,
-    uint32_t dim_im_in_x,      // H_in (tile)
-    uint32_t dim_im_in_y,      // W_in (tile)
-    uint32_t padding_x_left,   // pad_top
-    uint32_t padding_x_right,  // pad_bottom (unused here)
-    uint32_t padding_y_top,    // pad_left
-    uint32_t padding_y_bottom, // pad_right (unused here)
-    uint16_t offset_grad_in_h, uint16_t offset_grad_in_w,
-    uint16_t offset_grad_out_h, uint16_t offset_grad_out_w) {
+void PULP_ConvGradX2d_fp32_fp32_fp32_CHW_scatter_tiled(
+    const float *__restrict__ pGradOut, uint32_t dim_im_out_x,
+    uint32_t dim_im_out_y, uint32_t ch_im_out,
+    const float *__restrict__ pWeight, uint32_t ch_im_in, uint32_t dim_kernel_x,
+    uint32_t dim_kernel_y, uint32_t stride_h, uint32_t stride_w,
+    float *__restrict__ pGradIn, uint32_t dim_im_in_x, uint32_t dim_im_in_y,
+    uint32_t padding_x_left, uint32_t padding_x_right, uint32_t padding_y_top,
+    uint32_t padding_y_bottom, uint16_t offset_grad_in_h,
+    uint16_t offset_grad_in_w, uint16_t offset_grad_out_h,
+    uint16_t offset_grad_out_w) {
   (void)padding_x_right;
   (void)padding_y_bottom;
 
@@ -415,66 +172,52 @@ void PULP_ConvGradX2d_fp32_fp32_fp32_CHW_tiled(
   const uint32_t Wout_t = dim_im_out_y;
   const uint32_t Hin_t = dim_im_in_x;
   const uint32_t Win_t = dim_im_in_y;
-
   const uint32_t Cout = ch_im_out;
   const uint32_t Cin = ch_im_in;
-
   const uint32_t P = dim_kernel_x;
   const uint32_t Q = dim_kernel_y;
-
   const int32_t pad_top = (int32_t)padding_x_left;
   const int32_t pad_left = (int32_t)padding_y_top;
-
   const int32_t sh = (int32_t)stride_h;
   const int32_t sw = (int32_t)stride_w;
-
   const int32_t hx0 = (int32_t)offset_grad_in_h;
   const int32_t wx0 = (int32_t)offset_grad_in_w;
   const int32_t hx1 = hx0 + (int32_t)Hin_t - 1;
   const int32_t wx1 = wx0 + (int32_t)Win_t - 1;
 
-  // -------- core partition over Cin --------
+  // Parallel over Cin — each core owns exclusive dX[ci_start..ci_stop]
   const int core_id = pi_core_id();
-  const int ncores = NUM_CORES;
-
-  const uint32_t ci_chunk = (Cin + (uint32_t)ncores - 1u) / (uint32_t)ncores;
+  const uint32_t ci_chunk = (Cin + NUM_CORES - 1u) / NUM_CORES;
   const uint32_t ci_start = (uint32_t)core_id * ci_chunk;
   uint32_t ci_stop = ci_start + ci_chunk;
   if (ci_stop > Cin)
     ci_stop = Cin;
-
-  if (ci_start >= ci_stop) {
+  if (ci_start >= ci_stop)
     return;
-  }
 
+  // Zero dX for this core's Cin range
   for (uint32_t ci = ci_start; ci < ci_stop; ++ci) {
     float *dx_ci = pGradIn + (size_t)ci * Hin_t * Win_t;
-    for (uint32_t ih = 0; ih < Hin_t; ++ih) {
-      for (uint32_t iw = 0; iw < Win_t; ++iw) {
-        dx_ci[ih * Win_t + iw] = 0.0f;
-      }
-    }
+    for (uint32_t i = 0; i < Hin_t * Win_t; ++i)
+      dx_ci[i] = 0.0f;
   }
 
+  // Scatter: for each dY pixel, distribute to all dX positions it touches
   for (uint32_t co = 0; co < Cout; ++co) {
     const float *dy_co = pGradOut + (size_t)co * Hout_t * Wout_t;
-
     for (uint32_t ly = 0; ly < Hout_t; ++ly) {
       const int32_t oy = (int32_t)offset_grad_out_h + (int32_t)ly;
       const int32_t base_h = oy * sh - pad_top;
-
       for (uint32_t lx = 0; lx < Wout_t; ++lx) {
         const int32_t ox = (int32_t)offset_grad_out_w + (int32_t)lx;
         const int32_t base_w = ox * sw - pad_left;
-
         const float dy_val = dy_co[ly * Wout_t + lx];
 
-        // prune ky/kx once per (co,ly,lx) (independent of ci)
+        // Prune kernel range to dX tile bounds
         int32_t ky_min = max_i32(0, hx0 - base_h);
         int32_t ky_max = min_i32((int32_t)P - 1, hx1 - base_h);
         if (ky_min > ky_max)
           continue;
-
         int32_t kx_min = max_i32(0, wx0 - base_w);
         int32_t kx_max = min_i32((int32_t)Q - 1, wx1 - base_w);
         if (kx_min > kx_max)
@@ -482,20 +225,13 @@ void PULP_ConvGradX2d_fp32_fp32_fp32_CHW_tiled(
 
         for (uint32_t ci = ci_start; ci < ci_stop; ++ci) {
           float *dx_ci = pGradIn + (size_t)ci * Hin_t * Win_t;
-
-          // W[co,ci,:,:] base (assumes layout [Cout][Cin][P][Q])
-          const float *w_co_ci =
-              pWeight +
-              (((size_t)co * (size_t)Cin + (size_t)ci) * (size_t)P * (size_t)Q);
-
+          const float *w_co_ci = pWeight + (((size_t)co * Cin + ci) * P * Q);
           for (int32_t ky = ky_min; ky <= ky_max; ++ky) {
-            const int32_t ih = (base_h + ky) - hx0; // local in tile
-
+            const int32_t ih = (base_h + ky) - hx0;
             for (int32_t kx = kx_min; kx <= kx_max; ++kx) {
               const int32_t iw = (base_w + kx) - wx0;
-
               dx_ci[(uint32_t)ih * Win_t + (uint32_t)iw] +=
-                  dy_val * w_co_ci[(size_t)ky * (size_t)Q + (size_t)kx];
+                  dy_val * w_co_ci[ky * Q + kx];
             }
           }
         }
@@ -504,359 +240,10 @@ void PULP_ConvGradX2d_fp32_fp32_fp32_CHW_tiled(
   }
 }
 
-void PULP_ConvGradX2d_fp32_fp32_fp32_CHW(
-    const float *__restrict__ pGradOut,
-    uint32_t dim_im_out_x, // H_out (tile)
-    uint32_t dim_im_out_y, // W_out (tile)
-    uint32_t ch_im_out,    // C_out (full)
-    const float *__restrict__ pWeight,
-    uint32_t ch_im_in,     // C_in (full)
-    uint32_t dim_kernel_x, // P
-    uint32_t dim_kernel_y, // Q
-    uint32_t stride_h,     // SP
-    uint32_t stride_w,     // SQ
-    float *__restrict__ pGradIn,
-    uint32_t dim_im_in_x,     // H_in (tile)
-    uint32_t dim_im_in_y,     // W_in (tile)
-    uint32_t padding_x_left,  // pad_top (tile-specific)
-    uint32_t padding_x_right, // pad_bottom (tile-specific)
-    uint32_t padding_y_top,   // pad_left (tile-specific)
-    uint32_t padding_y_bottom // pad_right (tile-specific)
-) {
-  // Map to more intuitive names
-  const uint32_t H_out = dim_im_out_x;
-  const uint32_t W_out = dim_im_out_y;
-  const uint32_t C_out = ch_im_out;
-  const uint32_t C_in = ch_im_in;
-  const uint32_t P = dim_kernel_x;
-  const uint32_t Q = dim_kernel_y;
-  const uint32_t H_in = dim_im_in_x;
-  const uint32_t W_in = dim_im_in_y;
-  const uint32_t pad_top = padding_x_left;
-  const uint32_t pad_bottom = padding_x_right;
-  const uint32_t pad_left = padding_y_top;
-  const uint32_t pad_right = padding_y_bottom;
-
-  int8_t core_id = pi_core_id();
-  int8_t log2Core = LOG2(NUM_CORES);
-
-  // Parallelize over input channels (C_in)
-  uint16_t ch_chunk = (C_in >> log2Core) + ((C_in & (NUM_CORES - 1)) != 0);
-  uint16_t ch_start = MIN(ch_chunk * core_id, C_in);
-  uint16_t ch_stop = MIN(ch_start + ch_chunk, C_in);
-
-  // =========================================================================
-  // Step 1: Zero-initialize dX tile for this core's channel range
-  // =========================================================================
-  // CHW layout: [C, H, W]
-  for (uint32_t c_in = ch_start; c_in < ch_stop; ++c_in) {
-    for (uint32_t h = 0; h < H_in; ++h) {
-      for (uint32_t w = 0; w < W_in; ++w) {
-        uint32_t dx_idx = (c_in * H_in + h) * W_in + w;
-        pGradIn[dx_idx] = 0.0f;
-      }
-    }
-  }
-
-  // =========================================================================
-  // Step 2: Compute gradient via transposed convolution
-  // =========================================================================
-  // For each input channel assigned to this core
-  for (uint32_t c_in = ch_start; c_in < ch_stop; ++c_in) {
-    // For each kernel position
-    for (uint32_t kh = 0; kh < P; ++kh) {
-      for (uint32_t kw = 0; kw < Q; ++kw) {
-        // For each output position in dY tile
-        for (uint32_t h_out = 0; h_out < H_out; ++h_out) {
-          // Compute corresponding input position
-          int32_t h_in = (int32_t)h_out * (int32_t)stride_h + (int32_t)kh -
-                         (int32_t)pad_top;
-
-          // Check bounds (tile-local)
-          if (h_in < 0 || h_in >= (int32_t)H_in) {
-            continue;
-          }
-
-          for (uint32_t w_out = 0; w_out < W_out; ++w_out) {
-            // Compute corresponding input position
-            int32_t w_in = (int32_t)w_out * (int32_t)stride_w + (int32_t)kw -
-                           (int32_t)pad_left;
-
-            // Check bounds (tile-local)
-            if (w_in < 0 || w_in >= (int32_t)W_in) {
-              continue;
-            }
-
-            // Accumulate gradient contributions from all output channels
-            // dX index: CHW layout [C_in, H_in, W_in]
-            uint32_t dx_idx =
-                (c_in * H_in + (uint32_t)h_in) * W_in + (uint32_t)w_in;
-
-            for (uint32_t c_out = 0; c_out < C_out; ++c_out) {
-              // dY index: CHW layout [C_out, H_out, W_out]
-              uint32_t dy_idx = (c_out * H_out + h_out) * W_out + w_out;
-
-              // Weight index: [C_out, C_in, P, Q] layout
-              uint32_t w_idx = ((c_out * C_in + c_in) * P + kh) * Q + kw;
-
-              // Accumulate: dX += dY * W
-              pGradIn[dx_idx] += pGradOut[dy_idx] * pWeight[w_idx];
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-void PULP_DWConvTrans2d_fp32_fp32_fp32_HWC(
-    const float *__restrict__ pGradOut, uint32_t H_out, uint32_t W_out,
-    uint32_t C_total, const float *__restrict__ pWeight, uint32_t P, uint32_t Q,
-    uint32_t SP, uint32_t SQ, float *__restrict__ pGradIn, uint32_t pad_top,
-    uint32_t pad_bottom, uint32_t pad_left, uint32_t pad_right) {
-
-  uint32_t H_in = (H_out - 1) * SP + P - pad_top - pad_bottom;
-  uint32_t W_in = (W_out - 1) * SQ + Q - pad_left - pad_right;
-
-  memset(pGradIn, 0, sizeof(float) * (C_total * H_in * W_in));
-  struct blob input_blob = {0};
-  struct blob coeff_blob = {0};
-  struct blob output_blob = {0};
-
-  input_blob.data = NULL;
-  input_blob.diff = (float *)pGradIn;
-  input_blob.W = (int)W_in;
-  input_blob.H = (int)H_in;
-  input_blob.C = (int)C_total;
-  input_blob.dim = (int)(C_total * H_in * W_in);
-
-  coeff_blob.data = (float *)pWeight;
-  coeff_blob.diff = NULL;
-  coeff_blob.W = (int)Q;
-  coeff_blob.H = (int)P;
-  coeff_blob.C = (int)C_total;
-  coeff_blob.dim = (int)(C_total * P * Q);
-
-  output_blob.data = NULL;
-  output_blob.diff = (float *)pGradOut;
-  output_blob.W = (int)W_out;
-  output_blob.H = (int)H_out;
-  output_blob.C = (int)C_total;
-  output_blob.dim = (int)(C_total * H_out * W_out);
-
-  struct DepthWise_Conv_args dw_args;
-  memset(&dw_args, 0, sizeof(dw_args));
-
-  dw_args.input = &input_blob;
-  dw_args.coeff = &coeff_blob;
-  dw_args.output = &output_blob;
-
-  dw_args.stride_h = (int)SP;
-  dw_args.stride_w = (int)SQ;
-
-  dw_args.Lpad = (int)pad_left;
-  dw_args.Rpad = (int)pad_right;
-  dw_args.Upad = (int)pad_top;
-  dw_args.Dpad = (int)pad_bottom;
-
-  dw_args.skip_wg_grad = 1;
-  dw_args.skip_in_grad = 0;
-
-  dw_args.HWC = 0;
-  pulp_conv_dw_fp32_bw_input_grads_cl(&dw_args);
-}
-
-void PULP_DWConvGradW2d_fp32_fp32_fp32_CHW(
-    const float *__restrict__ pGradOut, uint32_t H_out, uint32_t W_out,
-    uint32_t C_out, const float *__restrict__ pInput, uint32_t H_in,
-    uint32_t W_in, uint32_t C_in, uint32_t P, uint32_t Q, uint32_t SP,
-    uint32_t SQ, float *__restrict__ pGradWeight, uint32_t pad_top,
-    uint32_t pad_bottom, uint32_t pad_left, uint32_t pad_right) {
-  // Supports depthwise convolution with multiplier
-  // For depthwise: groups = C_in, C_out = C_in * multiplier
-  // Weight shape: [C_out, 1, P, Q]
-
-  uint32_t gradw_elems = C_out * (C_in / C_out) * P * Q;
-
-  struct blob input_blob = {0};
-  struct blob coeff_blob = {0};
-  struct blob output_blob = {0};
-
-  input_blob.data = (float *)pInput;
-  input_blob.diff = NULL;
-  input_blob.W = (int)W_in;
-  input_blob.H = (int)H_in;
-  input_blob.C = (int)C_in;
-  input_blob.dim = (int)(C_in * H_in * W_in);
-
-  coeff_blob.data = NULL;
-  coeff_blob.diff = (float *)pGradWeight;
-  coeff_blob.W = (int)Q;
-  coeff_blob.H = (int)P;
-  coeff_blob.C = (int)C_out; // Fixed: should be C_out for DW with multiplier
-  coeff_blob.dim = (int)(C_out * P * Q); // Fixed: total weight elements
-
-  output_blob.data = NULL;
-  output_blob.diff = (float *)pGradOut;
-  output_blob.W = (int)W_out;
-  output_blob.H = (int)H_out;
-  output_blob.C = (int)C_out;
-  output_blob.dim = (int)(C_out * H_out * W_out);
-
-  struct DepthWise_Conv_args dw_args;
-  memset(&dw_args, 0, sizeof(dw_args));
-
-  dw_args.input = &input_blob;
-  dw_args.coeff = &coeff_blob;
-  dw_args.output = &output_blob;
-
-  dw_args.stride_h = (int)SP;
-  dw_args.stride_w = (int)SQ;
-
-  dw_args.Lpad = (int)pad_left;
-  dw_args.Rpad = (int)pad_right;
-  dw_args.Upad = (int)pad_top;
-  dw_args.Dpad = (int)pad_bottom;
-
-  dw_args.skip_wg_grad = 0;
-  dw_args.skip_in_grad = 1;
-  dw_args.HWC = 0;
-  pulp_conv_dw_fp32_bw_param_grads_cl(&dw_args);
-}
-
 // ============================================================================
-// Pointwise Convolution Gradient Functions (using pulptrainlib pw interfaces)
+// Regular Conv — Im2Col+GEMM tiled ConvGradX (ForkTransformer)
 // ============================================================================
 
-void PULP_PWConvGradW2d_fp32_fp32_fp32_CHW(
-    const float *__restrict__ pGradOut, uint32_t H_out, uint32_t W_out,
-    uint32_t C_out, const float *__restrict__ pInput, uint32_t H_in,
-    uint32_t W_in, uint32_t C_in, float *__restrict__ pGradWeight) {
-
-  struct blob input_blob = {0};
-  struct blob output_blob = {0};
-  struct blob coeff_blob = {0};
-
-  // Input blob (forward activation)
-  input_blob.data = (float *)pInput;
-  input_blob.diff = NULL;
-  input_blob.W = (int)W_in;
-  input_blob.H = (int)H_in;
-  input_blob.C = (int)C_in;
-  input_blob.dim = (int)(C_in * H_in * W_in);
-
-  // Output blob (gradient w.r.t. output)
-  output_blob.data = NULL;
-  output_blob.diff = (float *)pGradOut;
-  output_blob.W = (int)W_out;
-  output_blob.H = (int)H_out;
-  output_blob.C = (int)C_out;
-  output_blob.dim = (int)(C_out * H_out * W_out);
-
-  // Weight blob (gradient w.r.t. weights - output)
-  // For PW conv: kernel is 1x1, so dim = C_out * C_in
-  coeff_blob.data = NULL;
-  coeff_blob.diff = (float *)pGradWeight;
-  coeff_blob.W = 1;
-  coeff_blob.H = 1;
-  coeff_blob.C = (int)C_in;
-  coeff_blob.dim = (int)(C_out * C_in);
-
-  struct PointWise_Conv_args pw_args;
-  memset(&pw_args, 0, sizeof(pw_args));
-
-  pw_args.input = &input_blob;
-  pw_args.output = &output_blob;
-  pw_args.coeff = &coeff_blob;
-  pw_args.transpose_buffer = NULL;
-
-  pw_args.skip_wg_grad = 0; // Compute weight gradient
-  pw_args.skip_in_grad = 1; // Skip input gradient
-  pw_args.HWC = 0;          // CHW layout
-  pw_args.opt_matmul_type_fw = 0;
-  pw_args.opt_matmul_type_wg = 0;
-  pw_args.opt_matmul_type_ig = 0;
-
-  pulp_conv_pw_fp32_bw_param_grads_cl(&pw_args);
-}
-
-// Direct PW ConvGradX worker. Eliminates the per-call weight transpose +
-// pulp-trainlib mm: those required a Cin*Cout transient buffer in L1, which
-// for MobileNetV1 block 6-10 PW layers (Cin=Cout=128) eats 64 KB of the
-// 128 KB scratch and forces the tiler to fragment Cin/H/W into ~36 tiles.
-// Each tile then pays an L3<->L2 DMA + sync cost ~25x larger than the
-// actual compute. The direct kernel keeps the inner axpy fully contiguous
-// and parallelizes over Cin without scratch.
-typedef struct {
-  const float *pGradOut;
-  const float *pWeight;
-  float *pGradIn;
-  uint32_t C_out;
-  uint32_t C_in;
-  uint32_t HW;
-} pw_convgradx_args_t;
-
-static void pulp_pw_convgradx_fp32_worker(void *arg_) {
-  const pw_convgradx_args_t *a = (const pw_convgradx_args_t *)arg_;
-  const uint32_t Cin = a->C_in;
-  const uint32_t Cout = a->C_out;
-  const uint32_t HW = a->HW;
-  const float *__restrict__ pGradOut = a->pGradOut;
-  const float *__restrict__ pWeight = a->pWeight;
-  float *__restrict__ pGradIn = a->pGradIn;
-
-  // Each core owns a contiguous Cin range
-  const uint32_t ci_per_core = (Cin + NUM_CORES - 1u) / NUM_CORES;
-  const uint32_t ci_lo = (uint32_t)pi_core_id() * ci_per_core;
-  uint32_t ci_hi = ci_lo + ci_per_core;
-  if (ci_hi > Cin)
-    ci_hi = Cin;
-  if (ci_lo >= ci_hi)
-    return;
-
-  // Zero this core's slice of dX
-  for (uint32_t ci = ci_lo; ci < ci_hi; ++ci) {
-    float *dx_row = pGradIn + (size_t)ci * HW;
-    for (uint32_t hw = 0; hw < HW; ++hw)
-      dx_row[hw] = 0.0f;
-  }
-
-  // dX[ci, hw] = sum_co W[co, ci] * dY[co, hw]
-  // Outer co loop streams a contiguous W row (length Cin) and a contiguous
-  // dY row (length HW); inner axpy over hw stays contiguous on dX.
-  for (uint32_t co = 0; co < Cout; ++co) {
-    const float *__restrict__ w_row = pWeight + (size_t)co * Cin;
-    const float *__restrict__ dy_row = pGradOut + (size_t)co * HW;
-    for (uint32_t ci = ci_lo; ci < ci_hi; ++ci) {
-      const float w = w_row[ci];
-      float *__restrict__ dx_row = pGradIn + (size_t)ci * HW;
-      for (uint32_t hw = 0; hw < HW; ++hw)
-        dx_row[hw] += w * dy_row[hw];
-    }
-  }
-}
-
-void PULP_PWConvGradX2d_fp32_fp32_fp32_CHW(
-    const float *__restrict__ pGradOut, uint32_t H_out, uint32_t W_out,
-    uint32_t C_out, const float *__restrict__ pWeight, uint32_t C_in,
-    float *__restrict__ pGradIn, uint32_t H_in, uint32_t W_in) {
-
-  // PW (1x1) has H_in == H_out and W_in == W_out at stride=1, pad=0.
-  (void)H_in;
-  (void)W_in;
-
-  pw_convgradx_args_t args = {
-      .pGradOut = pGradOut,
-      .pWeight = pWeight,
-      .pGradIn = pGradIn,
-      .C_out = C_out,
-      .C_in = C_in,
-      .HW = H_out * W_out,
-  };
-  pi_cl_team_fork(NUM_CORES, pulp_pw_convgradx_fp32_worker, &args);
-}
-
-// Tile-aware Im2Col-based ConvGradX kernel with offset support
 void PULP_ConvGradX2d_fp32_fp32_fp32_CHW_Im2Col_tiled(
     const float *__restrict__ pGradOut, // dY tile (L1)
     uint32_t dim_im_out_x,              // dY tile H
@@ -1105,148 +492,6 @@ void PULP_ConvGradX2d_fp32_fp32_fp32_CHW_Im2Col_tiled(
                        pWeight[(co * Cin + ci) * P * Q + ky * (int32_t)Q + kx];
               }
               dx_ci[(uint32_t)ih * Win_t + (uint32_t)iw] += acc;
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-void PULP_DWConvGradX2d_fp32_fp32_fp32_CHW_tiled(
-    const float *__restrict__ pGradOut,
-    uint32_t dim_im_out_x, // H_out (tile)
-    uint32_t dim_im_out_y, // W_out (tile)
-    uint32_t ch_im_out,    // C_out (full)
-    const float *__restrict__ pWeight,
-    uint32_t ch_im_in,     // C_in (full)
-    uint32_t dim_kernel_x, // P (kernel H)
-    uint32_t dim_kernel_y, // Q (kernel W)
-    uint32_t stride_h,     // SH
-    uint32_t stride_w,     // SW
-    float *__restrict__ pGradIn,
-    uint32_t dim_im_in_x,      // H_in (tile)
-    uint32_t dim_im_in_y,      // W_in (tile)
-    uint32_t padding_x_left,   // pad_top
-    uint32_t padding_x_right,  // pad_bottom (unused here)
-    uint32_t padding_y_top,    // pad_left
-    uint32_t padding_y_bottom, // pad_right (unused here)
-    uint16_t offset_grad_in_h, uint16_t offset_grad_in_w,
-    uint16_t offset_grad_out_h, uint16_t offset_grad_out_w) {
-  (void)padding_x_right;
-  (void)padding_y_bottom;
-
-  const uint32_t Hout_t = dim_im_out_x;
-  const uint32_t Wout_t = dim_im_out_y;
-  const uint32_t Hin_t = dim_im_in_x;
-  const uint32_t Win_t = dim_im_in_y;
-
-  const uint32_t Cout_full = ch_im_out;
-  const uint32_t Cin_full = ch_im_in;
-
-  const uint32_t P = dim_kernel_x;
-  const uint32_t Q = dim_kernel_y;
-
-  const int32_t pad_top = (int32_t)padding_x_left;
-  const int32_t pad_left = (int32_t)padding_y_top;
-
-  const int32_t sh = (int32_t)stride_h;
-  const int32_t sw = (int32_t)stride_w;
-
-  // dx tile global box [hx0..hx1] x [wx0..wx1]
-  const int32_t hx0 = (int32_t)offset_grad_in_h;
-  const int32_t wx0 = (int32_t)offset_grad_in_w;
-  const int32_t hx1 = hx0 + (int32_t)Hin_t - 1;
-  const int32_t wx1 = wx0 + (int32_t)Win_t - 1;
-
-  // -------- Grouped/Depthwise Convolution Parameters --------
-  // For depthwise: groups = Cin, channels_per_group_in = 1
-  // For grouped: groups divides both Cin and Cout
-  // Assume groups = Cin (standard depthwise with multiplier)
-  const uint32_t groups = Cin_full;
-  const uint32_t channels_per_group_out = Cout_full / groups;
-
-  // -------- core partition over input channels --------
-  const int core_id = pi_core_id();
-  const int ncores = NUM_CORES;
-
-  const uint32_t ci_chunk =
-      (Cin_full + (uint32_t)ncores - 1u) / (uint32_t)ncores;
-  const uint32_t ci_start = (uint32_t)core_id * ci_chunk;
-  uint32_t ci_stop = ci_start + ci_chunk;
-  if (ci_stop > Cin_full)
-    ci_stop = Cin_full;
-
-  if (ci_start >= ci_stop) {
-    return;
-  }
-
-  // ---- Clear dx tile for this core's input channels ----
-  for (uint32_t ci = ci_start; ci < ci_stop; ++ci) {
-    float *dx_ci = pGradIn + (size_t)ci * (size_t)Hin_t * (size_t)Win_t;
-
-    for (uint32_t ih = 0; ih < Hin_t; ++ih) {
-      float *row = dx_ci + (size_t)ih * (size_t)Win_t;
-      for (uint32_t iw = 0; iw < Win_t; ++iw) {
-        row[iw] = 0.0f;
-      }
-    }
-  }
-
-  // ---- Main computation: scatter from dy to dx ----
-  // For each input channel assigned to this core
-  for (uint32_t ci = ci_start; ci < ci_stop; ++ci) {
-    float *dx_ci = pGradIn + (size_t)ci * (size_t)Hin_t * (size_t)Win_t;
-
-    // Determine which output channels contribute to this input channel
-    // For depthwise with multiplier: input channel ci corresponds to
-    // output channels [ci * channels_per_group_out, (ci+1) *
-    // channels_per_group_out)
-    const uint32_t co_start = ci * channels_per_group_out;
-    const uint32_t co_stop = co_start + channels_per_group_out;
-
-    // Accumulate gradients from all corresponding output channels
-    for (uint32_t co = co_start; co < co_stop; ++co) {
-      const float *dy_co =
-          pGradOut + (size_t)co * (size_t)Hout_t * (size_t)Wout_t;
-
-      // DW weight layout: [Cout][1][P][Q] -> for channel co, weights at
-      // [co][P][Q]
-      const float *w_co = pWeight + (size_t)co * (size_t)P * (size_t)Q;
-
-      // ---- Scatter from dy tile into dx tile ----
-      for (uint32_t ly = 0; ly < Hout_t; ++ly) {
-        const int32_t oy = (int32_t)offset_grad_out_h + (int32_t)ly;
-        const int32_t base_h = oy * sh - pad_top;
-
-        for (uint32_t lx = 0; lx < Wout_t; ++lx) {
-          const int32_t ox = (int32_t)offset_grad_out_w + (int32_t)lx;
-          const int32_t base_w = ox * sw - pad_left;
-
-          const float dy_val = dy_co[ly * Wout_t + lx];
-
-          // Intersect kernel footprint with dx tile bounds
-          int32_t ky_min = max_i32(0, hx0 - base_h);
-          int32_t ky_max = min_i32((int32_t)P - 1, hx1 - base_h);
-          if (ky_min > ky_max)
-            continue;
-
-          int32_t kx_min = max_i32(0, wx0 - base_w);
-          int32_t kx_max = min_i32((int32_t)Q - 1, wx1 - base_w);
-          if (kx_min > kx_max)
-            continue;
-
-          for (int32_t ky = ky_min; ky <= ky_max; ++ky) {
-            const int32_t ih = (base_h + ky) - hx0; // local in dx tile
-
-            for (int32_t kx = kx_min; kx <= kx_max; ++kx) {
-              const int32_t iw = (base_w + kx) - wx0;
-
-              const size_t w_idx =
-                  (size_t)(uint32_t)ky * (size_t)Q + (size_t)(uint32_t)kx;
-
-              dx_ci[(size_t)(uint32_t)ih * (size_t)Win_t +
-                    (size_t)(uint32_t)iw] += dy_val * w_co[w_idx];
             }
           }
         }
