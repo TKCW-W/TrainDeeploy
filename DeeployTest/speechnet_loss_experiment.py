@@ -64,12 +64,34 @@ if not losses:
     print("ERROR: No '[loss N] computed=X' lines found — check the log.")
     sys.exit(1)
 
+import numpy as np
+
 steps, vals = zip(*sorted(losses))
-plt.figure(figsize=(8, 4))
-plt.plot(steps, vals, marker='o', markersize=3, linewidth=1)
-plt.xlabel("Optimizer step")
-plt.ylabel("Cross-entropy loss")
-plt.title("SpeechNet on-device training — tiled Siracusa, pretrained init (100 steps)")
+steps = list(steps)
+vals = list(vals)
+
+cycle = 6
+cycle_means = []
+cycle_mids = []
+n_full = len(vals) // cycle
+for i in range(n_full):
+    chunk = vals[i * cycle:(i + 1) * cycle]
+    cycle_means.append(np.mean(chunk))
+    cycle_mids.append(steps[i * cycle + cycle // 2])
+
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7))
+fig.suptitle("SpeechNet on-device training — tiled Siracusa, pretrained init (100 steps)")
+
+ax1.plot(steps, vals, marker='o', markersize=3, linewidth=1)
+ax1.set_xlabel("Optimizer step")
+ax1.set_ylabel("Cross-entropy loss")
+ax1.set_title("Per-step loss (raw)")
+
+ax2.plot(cycle_mids, cycle_means, marker='o', markersize=4, linewidth=1.5)
+ax2.set_xlabel("Optimizer step (cycle midpoint)")
+ax2.set_ylabel("Mean cross-entropy loss")
+ax2.set_title("Mean loss per 6-step cycle (trend)")
+
 plt.tight_layout()
 plt.savefig(PLOT_PATH, dpi=150)
 print(f"Plot saved to {PLOT_PATH}  ({len(steps)} points, final loss={vals[-1]:.4f})")
