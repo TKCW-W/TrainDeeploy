@@ -267,8 +267,17 @@ def create_config_from_args(args: argparse.Namespace,
             gen_args_list.append("--promoteToL2MaxBufferBytes=0")
             gen_args_list.append(f"--promoteToL2Headroom={args.promoteToL2Headroom}")
 
-    if not tiling and getattr(args, 'profileUntiled', False):
-        gen_args_list.append("--profileUntiled")
+    if not tiling:
+        if getattr(args, 'profileUntiled', False):
+            gen_args_list.append("--profileUntiled")
+        # Pass core count so generateNetwork.py sizes the im2col buffer correctly.
+        # Without this, generateNetwork.py defaults to n_cores=1 but the cluster
+        # launches NUM_CORES at runtime, causing cores 1..N-1 to write beyond the
+        # allocated im2col region and corrupt the L2 heap.
+        if hasattr(args, 'cores'):
+            gen_args_list.append(f"--cores={args.cores}")
+        elif hasattr(args, 'num_cores'):
+            gen_args_list.append(f"--cores={args.num_cores}")
 
     if getattr(args, 'profileMicrobenchmark', False):
         gen_args_list.append("--profileMicrobenchmark")
