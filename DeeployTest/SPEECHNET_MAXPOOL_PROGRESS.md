@@ -12,19 +12,19 @@ by **recomputing the argmax from the forward input** instead of storing indices.
 | Capability | Status | Evidence |
 |---|---|---|
 | MaxPool **inference** on-device | ✅ bit-exact | 18/18 samples `sim_errors=0` vs ORT; balanced acc 70.6% (full set), ORT == on-device |
-| MaxPool **fine-tuning** on-device (tiled) | ✅ passes | 4-step run `Errors: 0/4` @ TOL=0.05; step-0 gradient exact (diff 1e-6); `train_cycles=137M` |
+| MaxPool **fine-tuning** on-device (tiled) | ✅ **bit-accurate** | 4-step run `Errors: 0/4` @ **TOL=0.01** (tight); all loss diffs **1e-6**; `train_cycles=137M` |
 | No argmax/index storage | ✅ | MaxPoolGrad **recomputes** argmax from the retained forward input X |
 
-On-device 4-step training losses vs ORT reference:
+On-device 4-step training losses vs ORT reference (after the MaxPoolGrad layout fix, see bug #4):
 
 ```
 [loss 0] computed=2.863738  ref=2.863737  diff=0.000001
-[loss 1] computed=1.584130  ref=1.609690  diff=0.025560
-[loss 2] computed=2.576035  ref=2.550768  diff=0.025267
-[loss 3] computed=1.491432  ref=1.482667  diff=0.008765
+[loss 1] computed=1.609689  ref=1.609690  diff=0.000001
+[loss 2] computed=2.550769  ref=2.550768  diff=0.000001
+[loss 3] computed=1.482667  ref=1.482667  diff=0.000001
 ```
-Step-0 matches to 1e-6 (gradient correct). Later steps drift ≈0.02 — the **same float32
-weight-accumulation drift** seen in the established AvgPool training path, not a kernel bug.
+All steps match the reference to **1e-6** — bit-accurate, no tolerance loosening. (Before the
+layout fix, steps 1-3 drifted ≈0.02; that was a real correctness bug, not accumulation — see #4.)
 
 ## Bugs found & fixed
 
@@ -52,6 +52,20 @@ weight-accumulation drift** seen in the established AvgPool training path, not a
    **Fix:** emit `nn.Identity()` for `(1,1)` pools in `SpeechNetDeploy` — the paper uses *no*
    pooling there, so this is a numerically-exact simplification that removes the degenerate
    MaxPool/MaxPoolGrad nodes (Onnx4Deeploy commit `da0ab76`). Inference re-verified 70.6%.
+
+4. **MaxPool training gradient numerically wrong (~0.025 loss drift/step), failing tight tolerance.**
+   This was NOT float-accumulation: AvgPool+raw training is exact (≤2e-6), and PyTorch (recompute)
+   losses == ORT reference exactly, while on-device differed — a real on-device bug. Isolated with a
+   standalone MaxPoolGrad op test on non-square shapes (14×40, k=(1,8)): 984/4480 dX wrong, errors
+   concentrated at window-position 0 → kernel reading wrong window values.
+   Root cause: Deeploy's `_NCHWtoNHWC_fun` (`LoweringOptimizationPasses.py`) transposes a node's
+   `inputs[0]` and `outputs[0]` to NHWC (and `inputs[1:]` only for Conv). **MaxPoolGrad's `inputs[1]`
+   (the forward input X used to recompute the argmax) was never transposed**, so the HWC kernel read
+   X in NCHW → gradients routed to wrong positions. Silent for square pools (hidden by the existing
+   8×8 k2×2 test), exposed by SpeechNet's non-square/asymmetric pools.
+   **Fix:** add a `MaxPoolGrad` branch in `_NCHWtoNHWC_fun` that transposes `inputs[1]` (X) with the
+   same permutation (TrainDeeploy commit `b2c3735`). Isolated test 984/4480 → 0/4480; full MaxPool
+   training all loss diffs 0.025 → **1e-6**, passes at **TOL=0.01**.
 
 ## How to reproduce
 
