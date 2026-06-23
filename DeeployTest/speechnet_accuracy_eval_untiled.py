@@ -13,7 +13,7 @@ accumulates per-class recall to compute balanced accuracy.
 Usage (from DeeployTest/, inside the Deeploy Docker container):
     python speechnet_accuracy_eval_untiled.py
     python speechnet_accuracy_eval_untiled.py \\
-        --infer-dir Tests/Models/speechnet_infer_normalise \\
+        --infer-dir Tests/Models/speechnet_infer_revised \\
         --cores 8
 """
 
@@ -34,7 +34,7 @@ import numpy as np
 parser = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("--infer-dir",
-                    default="Tests/Models/speechnet_infer_normalise",
+                    default="Tests/Models/speechnet_infer_revised",
                     help="SpeechNet inference test folder (default: %(default)s)")
 parser.add_argument("--cores", type=int, default=8, help="Number of cluster cores (default: 8)")
 args = parser.parse_args()

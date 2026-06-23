@@ -96,11 +96,11 @@
 **Fix:** Added `--cores={args.cores}` forwarding in `DeeployTest/testUtils/deeployRunner.py` (lines 274–280 and 446–449).
 
 **Evaluation script:** `DeeployTest/speechnet_accuracy_eval_untiled.py`
-- Loops over all samples in `speechnet_infer_normalise/inputs.npz`.
+- Loops over all samples in `speechnet_infer_revised/inputs.npz`.
 - Writes each sample to a temp dir, runs the untiled GVSoC inference, parses `Logit[i]:` lines from `deeploytest.c`, accumulates per-class recall.
 - Saves full per-sample results to `DeeployTest/speechnet_accuracy_results_untiled.json`.
 
-**Dataset used:** `DeeployTest/Tests/Models/speechnet_infer_normalise/` — 180 samples, subject S01 session S3 Batch 1 vocabulary, 9 classes, normalized EMG.
+**Dataset used:** `DeeployTest/Tests/Models/speechnet_infer_revised/` — 180 samples, subject S01 session S3 Batch 1 vocabulary, 9 classes, normalized EMG.
 
 **Result achieved: 77.78% balanced accuracy (140/180 correct), matching the paper's reported zero-shot result.**
 
@@ -133,7 +133,7 @@ Per-class recall:
 
 ### Open Work Items
 
-1. **Tiled inference** — run `speechnet_infer_normalise` through the tiled Siracusa path to measure speedup vs untiled.
+1. **Tiled inference** — run `speechnet_infer_revised` through the tiled Siracusa path to measure speedup vs untiled.
 2. **Post-fine-tuning accuracy** — Batch-1 fine-tuning has been run on-device; next step is to extract the updated weights from the on-device checkpoint and re-evaluate accuracy on the 180-sample eval set to see if fine-tuning improves over the 77.78% zero-shot baseline.
 3. **CI registration** — register the untiled inference test in `test_siracusa_tiled_config.py` or a separate inference config so it runs in CI.
 4. **Training tolerance** — decide whether to raise the loss diff tolerance for the 100-step experiment, or only keep the initial 4-step (diff=0.0) fixture in CI.
@@ -148,7 +148,7 @@ Per-class recall:
 | `DeeployTest/Tests/Models/Training/SpeechNet/speechnet_train_preweights/` | Training fixture with pre-trained SpeechNet weights as init |
 | `DeeployTest/Tests/Models/Training/SpeechNet/speechnet_train_b1_ft/` | Batch-1 fine-tuning artifacts — AvgPool model variant, pre-normalised data, checkpoint + eval/train/optim ONNXes |
 | `DeeployTest/Tests/Models/speechnet_infer/` | Single-sample inference fixture (pre-trained, BN folded) |
-| `DeeployTest/Tests/Models/speechnet_infer_normalise/` | Full 180-sample eval dataset (normalized EMG, labels embedded in inputs.npz) |
+| `DeeployTest/Tests/Models/speechnet_infer_revised/` | Full 180-sample eval dataset (normalized EMG, labels embedded in inputs.npz) |
 | `DeeployTest/Tests/Models/speechnet_infer_random/` | Random-weights inference fixture (compilation smoke test) |
 | `DeeployTest/speechnet_accuracy_eval_untiled.py` | Accuracy eval loop (runs GVSoC per-sample, parses logits) |
 | `DeeployTest/speechnet_accuracy_results_untiled.json` | Results: 77.78% balanced accuracy, 180 samples |

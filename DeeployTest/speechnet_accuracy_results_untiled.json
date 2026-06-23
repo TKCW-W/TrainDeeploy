@@ -3,18 +3,18 @@
   "n_evaluated": 180,
   "n_failed": 0,
   "n_classes": 9,
-  "balanced_accuracy": 0.7777777777777778,
-  "overall_accuracy": 0.7777777777777778,
+  "balanced_accuracy": 0.7055555555555555,
+  "overall_accuracy": 0.7055555555555556,
   "per_class_recall": {
     "0": 0.95,
-    "1": 0.6,
-    "2": 0.8,
-    "3": 0.65,
+    "1": 0.35,
+    "2": 0.45,
+    "3": 0.85,
     "4": 0.55,
-    "5": 0.95,
-    "6": 0.7,
-    "7": 0.85,
-    "8": 0.95
+    "5": 0.9,
+    "6": 0.35,
+    "7": 0.95,
+    "8": 1.0
   },
   "samples": [
     {
@@ -28,7 +28,7 @@
     {
       "sample": 1,
       "true": 6,
-      "pred": 5,
+      "pred": 7,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -36,8 +36,8 @@
     {
       "sample": 2,
       "true": 2,
-      "pred": 2,
-      "correct": true,
+      "pred": 1,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -108,8 +108,8 @@
     {
       "sample": 11,
       "true": 2,
-      "pred": 2,
-      "correct": true,
+      "pred": 4,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -156,7 +156,7 @@
     {
       "sample": 17,
       "true": 1,
-      "pred": 2,
+      "pred": 4,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -204,8 +204,8 @@
     {
       "sample": 23,
       "true": 3,
-      "pred": 3,
-      "correct": true,
+      "pred": 0,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -284,8 +284,8 @@
     {
       "sample": 33,
       "true": 6,
-      "pred": 5,
-      "correct": false,
+      "pred": 6,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -356,8 +356,8 @@
     {
       "sample": 42,
       "true": 2,
-      "pred": 2,
-      "correct": true,
+      "pred": 7,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -396,8 +396,8 @@
     {
       "sample": 47,
       "true": 6,
-      "pred": 6,
-      "correct": true,
+      "pred": 5,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -444,8 +444,8 @@
     {
       "sample": 53,
       "true": 2,
-      "pred": 2,
-      "correct": true,
+      "pred": 5,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -468,8 +468,8 @@
     {
       "sample": 56,
       "true": 7,
-      "pred": 5,
-      "correct": false,
+      "pred": 7,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -492,8 +492,8 @@
     {
       "sample": 59,
       "true": 6,
-      "pred": 6,
-      "correct": true,
+      "pred": 5,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -524,48 +524,48 @@
     {
       "sample": 63,
       "true": 0,
-      "pred": 2,
-      "correct": false,
+      "pred": 0,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 64,
       "true": 4,
-      "pred": 1,
-      "correct": false,
+      "pred": 4,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 65,
       "true": 3,
-      "pred": 4,
-      "correct": false,
+      "pred": 3,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 66,
       "true": 4,
-      "pred": 2,
-      "correct": false,
+      "pred": 4,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 67,
       "true": 6,
-      "pred": 6,
-      "correct": true,
+      "pred": 5,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 68,
       "true": 4,
-      "pred": 4,
-      "correct": true,
+      "pred": 1,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -588,7 +588,7 @@
     {
       "sample": 71,
       "true": 2,
-      "pred": 5,
+      "pred": 4,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -636,8 +636,8 @@
     {
       "sample": 77,
       "true": 4,
-      "pred": 4,
-      "correct": true,
+      "pred": 1,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -660,16 +660,16 @@
     {
       "sample": 80,
       "true": 1,
-      "pred": 1,
-      "correct": true,
+      "pred": 0,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 81,
       "true": 4,
-      "pred": 4,
-      "correct": true,
+      "pred": 0,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -684,7 +684,7 @@
     {
       "sample": 83,
       "true": 6,
-      "pred": 5,
+      "pred": 2,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -692,8 +692,8 @@
     {
       "sample": 84,
       "true": 1,
-      "pred": 1,
-      "correct": true,
+      "pred": 0,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -708,8 +708,8 @@
     {
       "sample": 86,
       "true": 8,
-      "pred": 7,
-      "correct": false,
+      "pred": 8,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -740,7 +740,7 @@
     {
       "sample": 90,
       "true": 4,
-      "pred": 5,
+      "pred": 3,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -756,7 +756,7 @@
     {
       "sample": 92,
       "true": 4,
-      "pred": 2,
+      "pred": 0,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -828,7 +828,7 @@
     {
       "sample": 101,
       "true": 2,
-      "pred": 5,
+      "pred": 4,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -836,8 +836,8 @@
     {
       "sample": 102,
       "true": 6,
-      "pred": 6,
-      "correct": true,
+      "pred": 5,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -900,8 +900,8 @@
     {
       "sample": 110,
       "true": 2,
-      "pred": 2,
-      "correct": true,
+      "pred": 4,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -916,16 +916,16 @@
     {
       "sample": 112,
       "true": 0,
-      "pred": 0,
-      "correct": true,
+      "pred": 3,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 113,
       "true": 3,
-      "pred": 4,
-      "correct": false,
+      "pred": 3,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -940,8 +940,8 @@
     {
       "sample": 115,
       "true": 6,
-      "pred": 6,
-      "correct": true,
+      "pred": 5,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -956,7 +956,7 @@
     {
       "sample": 117,
       "true": 4,
-      "pred": 5,
+      "pred": 0,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -980,7 +980,7 @@
     {
       "sample": 120,
       "true": 3,
-      "pred": 4,
+      "pred": 0,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -1004,7 +1004,7 @@
     {
       "sample": 123,
       "true": 4,
-      "pred": 5,
+      "pred": 1,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -1012,16 +1012,16 @@
     {
       "sample": 124,
       "true": 2,
-      "pred": 2,
-      "correct": true,
+      "pred": 1,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 125,
       "true": 6,
-      "pred": 6,
-      "correct": true,
+      "pred": 5,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -1044,8 +1044,8 @@
     {
       "sample": 128,
       "true": 6,
-      "pred": 6,
-      "correct": true,
+      "pred": 5,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -1076,8 +1076,8 @@
     {
       "sample": 132,
       "true": 1,
-      "pred": 1,
-      "correct": true,
+      "pred": 4,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -1100,7 +1100,7 @@
     {
       "sample": 135,
       "true": 4,
-      "pred": 5,
+      "pred": 0,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -1116,8 +1116,8 @@
     {
       "sample": 137,
       "true": 7,
-      "pred": 4,
-      "correct": false,
+      "pred": 7,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -1140,7 +1140,7 @@
     {
       "sample": 140,
       "true": 3,
-      "pred": 7,
+      "pred": 0,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -1148,7 +1148,7 @@
     {
       "sample": 141,
       "true": 6,
-      "pred": 5,
+      "pred": 2,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -1220,8 +1220,8 @@
     {
       "sample": 150,
       "true": 6,
-      "pred": 6,
-      "correct": true,
+      "pred": 5,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -1252,8 +1252,8 @@
     {
       "sample": 154,
       "true": 3,
-      "pred": 1,
-      "correct": false,
+      "pred": 3,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -1276,15 +1276,15 @@
     {
       "sample": 157,
       "true": 1,
-      "pred": 1,
-      "correct": true,
+      "pred": 4,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 158,
       "true": 1,
-      "pred": 4,
+      "pred": 0,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -1308,8 +1308,8 @@
     {
       "sample": 161,
       "true": 2,
-      "pred": 2,
-      "correct": true,
+      "pred": 4,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -1324,7 +1324,7 @@
     {
       "sample": 163,
       "true": 1,
-      "pred": 5,
+      "pred": 0,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -1340,8 +1340,8 @@
     {
       "sample": 165,
       "true": 5,
-      "pred": 5,
-      "correct": true,
+      "pred": 4,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -1356,8 +1356,8 @@
     {
       "sample": 167,
       "true": 3,
-      "pred": 4,
-      "correct": false,
+      "pred": 3,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -1380,8 +1380,8 @@
     {
       "sample": 170,
       "true": 4,
-      "pred": 2,
-      "correct": false,
+      "pred": 4,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -1396,7 +1396,7 @@
     {
       "sample": 172,
       "true": 2,
-      "pred": 4,
+      "pred": 0,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -1412,8 +1412,8 @@
     {
       "sample": 174,
       "true": 3,
-      "pred": 1,
-      "correct": false,
+      "pred": 3,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -1452,8 +1452,8 @@
     {
       "sample": 179,
       "true": 1,
-      "pred": 1,
-      "correct": true,
+      "pred": 0,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     }
