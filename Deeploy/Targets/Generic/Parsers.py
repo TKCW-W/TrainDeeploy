@@ -559,6 +559,11 @@ class MaxPoolGradParser(NodeParser):
             self.operatorRepresentation['stride_y'] = int(strides[1])
             self.operatorRepresentation['dim_kernel_x'] = int(kernel_shape[0])
             self.operatorRepresentation['dim_kernel_y'] = int(kernel_shape[1])
+            # Fused recompute: when set, inputs[1] is the *pre-ReLU* activation
+            # (the BatchNorm output) and the kernel applies ReLU (max(0,.)) inline
+            # while recomputing the argmax, so the forward ReLU output need not be
+            # kept resident. Default 0 = classic MaxPoolGrad (inputs[1] = X).
+            self.operatorRepresentation['apply_relu'] = int(node.attrs.get('apply_relu', 0))
 
         return ret
 
