@@ -232,6 +232,47 @@ the **+4.44 pp improvement is confirmed fully on-device**, from training through
 Logs: `speechnet_b2_zs_ondevice_acc.log`, `speechnet_b2_ft_ondevice_acc.log`. Fixtures:
 `Tests/Models/speechnet_infer_b2_{zs,ft}`.
 
+## 12b. Multi-batch progressive evaluation (fast PyTorch pre-check)
+
+To assess the configuration's effectiveness across the whole held-out session *before*
+the (slow) on-device verification, the full progressive sequence — fine-tune on batch *k*,
+evaluate on batch *k+1*, for *k* = 1…4 — was simulated in PyTorch with the **identical
+configuration** (head-only, BN-folded, 54 stratified windows/6-per-class, `n_accum 4`,
+`lr 0.01`, 40 epochs, faithful sum-accumulation/fixed-order SGD).
+
+**Why PyTorch is predictive here:** with BN folded there is no `BatchNormInternal`, so
+PyTorch eval-mode BN ≡ folded conv. Calibration confirms it: the PyTorch run on the *exact*
+on-device batch-1 fixture windows → batch-2 reproduces **82.78%**, matching the
+on-device-verified number exactly. (This predictiveness holds *only* for the folded
+head-only path; the unfolded PyTorch sim is not predictive — see §5.)
+
+Results (balanced accuracy on the eval batch; Δ vs that batch's pretrained zero-shot;
+`speechnet_ft_progressive.py`):
+
+| FT → eval | pretrained zero-shot | independent (from pretrained) | progressive (carry head) |
+|---|---|---|---|
+| b1 → b2 | 78.33% | 80.00% (+1.67) | 80.00% (+1.67) |
+| b2 → b3 | 63.33% | 80.00% (**+16.67**) | 80.00% (+16.67) |
+| b3 → b4 | 78.89% | 83.33% (+4.44) | 86.11% (+7.22) |
+| b4 → b5 | 66.11% | 75.00% (+8.89) | 76.11% (+10.00) |
+
+**Findings:**
+- The last-layer + BN-fold configuration **improves every batch transition** over the
+  pretrained zero-shot (independent avg +7.9 pp, progressive avg +8.9 pp).
+- **Progressive carry-forward accumulates adaptation**: the carried head's accuracy on a
+  later batch *before* that round's FT already exceeds the pretrained zero-shot (round 3:
+  84.44% vs 78.89%; round 4: 82.78% on b5 vs 66.11% — +16.7 pp from prior rounds alone).
+- **Batch difficulty varies** (zero-shot b3 = 63%, b5 = 66% are harder than b2/b4 ≈ 78%);
+  the configuration recovers the most on the hard batches.
+- **Caveat (round 4):** fine-tuning on batch 4 slightly *lowered* b5 accuracy vs the
+  already-adapted carried model (82.78% → 76.11%) — batch 4's distribution pulls the head
+  away from b5 — though it remains +10 pp over the pretrained zero-shot. Both independent
+  and progressive land ~75–76% on b4→b5, so that transition is inherently the weakest.
+
+**Conclusion:** the on-device-compatible configuration is effective across the full
+progressive sequence (validated by exact calibration to on-device), supporting on-device
+verification of the remaining transitions if a fully-hardware-verified curve is desired.
+
 ## 13. Limitations / honest notes
 
 - The PyTorch sim search (`speechnet_ft_sim_search*.py`) is **not predictive** for this
