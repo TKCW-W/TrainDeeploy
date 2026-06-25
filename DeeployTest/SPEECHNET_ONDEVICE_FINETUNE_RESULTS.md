@@ -9,12 +9,13 @@ batch-2's own zero-shot (78.33%) by a meaningful margin.
 | config (on-device, GVSoC) | batch-2 acc | Δ vs zero-shot | device-vs-ORT loss errors |
 |---|---|---|---|
 | zero-shot (pretrained) | 78.33% | — | — |
-| **head-only + BN-fold, ep10** (135 steps) | **81.67%** | **+3.33 pp** | **0 / 540 (bit-exact)** |
-| head-only + BN-fold, ep40 (540 steps) | 82.78% (ORT; on-device run in progress) | +4.44 pp | (expected bit-exact) |
+| head-only + BN-fold, ep10 (135 steps) | 81.67% | +3.33 pp | 0 / 540 (bit-exact) |
+| **head-only + BN-fold, ep40** (540 steps) | **82.78%** | **+4.44 pp** | **0 / 2160 (bit-exact)** |
 
 The **actual on-device fine-tuned weights** (extracted from GVSoC, not the ORT
-reference) evaluated on whole batch-2 give **+3.33 pp**. Device weights are bit-exact
-to the ORT reference (max|Δ| = 2.4e-7).
+reference) evaluated on whole batch-2 give **+3.33 pp (ep10)** and **+4.44 pp (ep40)**.
+Both runs are bit-exact to the ORT reference (max|Δ| ≈ 4e-7) and report **0 device-vs-ORT
+loss errors** — the precision drift is fully eliminated by this approach.
 
 ## The key discovery: why naive on-device FT fails
 
@@ -88,7 +89,7 @@ n=<#floats>]`. Gated by `-D DUMP_WEIGHTS=ON` (CMake option). For head-only this 
 ## Caveats / honest notes
 - The PyTorch sim search (`v2/v3/v4`) was **not predictive** (eval-mode BN); only the
   ORT/generation-space sweep (`speechnet_ft_folded.py`) reflects on-device. Trust the latter.
-- ep10 = +3.33 pp is the *measured on-device* number; ep40 = +4.44 pp is the ORT
-  prediction (on-device run finishing; will match given bit-exactness).
+- Both ep10 (+3.33 pp) and ep40 (+4.44 pp) are *measured on-device* numbers from the
+  GVSoC-extracted weights (not ORT predictions); both ran bit-exact to ORT.
 - This validates on subject S01 / session 3, batch-1→batch-2. Generalising to other
   subjects/sessions is future work.
