@@ -204,7 +204,8 @@ static void run_optimizer_step(void) {
 }
 
 #ifdef DUMP_WEIGHTS
-/* Dump the on-device trainable weights as raw 32-bit hex words (FPU-free, bit-exact).
+/* QW: on-device weight extraction (whole function added by QW) ------------- QW
+ * Dump the on-device trainable weights as raw 32-bit hex words (FPU-free, bit-exact).
  * Reads the persistent training-weight buffers (post-optimizer-update) and prints one
  * line per weight tensor: "[WDUMP s=<step> wi=<i> n=<#floats>] <hex> <hex> ...".
  * Parsed off the runner log to reconstruct the actual fine-tuned weights. */
@@ -229,7 +230,7 @@ static void dump_weights(uint32_t step) {
   }
 #endif
 }
-#endif /* DUMP_WEIGHTS */
+#endif /* DUMP_WEIGHTS */ /* QW: end on-device weight extraction --------------- QW */
 
 /* -------------------------------------------------------------------------
  * Numerical comparison helpers — run on cluster (FC has no FPU)
@@ -403,13 +404,13 @@ int main(void) {
     /* ⑤ SGD weight update via Deeploy-compiled OptimizerNetwork. */
     run_optimizer_step();
 
-#ifdef DUMP_WEIGHTS
+#ifdef DUMP_WEIGHTS /* QW: dump on-device weights after final optimizer step -- QW */
     /* Dump the actual on-device weights at the final step (set DUMP_WEIGHTS_EVERY
      * to also dump intermediate steps for a weight trajectory). */
     if (update_step == (uint32_t)N_TRAIN_STEPS - 1u) {
       dump_weights(update_step);
     }
-#endif
+#endif /* QW */
 
   } /* end update_step loop */
 

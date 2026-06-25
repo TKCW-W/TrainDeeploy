@@ -40,9 +40,9 @@ if(TRAINING)
         N_ACCUM_STEPS=${N_ACCUM_STEPS}
         TRAINING_NUM_DATA_INPUTS=${TRAINING_NUM_DATA_INPUTS}
     )
-    if(DUMP_WEIGHTS)
+    if(DUMP_WEIGHTS)  # QW: opt-in on-device weight dump (-D DUMP_WEIGHTS=ON) -- QW
         target_compile_definitions(${ProjectId} PRIVATE DUMP_WEIGHTS)
-    endif()
+    endif()  # QW
 endif()
 
 add_gvsoc_emulation(${ProjectId} "siracusa")
