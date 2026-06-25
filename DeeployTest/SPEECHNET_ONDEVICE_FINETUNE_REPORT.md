@@ -269,9 +269,23 @@ Results (balanced accuracy on the eval batch; Δ vs that batch's pretrained zero
   away from b5 — though it remains +10 pp over the pretrained zero-shot. Both independent
   and progressive land ~75–76% on b4→b5, so that transition is inherently the weakest.
 
+**Sampling variance (important for reading the numbers).** With only 54 training windows
+for the head, the result depends on *which* windows are drawn. Over 10 random 6-per-class
+draws of batch 1, the batch-2 accuracy is mean **81.44% (+3.11 pp), std 1.67, range
+77.78–82.78%**. The on-device fixture's deterministic seed-42 draw (82.78%, +4.44 pp) sits
+at the **top** of this distribution; the progressive table's draw (80.00%, +1.67 pp) is
+below the mean. So:
+- the on-device **+4.44 pp** is a real but *optimistic* single draw; the **expected**
+  b1→b2 gain is ≈ **+3 pp**;
+- every table entry carries ±~1.7 pp draw-noise, so the **small** gains (b1→b2 +1.67) are
+  within the noise band, while the **large** gains on the hard batches (b2→b3 +16.7,
+  b4→b5 +8.9) are well outside it and are the robust signals of effectiveness.
+
 **Conclusion:** the on-device-compatible configuration is effective across the full
-progressive sequence (validated by exact calibration to on-device), supporting on-device
-verification of the remaining transitions if a fully-hardware-verified curve is desired.
+progressive sequence (validated by exact calibration to on-device), most strongly on the
+harder batches; the per-batch gain has ≈ ±1.7 pp variance from the small fine-tuning set.
+On-device verification of the remaining transitions can use the exact same pipeline if a
+fully-hardware-verified curve is desired.
 
 ## 13. Limitations / honest notes
 
