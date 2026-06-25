@@ -203,6 +203,34 @@ static void run_optimizer_step(void) {
 #endif /* TRAINING_NUM_WEIGHT_INPUTS */
 }
 
+#ifdef DUMP_WEIGHTS
+/* Dump the on-device trainable weights as raw 32-bit hex words (FPU-free, bit-exact).
+ * Reads the persistent training-weight buffers (post-optimizer-update) and prints one
+ * line per weight tensor: "[WDUMP s=<step> wi=<i> n=<#floats>] <hex> <hex> ...".
+ * Parsed off the runner log to reconstruct the actual fine-tuned weights. */
+static void dump_weights(uint32_t step) {
+#if defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+  for (uint32_t wi = 0; wi < (uint32_t)TRAINING_NUM_WEIGHT_INPUTS; wi++) {
+    uint32_t idx = (uint32_t)TRAINING_NUM_DATA_INPUTS + wi;
+    uint32_t bytes = DeeployNetwork_inputs_bytes[idx];
+    void *buf = DeeployNetwork_inputs[idx];
+    uint32_t n = bytes / 4u;
+    printf("[WDUMP s=%u wi=%u n=%u]", (unsigned)step, (unsigned)wi, (unsigned)n);
+    for (uint32_t k = 0; k < n; k++) {
+      uint32_t word;
+      if (IS_L2(buf)) {
+        word = ((const uint32_t *)buf)[k];
+      } else {
+        ram_read(&word, (uint8_t *)buf + 4u * k, 4u);
+      }
+      printf(" %08x", (unsigned)word);
+    }
+    printf("\r\n");
+  }
+#endif
+}
+#endif /* DUMP_WEIGHTS */
+
 /* -------------------------------------------------------------------------
  * Numerical comparison helpers — run on cluster (FC has no FPU)
  * ---------------------------------------------------------------------- */
@@ -374,6 +402,14 @@ int main(void) {
 
     /* ⑤ SGD weight update via Deeploy-compiled OptimizerNetwork. */
     run_optimizer_step();
+
+#ifdef DUMP_WEIGHTS
+    /* Dump the actual on-device weights at the final step (set DUMP_WEIGHTS_EVERY
+     * to also dump intermediate steps for a weight trajectory). */
+    if (update_step == (uint32_t)N_TRAIN_STEPS - 1u) {
+      dump_weights(update_step);
+    }
+#endif
 
   } /* end update_step loop */
 
