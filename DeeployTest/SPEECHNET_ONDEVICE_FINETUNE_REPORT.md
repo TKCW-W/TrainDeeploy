@@ -106,6 +106,25 @@ Cause, proven in code:
   (running stats), so its features matched inference and it learned fine — an artefact, not
   reality.
 
+**Evidence (three independent lines):**
+1. **Code inspection.** The training graph's BN nodes are `BatchNormInternal` (ORT
+   training-mode BN), and the Deeploy kernel `TargetLibraries/PULPOpen/src/BatchNorm.c`
+   computes batch mean/variance from the input (lines 45–57), explicitly *not* running
+   stats (header comment, line 18).
+2. **Isolation experiment.** On the *identical* 54 windows / lr / epochs, PyTorch with
+   eval-mode BN (running stats) → ~82% on batch 2, but the ORT/Deeploy graph with
+   `BatchNormInternal` (batch stats) → 75.56%. BN mode is the only variable changed → it is
+   the cause (`speechnet_ft_faithful.py` vs `speechnet_ft_ortsweep.py`).
+3. **Fix-confirms-cause.** Folding BN out (so the frozen features use running stats) makes
+   the training loss *converge* (ep1→ep40 mean 0.77→0.37, vs stuck ~2.15 unfolded) and
+   recovers +4.44 pp (`speechnet_ft_folded.py`).
+
+**Clarification (important).** This is a **training-vs-inference** feature mismatch, *not* a
+device-vs-ORT one. The device and the ORT reference both use `BatchNormInternal` (batch
+stats) and **agree** with each other; the problem is that batch-stat *training* features
+differ from the running-stat features used at *inference*. So BN is an **accuracy** issue
+and contributes nothing to the numerical *drift* — see §8.
+
 ## 6. The fix — fold BatchNorm into Conv (and why it is legitimate)
 
 For a **frozen** feature extractor (`training_strategy='last_layer'`), each block's BN is
@@ -144,8 +163,40 @@ W_fold  = W * scale ; b_fold = (b - running_mean)*scale + bn.bias ; BN → Ident
 
 The original numerical drift (device-vs-ORT loss diff breaching `TOL` ~2 epochs in the
 full-model MaxPool experiment) is caused by **MaxPool argmax tie-flips**: fp32
-reduction-order differences (~1e-6) flip which element is the max in a pooling window. As
-the conv/BN weights move during training, these flips change and **compound**.
+reduction-order differences flip which element is the max in a pooling window. As the
+conv/BN weights move during training, these flips change and **compound**.
+
+**Evidence that the drift is argmax tie-flips (not generic fp accumulation).** The per-step
+device-vs-ORT loss |diff| (full-model run, `speechnet_maxpool_90step_acc1_val.log`; plotted
+in `speechnet_drift_argmax_evidence.png`) shows a clean two-regime signature:
+- **steps 0–35:** diff sits at the smooth-op fp floor (mean **5.6e-6**), far below TOL —
+  device and ORT pick the *same* argmax, so only conv/Gemm reduction-order noise appears;
+- **step 36:** a **single-step ~262× jump** (3.0e-5 → 7.9e-3), then erratic 1e-3…6e-2
+  oscillation (52/90 steps breach TOL).
+
+A 262× jump in one step is a **discrete** event (an argmax selecting a different element) —
+not the smooth exponential growth that generic fp accumulation would give. Two corroborating
+observations: (a) the original **AvgPool** model — same pipeline, no argmax — trained without
+this drift; (b) the **n_accum experiment** (acc1/acc2/acc4): a larger LR-compensated effective
+batch shrank the diff *magnitude* but left the *onset* (~2 epochs) and *frequency* (~58%)
+unchanged — i.e. discrete (timing set by when a tie crosses), not gradient noise (which
+averaging would also make rarer). *Honest scope:* this is inferred from the diff signature +
+controlled comparisons, not from directly logging on-device argmax indices; a kernel-level
+argmax-flip log would make it fully airtight and has not been run.
+
+**Are the BN issue (§5) and the drift the same / related?** **No — they are independent root
+causes**, contrary to the intuitive guess that batch-stat BN causes the ties:
+- BN batch-stats is a *train-vs-inference* mismatch (an **accuracy** problem) and is
+  *consistent* between device and ORT, so it contributes **nothing** to the device-vs-ORT
+  drift.
+- The drift is a *device-vs-ORT* MaxPool argmax fp difference, present for any *moving*
+  feature extractor regardless of BN mode.
+They are fixed by *different* parts of the design: **freezing** the feature extractor kills
+the drift (the argmax is fixed per window across steps — this alone yields 0 errors, even
+before folding), while **BN-folding** fixes the accuracy. The 0/2160 errors confirm the
+freezing; the +4.44 pp confirms the folding. *(One possible, unmeasured indirect link:
+batch-stat normalisation compresses activation gaps, which could make argmax ties marginally
+more frequent — but it is not the root cause and was not measured.)*
 
 Head-only + BN-fold **freezes the entire feature extractor**, so:
 - every window's MaxPool argmax is computed with *fixed* weights every step → the device-vs
