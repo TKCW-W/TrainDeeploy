@@ -38,17 +38,43 @@ numerical-precision drift between device and the ORT reference.
 
 The search proceeded in two spaces:
 
-1. **PyTorch simulation** (host): a hand-rolled SGD loop mirroring the Deeploy mechanics.
-   Fast, but it turned out to be **NOT predictive** of on-device behaviour (see §5) because
-   it evaluated BatchNorm in **eval mode** (running stats). It produced misleadingly
-   positive numbers and must not be trusted for this model.
+1. **PyTorch simulation** (host): a hand-rolled SGD loop (no graph generation; PyTorch
+   forward/backward) mirroring the Deeploy mechanics. Fast, but **NOT predictive** of on-device
+   (see §5) because it evaluated BatchNorm in **eval mode** (running stats). It produced
+   misleadingly positive numbers and must not be trusted for this model. *(Exception: the
+   multi-batch run `speechnet_ft_progressive.py` is PyTorch but was calibrated **bit-exact** to
+   the on-device batch1→batch2 result, so it is predictive for the folded head-only path only.)*
 2. **ORT / generation space** (predictive): generate the actual Deeploy training graph via
    `Onnx4Deeploy.py -mode train` and read its `outputs.npz` (ORT-computed final weights).
    Because the on-device run compiles and executes this exact graph, **the ORT reference is
    the faithful predictor of on-device** (confirmed: device losses are bit-exact to ORT).
    All configuration decisions were ultimately made in this space.
 
-The final accuracy is measured from the **actual GVSoC-extracted weights** (not ORT).
+**Per-config evaluation pipeline (the predictive sweeps `speechnet_ft_folded.py`,
+`…_ortsweep.py`, `…_curve.py`, `…_fullmodel_ortsweep.py`).** Each config was scored by:
+(i) **generating the real Deeploy/ORT train graph** for it (`-mode train` with that config's
+`--data-size/--n-epochs/--n-accum/--lr/--training-strategy`); (ii) the generation **runs ORT
+training** → `outputs.npz` = the **ORT reference weights**; (iii) **injecting those reference
+weights** into the model and running **inference on the batch-2 windows in PyTorch (host)** →
+balanced accuracy.
+
+Per-config **GVSoC** inference is far too slow for a sweep, so the search scores accuracy by
+**host inference of the reference weights**. This is valid because host inference is **bit-exact**
+to both the ORT infer-graph logits (zero-shot reproduces 78.33% to the digit) *and* the actual
+on-device GVSoC inference (confirmed 78.33% / 82.78%) — the ~1e-6 fp differences never flip the
+180-window classification argmax. GVSoC was run **end-to-end only for the final chosen config**
+(train → extract device weights → on-device inference), where it confirmed device weights == ORT
+reference (0 errors), retroactively validating the entire ORT-space search.
+
+**Trust of the reference-weight score differs by strategy:**
+- *Head-only:* device weights **== ORT reference** (bit-exact) → the search accuracy **is** the
+  on-device accuracy. Fully predictive.
+- *Full-model / any conv-training:* device weights **≠ ORT reference** (they drift, §8) → the
+  ORT-space accuracy is an **optimistic upper bound** ("no-drift"); the real on-device result is
+  *worse*. So a full-model config that is already ≤ 0 in ORT space can only be worse on-device —
+  which makes that negative result *stronger*, not weaker.
+
+The final headline accuracy (§10, §12) is measured from the **actual GVSoC-extracted weights**.
 
 ## 4. Configuration-space exploration
 
