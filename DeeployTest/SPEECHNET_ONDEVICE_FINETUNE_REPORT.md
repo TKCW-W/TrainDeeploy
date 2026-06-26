@@ -203,6 +203,38 @@ diff *magnitude* but not the *onset* or *frequency*, i.e. discrete, not gradient
 (Instrumentation: `TargetLibraries/PULPOpen/src/MaxPool.c`, `deeploytraintest.c`;
 host replica: `speechnet_argmax_ort_ref.py`.)
 
+**Methodology of the argmax comparison.** What is compared is the **gradient-routing
+argmax**: for each pooling window, which of the *k* pooled elements is the max (where that
+cell's gradient is scattered in `MaxPoolGrad`). Terminology: each *training step* consumes one
+*input window* (one EMG sample, eff-batch 1); inside that one forward/backward there are
+**~21,600 pooling windows** (block0 8×14×87 + block1 16×14×43 + block2 16×14×10), each making
+one argmax choice. We compare device-vs-ORT for *all* of them, every step.
+
+- *What we record per window:* the **within-window offset** `off ∈ {0..k−1}` (which of the *k*
+  elements won), **not** the absolute tensor index. Reason: the device runs **tiled** — Deeploy
+  calls the kernel once per L1 tile with *tile-local* coordinates, so an absolute index
+  `(h·W+w)·C+c` is encoded relative to the tile; the ORT host runs untiled (global encoding).
+  Absolute indices therefore differ between device and host *even when the same element wins*
+  (this is real: at step 0 the absolute-index hashes mismatched despite zero flips). The offset
+  is **tile-invariant** (a pooling window is never split across tiles), so it is directly
+  comparable.
+- *How ~21,600 offsets become 2 numbers (a checksum):* per step we accumulate two order-
+  invariant moments over all pooling windows of all 3 layers — `S₁ = Σ off` and `S₂ = Σ off²`.
+  A checksum is a small fingerprint that changes if the underlying data changes. `S₁` alone can
+  *collide* (one window flipping +2 while another flips −2 leaves `Σ off` unchanged); adding the
+  second moment `S₂` catches it (the same example changes `Σ off²` by +4). We declare "argmax
+  agrees" only if **both** `S₁` and `S₂` match, making a missed flip negligibly unlikely.
+- *Device dump:* in `MaxPoolGrad`, core 0 re-scans all channels/windows of its tile, computes
+  `off`, and does `S₁ += off; S₂ += off²` (globals); the harness resets them before each step's
+  fwd+bwd and prints `[AMSIG step] S₁ S₂`. Gated by `-D DUMP_ARGMAX` (dormant otherwise).
+- *ORT dump:* the host replica is **bit-exact** to the stored reference (so it *is* the ORT fp
+  the device's `ref=` losses come from), exposes the 3 MaxPool inputs as extra graph outputs,
+  and computes the identical `S₁,S₂` in numpy (`argmax` = first-occurrence max, matching the
+  kernel's strict `>`).
+- *Scope:* the checksum proves *that* an argmax flipped at step 36 (somewhere among the ~21,600
+  windows), not *which* one; the two moments make this detection reliable. A per-window pinpoint
+  (the exact flipping window and its ~1e-7 top-2 gap) is a possible add-on.
+
 **Are the BN issue (§5) and the drift the same / related?** **No — they are independent root
 causes**, contrary to the intuitive guess that batch-stat BN causes the ties:
 - BN batch-stats is a *train-vs-inference* mismatch (an **accuracy** problem) and is
