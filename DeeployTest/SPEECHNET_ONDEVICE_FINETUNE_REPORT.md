@@ -236,6 +236,31 @@ W_fold  = W * scale ; b_fold = (b - running_mean)*scale + bn.bias ; BN → Ident
 - **Cost / deployability:** head-only has a tiny backward graph (only `fc` gradient), a
   2-tensor optimizer, and a trivial weight footprint to extract.
 
+### 7a. Confirmed end-to-end on-device (full-training regresses −17.78 pp) — see `FULL_TRAINING_ONDEVICE_RESULTS.md`
+
+A full **on-device** run (full training, `n_accum 8`, 30% data, lr 1e-3, **1080 forwards / 135
+steps** = 12× the original) with weight-dump + reconstruction settles the question empirically:
+
+| weights | running-stats | batch-2 | Δ |
+|---|---|---|---|
+| pretrained | pretrained | 78.33% | zero-shot |
+| ORT-sim | **ORT-updated** | 81.11% | +2.78 (the ORT-sweep number — **optimistic**) |
+| ORT-sim | frozen | 63.33% | −15.00 |
+| **device** | **frozen** | **60.56%** | **−17.78 (actual on-device)** |
+
+- **The ORT sweep was optimistic.** Its evaluator used the **ORT-sim-updated** running stats
+  (`outputs.npz` carries them; ORT's `BatchNormInternal` updates running-var by up to 4×10⁴). The
+  **device kernel never updates running stats**, so the device-realistic rows are the frozen-RS
+  ones. ⇒ the §4 "+1.11 pp best full-model" figure is also optimistic; **real device full-model FT
+  is negative.**
+- **Decomposition:** BN **running-stat non-update** = **−17.78 pp** (dominant, architectural);
+  **precision drift** = only **−2.78 pp** (bounded even at 12× steps; device weights <1% off ORT,
+  worst 5.75%). So for full-model the drift is a *red herring* — the BN running-stat mismatch is
+  the killer, which is precisely what folding (head-only) eliminates.
+- **Drift is "acceptable" as hypothesised:** argmax tie-flips diverge from ORT's arbitrary
+  tie-break but do **not** pick systematically wrong gradients — the device trajectory tracks ORT
+  to within −2.78 pp over 1080 forwards.
+
 ## 8. Why the drift is solved (0 training errors)
 
 The original numerical drift (device-vs-ORT loss diff breaching `TOL` ~2 epochs in the
