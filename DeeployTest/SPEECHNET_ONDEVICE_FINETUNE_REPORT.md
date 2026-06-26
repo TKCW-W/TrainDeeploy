@@ -65,9 +65,14 @@ accuracy. Axes explored and ranges:
 | BN handling | training-mode BN (default) vs **BN folded into Conv** | the decisive lever (§5) |
 
 **Key findings of the search (held-out batch-2 Δ vs 78.33%, ORT/on-device space):**
-- **Full-model SGD:** best ≈ +0.74 pp (10% data, lr 1e-3, K=4) — within noise; more data
-  *hurts* (overfits batch-1, val-loss forces very early stop). Vanilla SGD on tiny data
-  cannot exploit full-model capacity.
+- **Full-model SGD (predictive ORT-space sweep, `speechnet_ft_fullmodel_ortsweep.py`):**
+  **no config robustly improves accuracy.** Of 12 configs (data {18,54} × lr {1e-3,5e-3,1e-2}
+  × {10,40} ep, n_accum 4), only **2** beat zero-shot and only marginally — best **+1.11 pp**
+  (data 18, lr 1e-3, 10 ep), *within* the ±1.7 pp sampling noise. Most are negative; lr 1e-2
+  collapses to 51–63% (−15 to −27 pp); more data (54) is worse (overfit). And the marginal
+  ORT gain would not even hold **on-device**: full-model on-device weights *drift* from ORT
+  (52/90 TOL breaches), whereas head-only is bit-exact. *(An earlier PyTorch-sim "+0.74 pp"
+  for full-model was non-predictive — eval-mode BN — and is superseded by this sweep.)*
 - **Head-only without BN-fold:** −1.1 … −2.8 pp at every lr (under-fit at low lr,
   over-fit/collapse at high lr). The training loss never drops below ~2.1.
 - **Head-only + BN-fold (the fix):** robustly positive.
@@ -149,10 +154,15 @@ W_fold  = W * scale ; b_fold = (b - running_mean)*scale + bn.bias ; BN → Ident
 
 ## 7. Why only the last layer (not full training)
 
-- **Vanilla SGD + tiny data:** full-model SGD (no momentum) over 18–54 windows overfits
-  batch-1 and gives ≈ 0 pp on batch-2; the linear head (297 params) cannot overfit and
-  generalises (+4.44 pp). The SilentWear reference reaches +8.33 pp only with Adam +
-  full-batch-32 + 50 epochs — unavailable on-device.
+- **Accuracy (measured, §4):** a predictive ORT-space sweep of **full-model** FT
+  (`speechnet_ft_fullmodel_ortsweep.py`, 12 configs) finds **no config that robustly beats
+  zero-shot** — best +1.11 pp (within the ±1.7 pp noise), only 2/12 positive, most negative,
+  lr 1e-2 collapses to 51–63%. The linear head (297 params) cannot overfit and **robustly
+  generalises (+4.44 pp)**. (The SilentWear reference reaches +8.33 pp only with Adam +
+  full-batch-32 + 50 epochs — unavailable on-device.)
+- **BN corruption is unsolvable for full-model:** full-model *trains* BN, so it cannot be
+  folded — it inherits the batch-stat feature corruption that sinks the unfolded case
+  (−2.8 pp, §5). Folding only works because head-only *freezes* BN.
 - **Precision (the decisive reason):** see §8 — freezing the feature extractor makes the
   on-device training **bit-exact** to ORT, removing the drift that otherwise corrupts
   multi-epoch training. Full-model training re-introduces the compounding MaxPool drift.
@@ -476,6 +486,7 @@ Paths relative to each repo root. Code changes are all tagged with `QW` comments
 |---|---|
 | `speechnet_ft_folded.py` | **predictive** ORT-space lr sweep of folded head-only FT (found +4.44 pp) |
 | `speechnet_ft_ortsweep.py`, `speechnet_ft_curve.py` | ORT-space lr sweep / epoch curve (config selection) |
+| `speechnet_ft_fullmodel_ortsweep.py` | predictive ORT-space sweep of **full-model** FT — shows no full config robustly beats zero-shot (best +1.11 pp, within noise) |
 | `speechnet_ft_progressive.py` | multi-batch progressive + independent FT evaluation (§12b) |
 | `speechnet_argmax_ort_ref.py` | **host ORT reference** (bit-exact replica) computing the argmax checksum for the device-vs-ORT comparison |
 | `speechnet_accuracy_eval_untiled.py` | on-device per-sample GVSoC inference-accuracy harness (existing; reused) |
