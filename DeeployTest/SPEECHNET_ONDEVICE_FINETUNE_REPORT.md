@@ -175,14 +175,33 @@ in `speechnet_drift_argmax_evidence.png`) shows a clean two-regime signature:
   oscillation (52/90 steps breach TOL).
 
 A 262× jump in one step is a **discrete** event (an argmax selecting a different element) —
-not the smooth exponential growth that generic fp accumulation would give. Two corroborating
-observations: (a) the original **AvgPool** model — same pipeline, no argmax — trained without
-this drift; (b) the **n_accum experiment** (acc1/acc2/acc4): a larger LR-compensated effective
-batch shrank the diff *magnitude* but left the *onset* (~2 epochs) and *frequency* (~58%)
-unchanged — i.e. discrete (timing set by when a tie crosses), not gradient noise (which
-averaging would also make rarer). *Honest scope:* this is inferred from the diff signature +
-controlled comparisons, not from directly logging on-device argmax indices; a kernel-level
-argmax-flip log would make it fully airtight and has not been run.
+not the smooth exponential growth that generic fp accumulation would give.
+
+**Direct, on-device proof (the decisive experiment).** We instrumented the on-device
+`MaxPoolGrad` kernel to emit, per step, a tile-invariant checksum of the *within-window
+argmax offsets* (`Σ offset`, `Σ offset²`; core-0 full re-scan, `QW`-tagged, `-D DUMP_ARGMAX`),
+and built a host replica of the ORT reference training loop that is **bit-exact** to the
+stored reference (`max|host_loss − ORT_ref_loss| = 0.00e+00`) and computes the same checksum.
+Comparing the device argmax against the ground-truth ORT-reference argmax step-by-step
+(`speechnet_drift_argmax_proof.png`):
+
+> **the device and ORT argmax are bit-identical for steps 0–35, then FIRST diverge at exactly
+> step 36 — the same step the loss diff jumps 262× and first breaches TOL.**
+
+```
+step | dev_argmax  ort_argmax  agree | loss_diff
+ 35  |   56318       56318     True   | 0.000030   (fp floor, argmax agrees)
+ 36  |   56832       56814     False  | 0.007859   (argmax FLIPS -> diff jumps 262x)
+```
+
+Across all 90 steps the correspondence is one-to-one: every below-TOL step has identical
+argmax, every breaching step has a flipped argmax. This is not inference — it is a direct
+measurement that the MaxPool argmax tie-flip **is** the drift onset. Two corroborating
+observations remain: (a) the original **AvgPool** model — same pipeline, no argmax — trains
+without this drift; (b) the **n_accum experiment** — a larger LR-compensated batch shrank the
+diff *magnitude* but not the *onset* or *frequency*, i.e. discrete, not gradient noise.
+(Instrumentation: `TargetLibraries/PULPOpen/src/MaxPool.c`, `deeploytraintest.c`;
+host replica: `speechnet_argmax_ort_ref.py`.)
 
 **Are the BN issue (§5) and the drift the same / related?** **No — they are independent root
 causes**, contrary to the intuitive guess that batch-stat BN causes the ties:

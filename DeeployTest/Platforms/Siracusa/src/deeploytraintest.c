@@ -116,6 +116,12 @@ static unsigned int g_opt_cycles_acc = 0;
 #define TOTAL_FWD_PASSES (N_TRAIN_STEPS * N_ACCUM_STEPS)
 static float stored_losses[TOTAL_FWD_PASSES];
 
+#ifdef DUMP_ARGMAX /* QW: MaxPoolGrad argmax-signature per step (drift evidence) -- QW */
+extern uint32_t g_maxpool_argmax_sig;
+extern uint32_t g_maxpool_argmax_sig2;
+extern uint32_t g_maxpool_argmax_en;
+#endif
+
 /* -------------------------------------------------------------------------
  * L3-aware memory transfer: handles all combinations of L2/L3 src and dst
  * ---------------------------------------------------------------------- */
@@ -350,6 +356,10 @@ int main(void) {
   printf("Starting training (%u optimizer steps x %u accum steps)...\r\n",
          (unsigned)N_TRAIN_STEPS, (unsigned)N_ACCUM_STEPS);
 
+#ifdef DUMP_ARGMAX /* QW: enable MaxPoolGrad argmax-signature instrumentation -- QW */
+  g_maxpool_argmax_en = 1u;
+#endif
+
   for (uint32_t update_step = 0; update_step < N_TRAIN_STEPS; update_step++) {
 
     for (uint32_t accum_step = 0; accum_step < N_ACCUM_STEPS; accum_step++) {
@@ -379,6 +389,11 @@ int main(void) {
                       DeeployNetwork_inputs_bytes[buf]);
       }
 
+#ifdef DUMP_ARGMAX /* QW: reset argmax signature before this step's fwd+bwd ----- QW */
+      g_maxpool_argmax_sig = 0u;
+      g_maxpool_argmax_sig2 = 0u;
+#endif
+
       /* ③ Forward + backward + InPlaceAccumulatorV2. */
       pi_cluster_task(&cluster_task, RunTrainingNetwork, NULL);
       cluster_task.stack_size = MAINSTACKSIZE;
@@ -388,6 +403,11 @@ int main(void) {
       pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);
       StopTimer();
       g_train_cycles_acc += getCycles();
+
+#ifdef DUMP_ARGMAX /* QW: dump this step's MaxPoolGrad argmax signature --------- QW */
+      printf("[AMSIG %u] %08x %08x\r\n", (unsigned)mb, (unsigned)g_maxpool_argmax_sig,
+             (unsigned)g_maxpool_argmax_sig2);
+#endif
 
       /* ④ Store loss — use memcpy to avoid float registers on FC (no FPU). */
       {
