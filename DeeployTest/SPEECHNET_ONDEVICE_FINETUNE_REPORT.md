@@ -85,13 +85,32 @@ accuracy. Axes explored and ranges:
 → +3.33 pp for a ~4× cheaper run. Stopping epoch was anchored on a clean **batch-1 val
 split**; batch 2 was held out.
 
-**What remains unexplored (future work):**
-- Other subjects / sessions / conditions (only S01 / sess3 / vocalized validated).
-- **LoRA** adapters on conv layers (`--use-lora` is supported) — could beat head-only.
-- Partial unfreezing of the last conv block *with* correct (folded/eval-mode) BN.
-- Optimizers with momentum / Adam (would require new Deeploy kernels).
-- Larger fine-tune sets (>30%, or multiple batches / progressive adaptation as in the
-  SilentWear paper, which uses Adam + full-batch + 50 epochs as a reference ceiling: +8.33 pp).
+**What remains unexplored, and why head-only is the deployable optimum.** The search above is
+a *thin slice* — ~12 full-model points along essentially one optimizer. The unsearched space is
+large, but it splits into three regions with very different status:
+
+| region | size | status |
+|---|---|---|
+| **Better optimizers** (momentum SGD, Adam/AdamW, weight decay, LR schedulers) | large | the most likely place a full-model config *works* (the SilentWear ceiling +8.33 pp uses Adam+batch-32+50 ep), but **not deployable** — Deeploy's optimizer op is vanilla SGD (no moment state); needs a new kernel |
+| **Conv-training strategies** (LoRA `--use-lora`; BN-frozen-full; partial unfreeze of last conv block; larger n_accum 8–32; more data 126–180; lower lr 1e-4; val-based early stop) | large | could beat zero-shot in *ORT* space, but **hits the drift wall on-device** (see below); some tried only in the *non-predictive* PyTorch sim |
+| **Head-only variants** | small | **searched — deployable + drift-free + works (+4.44 pp)** |
+
+*The drift wall (the structural reason this matters).* Every conv-training strategy in row 2
+*moves the MaxPool inputs*, so it re-introduces the device-vs-ORT argmax drift (§8): the loss
+diff breaches TOL at **~2 epochs**, so the *deployable, bit-exact* window for any conv-training
+config is **< 2 epochs — too few to learn** (head-only needs 10–40). Lower lr delays the onset
+but learns proportionally slower, so the trade-off is roughly fixed. **Only head-only escapes it**
+(frozen features → no moving argmax → 0 errors). So an unexplored conv-training config that
+improved ORT accuracy would still have to *also* solve the on-device drift to deploy — trading
+one solved problem (head-only works) for two unsolved ones (accuracy + drift).
+
+*Honest bound on the claim.* We do **not** claim "no full-training config can beat zero-shot" —
+Adam / LoRA / more-data are plausible *ORT-space* winners and are unsearched. The defensible
+claim is narrower: head-only is the only family found (or expected) to be **both deployable and
+drift-free**. Highest-value future probe: **LoRA** (deployable, untested) — but it trains conv, so
+it would need pairing with a drift mitigation (e.g. AvgPool features, higher-precision reduction)
+to survive on-device. Also unverified: other subjects / sessions / conditions (only S01 / sess3 /
+vocalized).
 
 ## 5. Root cause: why naive on-device FT fails
 
