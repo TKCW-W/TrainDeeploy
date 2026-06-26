@@ -195,11 +195,28 @@ step | dev_argmax  ort_argmax  agree | loss_diff
 ```
 
 Across all 90 steps the correspondence is one-to-one: every below-TOL step has identical
-argmax, every breaching step has a flipped argmax. This is not inference — it is a direct
-measurement that the MaxPool argmax tie-flip **is** the drift onset. Two corroborating
-observations remain: (a) the original **AvgPool** model — same pipeline, no argmax — trains
-without this drift; (b) the **n_accum experiment** — a larger LR-compensated batch shrank the
-diff *magnitude* but not the *onset* or *frequency*, i.e. discrete, not gradient noise.
+argmax, every breaching step has a flipped argmax. This is a direct measurement that the
+MaxPool argmax tie-flip is the **discrete trigger of the drift *onset*** — the diff sits at
+the fp floor while the argmax agrees, then jumps 262× the instant it flips.
+
+**Caveat (corrects an earlier overclaim).** The argmax flip is **not the root cause** and is
+**not necessary** for drift: the **AvgPool** SpeechNet (no argmax at all) *also* drifts on-device
+vs the reference — in fact with a *larger* max per-step diff. So the root cause, common to both
+pool types, is **fp non-associativity** (the device kernels and `onnxruntime` round the Conv/BN
+reductions in different orders → ~1e-6 activation differences) **amplified by the sensitive,
+non-convex full-model SGD dynamics**. There appear to be two amplification modes:
+1. *Smooth chaotic amplification* of the ~1e-6 fp differences through the iterative full-model
+   training (present for any pool — this is what AvgPool's drift is; rate is model-dependent,
+   apparently larger for AvgPool).
+2. *Discrete argmax tie-flips* (MaxPool-specific — the single-step 262× jump measured above,
+   which smooth amplification cannot produce).
+These are best separated by trajectory **shape** (smooth gradual growth vs fp-floor-then-discrete
+-jumps), **not magnitude**; a direct AvgPool-vs-MaxPool shape comparison is the clean next check.
+Either way, **head-only + BN-fold eliminates both modes** — frozen features remove mode 1 (no
+feature drift to amplify) and the trainable path is a convex linear head with no argmax (no mode
+2) — which is why it is bit-exact (0 training errors). The earlier "AvgPool has no drift" claim
+was wrong and is retracted; the n_accum magnitude-vs-onset observation is consistent with either
+mode and is no longer cited as discriminating.
 (Instrumentation: `TargetLibraries/PULPOpen/src/MaxPool.c`, `deeploytraintest.c`;
 host replica: `speechnet_argmax_ort_ref.py`.)
 
