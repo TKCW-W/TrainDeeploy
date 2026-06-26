@@ -121,6 +121,16 @@ accuracy. Axes explored and ranges:
   ORT gain would not even hold **on-device**: full-model on-device weights *drift* from ORT
   (52/90 TOL breaches), whereas head-only is bit-exact. *(An earlier PyTorch-sim "+0.74 pp"
   for full-model was non-predictive — eval-mode BN — and is superseded by this sweep.)*
+  - **Update — empirically confirmed on-device (§7a, `FULL_TRAINING_ONDEVICE_RESULTS.md`):** even
+    this ORT sweep was **optimistic**. Its evaluator used the **ORT-sim-updated** BN running stats,
+    which the **device never produces** (the kernel's running-stat update path is dead). Re-evaluated
+    device-realistically (frozen running stats), **0/12 configs beat zero-shot**, and two actual
+    on-device runs (`n_accum 8`, 30% data, 1080 & 2160 forwards) give **−17.78 pp / −28.89 pp**.
+    Crucially the failure is **not** the drift (which is bounded **and non-directional** — its
+    accuracy effect flips sign, −2.78 → +5.00 pp across the two runs, i.e. tie-flips ≠ wrong
+    gradients) but the **BN running-stat non-update**, which *compounds* with epochs (−17.78 →
+    −36.67 pp). So "drift wall" below is the right intuition for *why head-only is needed*, but the
+    measured dominant cause for full-model is the running-stat mismatch, not the argmax drift.
 - **Head-only without BN-fold:** −1.1 … −2.8 pp at every lr (under-fit at low lr,
   over-fit/collapse at high lr). The training loss never drops below ~2.1.
 - **Head-only + BN-fold (the fix):** robustly positive.
