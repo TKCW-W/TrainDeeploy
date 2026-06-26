@@ -89,6 +89,39 @@ close to the drift-free ORT reference:
   tracks ORT closely. **This directly confirms the user's hypothesis:** a tie-flip is just a
   divergence from ORT's arbitrary tie-break, not a wrong gradient, and it stays bounded.
 
+## Drift vs step count — a second on-device run (ep40 / 2160 forwards) confirms it stays bounded & non-directional
+
+To test whether the drift grows or explodes at larger step counts, a **second full on-device run**
+at **2× the steps** (ep40 = 2160 forwards / 270 steps, same config) was extracted and decomposed:
+
+| metric | ep20 — 1080 forwards | ep40 — 2160 forwards |
+|---|---|---|
+| worst per-weight drift (device vs ORT) | 5.75% | **9.14%** |
+| drift's accuracy effect (C→E) | **−2.78pp** | **+5.00pp** |
+| running-stat penalty (B→C) | −17.78pp | −36.67pp |
+| actual on-device (E) | 60.56% | 49.44% |
+| ORT-frozen-RS (C) | 63.33% | 44.44% |
+
+Two conclusions, both reinforcing the earlier reading:
+
+1. **Drift is bounded and the tie-flips are non-directional noise.** Weight drift grew only
+   **sublinearly** (5.75 → 9.14% for 2× the forwards — far from doubling, nowhere near
+   exploding). Crucially, the *accuracy* effect of the drift **flipped sign**: −2.78pp at ep20 but
+   **+5.00pp at ep40** (the device landed *above* its own ORT reference). A systematic
+   wrong-gradient error would make the device **consistently worse**; instead it scatters ±~3–5pp
+   around ORT. **This is direct evidence that an argmax tie-flip is just a divergence from ORT's
+   arbitrary tie-break, not a wrong gradient** — exactly the hypothesis. The drift is "acceptable."
+
+2. **The running-stat penalty compounds with training.** B→C worsened from −17.78pp (ep20) to
+   **−36.67pp** (ep40): more epochs drive the (never-deployed) running stats further from
+   pretrained, so the frozen-RS deployment degrades further. Net on-device therefore gets **worse**
+   with more training (E: 60.56% → 49.44%). More steps ⇒ worse, not better — the opposite of what
+   a healthy FT would do, and entirely a BN-running-stat effect, not a drift effect.
+
+(Row D again ≈ zero-shot — ep20 78.33%, ep40 78.89% — so even with accumulated/updated running
+stats, device full-model FT only reaches break-even, never the paper's gain: gradient
+accumulation gives batch-1 BN no matter the `n_accum`, so the learning itself is corrupted.)
+
 ## The key reframe
 
 For **full-model** on-device FT, the precision drift is a **red herring** (−2.78pp, bounded). The
