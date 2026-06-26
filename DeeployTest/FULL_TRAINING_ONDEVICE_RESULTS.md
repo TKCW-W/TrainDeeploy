@@ -54,6 +54,23 @@ full-model ORT sweep (best "+1.11pp") was also optimistic; the real device full-
 negative.** (Head-only/folded results are unaffected — folding removes BN entirely, so there are
 no running stats to diverge; the +4.44 pp there is device-exact and stands.)
 
+### The whole sweep is negative device-realistically (0/12 beat zero-shot)
+Re-evaluating **all 12** sweep configs with **frozen** (device-realistic) running stats instead of
+the ORT-updated ones:
+
+| ep \ lr | 1e-3 (ORT→frozen) | 5e-3 | 1e-2 |
+|---|---|---|---|
+| 10 | 81.11→**72.78** | 57.22→46.11 | 43.33→33.33 |
+| 20 | 81.11→**63.33** | 57.22→22.78 | 50.56→27.22 |
+| 40 | 81.11→**44.44** | 57.22→24.44 | 46.67→38.33 |
+| 50 | 80.56→**48.33** | 51.67→26.11 | 51.11→38.33 |
+
+**0/12 beat zero-shot (78.33%); best = 72.78% (−5.55pp).** Two things to note: (a) every config's
+apparent gain evaporates once running stats are frozen as on-device; (b) at the stable lr 1e-3 the
+running-stat penalty **grows with epochs** (−8.3 → −17.8 → −36.7 → −32.2 pp for ep 10/20/40/50) —
+more training pushes the running stats further from pretrained, so the frozen-RS deployment gets
+*worse*, not better. Full-model FT cannot win on-device at any explored setting.
+
 ### vs SilentWear (+8.33pp)
 SilentWear reaches +8.33pp because host training gives it **both** things the device lacks:
 batch-32 (proper BN statistics) **and** running-stat EMA updates (proper BN train/infer
