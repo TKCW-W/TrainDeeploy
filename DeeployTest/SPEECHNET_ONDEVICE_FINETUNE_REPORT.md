@@ -7,6 +7,28 @@ device-extracted weights, with the on-device training **bit-exact to the ORT ref
 
 ---
 
+## Contents
+
+| § | section | what it covers |
+|---|---|---|
+| 1 | Goal | the objective + success metric (beat batch-2 zero-shot, on-device) |
+| 2 | Model & on-device training mechanics | SpeechNet architecture; SGD, eff-batch-1, summing accumulator, SGD-only optimizer |
+| 3 | Methodology | the two search spaces; per-config pipeline (graph → ORT reference weights → host inference); trust caveats |
+| 4 | Configuration-space exploration | what was searched (ranges + results); the unsearched space and the drift-wall argument |
+| 5 | Root cause: why naive FT fails | `BatchNormInternal` batch-stat feature corruption (with evidence) |
+| 6 | The fix — fold BatchNorm into Conv | the BN-fold, and why it is legitimate (frozen feature extractor) |
+| 7 | Why only the last layer | accuracy (full-model sweep ≤ noise), precision (drift), BN-unfoldable for full-model |
+| 8 | Why the drift is solved | MaxPool argmax tie-flip = drift onset (direct on-device proof) + AvgPool caveat + fp-non-associativity root |
+| 9 | How the on-device weights are extracted | the `[WDUMP]` raw-hex dump mechanism |
+| 10 | Results | headline accuracy + bit-exactness + cost |
+| 11 | Reproduction | end-to-end commands + infer-fixture assembly / window provenance |
+| 12 | End-to-end on-device inference verification | GVSoC inference accuracy, zero-shot 78.33% → fine-tuned 82.78% |
+| 12b | Multi-batch progressive evaluation | FT batch *k* → eval batch *k+1* across the session (calibrated PyTorch) |
+| 13 | Limitations / honest notes | scope, non-predictive PyTorch sim, GVSoC-not-silicon, `--fold-bn` |
+| 14 | Files and artifacts | every relevant code/fixture/script/log/figure/doc + its purpose |
+
+---
+
 ## 1. Goal
 
 Demonstrate that SpeechNet (SilentWear EMG gesture classifier) can be fine-tuned
