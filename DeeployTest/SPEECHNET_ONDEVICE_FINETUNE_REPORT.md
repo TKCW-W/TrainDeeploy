@@ -383,10 +383,14 @@ Results (balanced accuracy on the eval batch; Δ vs that batch's pretrained zero
   84.44% vs 78.89%; round 4: 82.78% on b5 vs 66.11% — +16.7 pp from prior rounds alone).
 - **Batch difficulty varies** (zero-shot b3 = 63%, b5 = 66% are harder than b2/b4 ≈ 78%);
   the configuration recovers the most on the hard batches.
-- **Caveat (round 4):** fine-tuning on batch 4 slightly *lowered* b5 accuracy vs the
-  already-adapted carried model (82.78% → 76.11%) — batch 4's distribution pulls the head
-  away from b5 — though it remains +10 pp over the pretrained zero-shot. Both independent
-  and progressive land ~75–76% on b4→b5, so that transition is inherently the weakest.
+- **Caveat (round 4):** evaluated on **batch 5**, the three numbers are — pretrained
+  zero-shot **66.11%**; the carried head *after* rounds 1→3 (FT on b1,b2,b3), *before* round 4
+  trains on b4, **82.78%** (i.e. +16.7 pp came purely from the earlier rounds); and *after*
+  round 4 fine-tunes on batch 4, **76.11%**. So round 4's FT on batch 4 actually *lowers*
+  batch-5 accuracy (82.78% → 76.11%) — batch 4's distribution pulls the head away from batch 5
+  — though it still ends +10 pp over the pretrained zero-shot. (The 82.78% here is the carried
+  model on b5, *not* batch-5 zero-shot, which is 66.11%.) Both independent and progressive land
+  ~75–76% on b4→b5, so that transition is inherently the weakest.
 
 **Sampling variance (important for reading the numbers).** With only 54 training windows
 for the head, the result depends on *which* windows are drawn. Over 10 random 6-per-class
