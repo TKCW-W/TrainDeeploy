@@ -450,3 +450,57 @@ fully-hardware-verified curve is desired.
 - GVSoC is the cycle-accurate *simulator* of Siracusa, not physical silicon.
 - BN-folding is currently auto-enabled only for `last_layer`; an explicit `--fold-bn` flag
   would generalise it.
+
+## 14. Files and artifacts
+
+Paths relative to each repo root. Code changes are all tagged with `QW` comments.
+
+### Code (modified source — the actual mechanism)
+| file | purpose |
+|---|---|
+| `Onnx4Deeploy/onnx4deeploy/models/speechnet_exporter.py` | **BN-fold fix** — `_fold_bn_into_conv`, auto-enabled for `training_strategy='last_layer'` (the core fix that makes on-device head-only FT work) |
+| `TrainDeeploy/TargetLibraries/PULPOpen/src/MaxPool.c` | **argmax-flip instrumentation** — per-step `Σ off`/`Σ off²` checksum of `MaxPoolGrad` argmax (drift evidence), runtime-gated |
+| `TrainDeeploy/DeeployTest/Platforms/Siracusa/src/deeploytraintest.c` | **weight dump** (`dump_weights`, `[WDUMP]`) + **argmax dump** (`[AMSIG]`); reset/print per step |
+| `TrainDeeploy/DeeployTest/Platforms/Siracusa/CMakeLists.txt` | build opt-ins `-D DUMP_WEIGHTS=ON`, `-D DUMP_ARGMAX=ON` |
+
+### Fixtures (`TrainDeeploy/DeeployTest/Tests/Models/…`)
+| dir | purpose |
+|---|---|
+| `Training/SpeechNet/speechnet_train_head_ep{10,40}` (+ `…_optimizer_head_ep{10,40}`) | head-only + BN-folded training graphs (the deployed config; ep40 = headline +4.44 pp) |
+| `speechnet_infer_b2_{zs,ft}` | on-device inference-accuracy graphs (zero-shot / device-fine-tuned `fc`); same batch-2 windows |
+| `Training/SpeechNet/speechnet_train_maxpool_90` | full-model MaxPool fixture used for the **drift / argmax-flip** experiment |
+| `Training/SpeechNet/speechnet_train_maxpool_{5ep_acc2,90_acc4}` | n_accum (effective-batch) precision experiment |
+
+### Scripts (`TrainDeeploy/DeeployTest/`)
+| script | purpose |
+|---|---|
+| `speechnet_ft_folded.py` | **predictive** ORT-space lr sweep of folded head-only FT (found +4.44 pp) |
+| `speechnet_ft_ortsweep.py`, `speechnet_ft_curve.py` | ORT-space lr sweep / epoch curve (config selection) |
+| `speechnet_ft_progressive.py` | multi-batch progressive + independent FT evaluation (§12b) |
+| `speechnet_argmax_ort_ref.py` | **host ORT reference** (bit-exact replica) computing the argmax checksum for the device-vs-ORT comparison |
+| `speechnet_accuracy_eval_untiled.py` | on-device per-sample GVSoC inference-accuracy harness (existing; reused) |
+| `speechnet_ft_sim_search*.py`, `speechnet_ft_faithful.py` | PyTorch sim search / faithful replica — **NOT predictive** (eval-mode BN); kept for the record (see §13) |
+
+### Logs & data (`TrainDeeploy/DeeployTest/`)
+| file | purpose |
+|---|---|
+| `speechnet_head_ep{10,40}_ondevice.log` | on-device training runs (per-step loss + `[WDUMP]` device weights) |
+| `speechnet_maxpool_90_argmax.log` | device argmax run (`[AMSIG]` per step) for the drift proof |
+| `speechnet_argmax_ort_ref.npz` | ORT-reference argmax signatures (paired with the device run) |
+| `speechnet_b2_{zs,ft}_ondevice_acc.log` | on-device inference accuracy (78.33% / 82.78%) |
+| `speechnet_maxpool_90step_acc{1,2,4}_val.log` | n_accum precision-experiment loss/diff trajectories |
+
+### Figures (`TrainDeeploy/DeeployTest/`)
+| file | purpose |
+|---|---|
+| `speechnet_head_ep40_loss.png` | on-device training-loss convergence (0.77→0.37) |
+| `speechnet_drift_argmax_evidence.png` | device-vs-ORT diff trajectory — discrete 262× jump |
+| `speechnet_drift_argmax_proof.png` | **direct proof** — device-vs-ORT argmax agrees 0–35, flips at 36 |
+
+### Docs (`TrainDeeploy/DeeployTest/`)
+| file | purpose |
+|---|---|
+| `SPEECHNET_ONDEVICE_FINETUNE_REPORT.md` | **this report** (authoritative) |
+| `SPEECHNET_ONDEVICE_FINETUNE_PLAN.md` | the experiment plan |
+| `SPEECHNET_ONDEVICE_FINETUNE_RESULTS.md` | quick results summary |
+| `SPEECHNET_FINETUNE_PRECISION_FINDINGS.md` | earlier precision (n_accum) + first FT-accuracy findings |
