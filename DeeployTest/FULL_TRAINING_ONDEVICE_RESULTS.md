@@ -122,6 +122,43 @@ Two conclusions, both reinforcing the earlier reading:
 stats, device full-model FT only reaches break-even, never the paper's gain: gradient
 accumulation gives batch-1 BN no matter the `n_accum`, so the learning itself is corrupted.)
 
+## Independent GPU/host verification & paper-gap decomposition
+
+Because the paper fine-tunes in full-precision PyTorch on GPU, the device-faithful config was
+re-run in a clean **PyTorch** implementation (host full-precision, independent of the ORT/Deeploy
+pipeline) on the same 54 training windows, ep40, lr 1e-3 — then constraints were relaxed one axis
+at a time toward the paper. PyTorch `model.train()` updates running stats automatically; "frozen-RS"
+restores the pretrained running stats before eval to mimic the device (which never updates them);
+true batch>1 required monkeypatching the deploy model's hardcoded `reshape(1, fc_in)` → `reshape(-1,…)`.
+
+| # | config | batch | running-stats | optimizer | epochs | batch-2 | Δ |
+|---|---|---|---|---|---|---|---|
+| A | **device-faithful** | 1 + n_accum 8 | frozen | SGD | 40 | 55.00% | **−23.33** |
+| B | + RS update | 1 + n_accum 8 | updated | SGD | 40 | 68.89% | −9.44 |
+| C | + **true batch-8** | 8 | updated | SGD | 40 | **85.56%** | **+7.22** |
+| D | true batch-32 | 32 | updated | SGD | 40 | 85.56% | +7.22 |
+| E | + Adam | 32 | updated | Adam | 40 | 83.33% | +5.00 |
+| F | + 50 epochs (paper) | 32 | updated | Adam | 50 | 83.89% | +5.56 |
+
+**Findings:**
+1. **The regression is real, not a pipeline artifact.** Row A (independent PyTorch) = 55.00% ≈
+   device 49.44% / ORT-frozen-RS 44.44% — all strongly negative. The ORT/Deeploy result is sound.
+2. **The dominant axis is the TRUE BATCH (B→C): −9.44 → +7.22 pp, a +16.7 pp swing.** Replacing
+   batch-1+accumulation with a genuine batch-8 forward (joint BN normalization) is what flips the
+   result positive — and that is *precisely* what gradient accumulation cannot provide. This
+   **empirically proves** that `n_accum` (any value) ≠ a real batch for BatchNorm: BN statistics
+   are computed within one forward, which gradient accumulation never widens beyond one window.
+3. **Running-stat update (A→B) helps (+13.9 pp) but is insufficient alone** (−9.44 pp). So
+   accumulating running stats on-device would recover much of the regression but not reach the paper.
+4. **Optimizer & epochs are secondary:** Adam at lr 1e-3 is slightly *below* SGD here (not Adam-tuned;
+   the paper adds ReduceLROnPlateau + early stop). With true batch + updated RS, even plain SGD hits
+   **+7.22 pp** — essentially the paper's +8.33 pp (residual ≈ 30% vs ~70% data + lr tuning).
+
+**Gap decomposition (device-faithful −23.33 pp → paper-like +7.22 pp):** running-stat update
+**+13.9 pp**, true batch **+16.7 pp** (the big one), optimizer/epochs ≈ 0. The two things the device
+fundamentally cannot do — **a real batch >1** (L2-bound) and (without a kernel change) **running-stat
+updates** — account for the entire gap. Neither is reachable via `n_accum`.
+
 ## The key reframe
 
 For **full-model** on-device FT, the precision drift is a **red herring** (−2.78pp, bounded). The
