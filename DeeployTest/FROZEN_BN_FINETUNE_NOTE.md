@@ -75,6 +75,24 @@ reliable gain** over head-only and it re-adds MaxPool drift. **Head-only + BN-fo
 deployable choice** — reliable, low-variance, properly-tuned +4.44 pp exceeds full-FT's mean.
 Artifacts: `frozenbn_variance.log`, `speechnet_frozenbn_variance.py`.
 
+## Fair head-to-head — each recipe at its OWN best lr (`speechnet_frozenbn_fair.py`)
+Same 8 draws × 2 seeds; each recipe swept over a small lr set, compared at its best-mean lr.
+
+| recipe (best lr) | mean Δ | std | range |
+|---|---|---|---|
+| head-only @ 5e-3 | +3.40 | **0.52** | +2.22 … +3.89 |
+| full-FT @ 1e-3 | **+3.99** | 2.95 | −1.67 … +8.89 |
+| paired (full − head) | **+0.59** | 2.99 | full wins **9/16** |
+
+**Refined verdict (risk/reward, not a clear winner):** full-FT has a marginally higher *mean*
+(+3.99 vs +3.40, edge +0.59 pp — within noise, wins 9/16) but **~6× the variance** (std 2.95 vs 0.52,
+can go negative). head-only is **rock-solid** (±0.52, never negative). So: full-FT = slightly higher
+expected value / high variance; head-only = slightly lower / very reliable → **head-only is the safe
+deployable default; full-FT only if you can validate per-deployment and want the higher ceiling.**
+Both need lr tuning. Realistic expected gain for this task ≈ **+3.4–4.0 pp** (the single-draw
++4.44/+5.56/+8.33 peaks were all optimistic draws).
+Artifacts: `frozenbn_fair.log`, `speechnet_frozenbn_fair.py`.
+
 ## TODO (deferred)
 - Rename the "GPU" ablation script/wording → "host PyTorch (CPU)" (no CUDA in this env; runs were
   full-precision CPU, numerically GPU-equivalent). File: `speechnet_full_gpu_ablation.py`.
