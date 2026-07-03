@@ -53,6 +53,28 @@ is suggestive; it is at least as good AND adapts conv, at the cost of lr-fragili
 
 Artifacts: `frozenbn_grid.log`, `speechnet_frozenbn_gridsearch.json`.
 
+## Variance study — the grid's "+5.56 beats head-only" was a LUCKY DRAW (corrected)
+`speechnet_frozenbn_variance.py`: 8 independent stratified 30% draws (6/class from the full 180-pool)
+× 2 seeds, training BOTH recipes per draw (frozen-BN, batch-1, lr 2e-3, n_accum 1, ep40). Eval batch-2.
+
+| recipe | mean Δ | std | range | never neg? |
+|---|---|---|---|---|
+| frozen-BN **full-FT** | **+2.60** | **3.04** | −2.78 … +7.78 | no (3 negative draws) |
+| **head-only** | **+2.01** | **1.06** | +0.56 … +4.44 | **yes** |
+| paired (full − head) | **+0.59** | 3.73 | — | wins **10/16** only |
+
+**Verdict: full-FT does NOT robustly beat head-only.** Mean edge +0.59 pp (within noise), wins 62% of
+draws, and **3× the variance** (unstable — result depends on which windows are sampled). The single-draw
++5.56 (grid) and +8.33 (fine lr sweep, lr 2.5e-3) are favorable draws, not reproducible. Finer lr sweep
+on one draw is non-monotonic/jumpy (1e-3→+7.22, 2e-3→+4.44, 2.5e-3→+8.33, 4e-3→−2.78 collapse) — a
+symptom of the high-variance regime.
+
+**Conclusion:** frozen-stat BN full-FT is a valid BN fix (turns −17.78pp regression into +2.60 mean,
+deployable at batch-1), but on this tiny FT set adapting conv is a high-variance gamble with **no
+reliable gain** over head-only and it re-adds MaxPool drift. **Head-only + BN-fold stays the better
+deployable choice** — reliable, low-variance, properly-tuned +4.44 pp exceeds full-FT's mean.
+Artifacts: `frozenbn_variance.log`, `speechnet_frozenbn_variance.py`.
+
 ## TODO (deferred)
 - Rename the "GPU" ablation script/wording → "host PyTorch (CPU)" (no CUDA in this env; runs were
   full-precision CPU, numerically GPU-equivalent). File: `speechnet_full_gpu_ablation.py`.
