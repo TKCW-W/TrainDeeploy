@@ -106,28 +106,33 @@ Artifacts: `frozenbn_fair.log`, `speechnet_frozenbn_fair.py`.
   divide the baked lr by n_accum. n_accum=1 needs no compensation. (Draw seed1000 is favorable →
   read the pattern, not the absolute numbers.)
 
-## FINAL full-training deployment config (frozen-stat BN via fold)
-Enabled by the new `--fold-bn` flag (Onnx4Deeploy, QW): folds BN into Conv with frozen pretrained
-stats → training graph has **no BatchNormInternal** (verified: `speechnet_train_fullfold` = Conv/ReLU/
-MaxPool + 12 InPlaceAccumulatorV2 = 5 conv w+b + fc w+b). Train==inference, no batch-stat corruption,
-no running-stat update, batch-1 deployable.
+## FINAL full-training deployment config = KERNEL MODIFICATION (frozen-stat BN)
+Chosen path: modify `BatchNorm.c` so the training BN normalizes with the FROZEN pretrained running
+stats, gated by `-D BN_FROZEN_STATS`. (The fold-into-Conv alternative was DROPPED — folding rescales
+conv weights by γ/σ and, with block-0's huge running_var, collapses at the normal lr. The kernel mod
+keeps γ/β at natural scale, so the validated lr transfers.) Commit `e87291b`.
+
+- `PULP_BatchNormInternal_fp32` (fwd): frozen branch uses `running_mean/var`, saves them.
+- `PULP_BatchNormGrad_fp32` (bwd): affine gradient `dX = γ·inv_std·dY` (no batch-stat Jacobian terms).
+- Runtime `g_bn_frozen_stats` (default 0 = unchanged); harness sets it under `#ifdef BN_FROZEN_STATS`.
+- **Validated bit-exact:** 20-step device run vs host frozen-BN reference → worst weight drift 0.000%.
 
 ```
-Onnx4Deeploy.py -model SpeechNet -mode train -o <Tests>/speechnet_train_fullfold \
+# unfolded full-training fixture (keeps BatchNormInternal — the modified kernel handles it)
+Onnx4Deeploy.py -model SpeechNet -mode train -o <Tests>/speechnet_train_fullfrozen \
   --dataset silentwear --data-path <DATA> --pretrained-weights <CKPT> \
   --subject S01 --session 3 --batch 1 --condition vocalized \
-  --stratified --data-size 54 --n-epochs 40 --n-accum 1 --lr 0.001 \
-  --training-strategy full --fold-bn
-deeployTrainingRunner_tiled_siracusa.py -t <Tests>/speechnet_train_fullfold \
+  --stratified --data-size 54 --n-epochs 40 --n-accum 1 --lr 0.001 --training-strategy full
+# on-device train with frozen-stat BN + weight dump  (2160 forwards)
+deeployTrainingRunner_tiled_siracusa.py -t <Tests>/speechnet_train_fullfrozen \
   --n-steps 2160 --n-accum 1 --cores 8 --l1 128000 --l2 2000000 \
-  --memAllocStrategy MiniMalloc --searchStrategy random-max -D DUMP_WEIGHTS=ON
+  --memAllocStrategy MiniMalloc --searchStrategy random-max -D BN_FROZEN_STATS=ON -D DUMP_WEIGHTS=ON
 ```
-Config: full+fold, batch 1, **n_accum 1, lr 0.001** (eff_lr 1e-3), data 54 (30%), ep40 → 2160 forwards.
-Rules: eff_lr = lr×n_accum ∈ ~1e-3..4e-3 (collapse ≳8e-3); do NOT raise lr; for n_accum>1 divide lr.
-Expected ~+4pp (sim +3.99±2.95, high variance — validate the run).
+Config: full training, batch 1, **n_accum 1, lr 0.001** (eff_lr 1e-3), data 54 (30%), ep40 → 2160 forwards.
+Rules: eff_lr = lr×n_accum ∈ ~1e-3..4e-3; for n_accum>1 divide lr. Expected ~+4pp (sim +3.99±2.95, high
+variance — validate the run). Validation harness: `speechnet_fullfrozen_validate.py`.
 
 ## TODO (deferred)
 - Rename the "GPU" ablation script/wording → "host PyTorch (CPU)" (no CUDA in this env; runs were
   full-precision CPU, numerically GPU-equivalent). File: `speechnet_full_gpu_ablation.py`.
-- Optionally confirm the best config **on-device** (full-train the BN-folded graph, extract weights,
-  eval batch-2) and check drift.
+- ~~Onnx4Deeploy `--fold-bn` flag~~ DROPPED (superseded by the kernel modification).
