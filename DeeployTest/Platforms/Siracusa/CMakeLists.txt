@@ -46,6 +46,9 @@ if(TRAINING)
     if(DUMP_ARGMAX)  # QW: opt-in MaxPoolGrad argmax-signature dump (drift evidence) -- QW
         target_compile_definitions(${ProjectId} PRIVATE DUMP_ARGMAX)
     endif()  # QW
+    if(BN_FROZEN_STATS)  # QW: opt-in frozen-stat BN training (-D BN_FROZEN_STATS=ON) -- QW
+        target_compile_definitions(${ProjectId} PRIVATE BN_FROZEN_STATS)
+    endif()  # QW
 endif()
 
 add_gvsoc_emulation(${ProjectId} "siracusa")

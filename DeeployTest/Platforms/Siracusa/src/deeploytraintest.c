@@ -360,6 +360,13 @@ int main(void) {
   g_maxpool_argmax_en = 1u;
 #endif
 
+#ifdef BN_FROZEN_STATS /* QW: normalize training BN with frozen pretrained running stats -- QW */
+  extern uint32_t g_bn_frozen_stats;
+  g_bn_frozen_stats = 1u;
+  printf("[BN_FROZEN_STATS] training BN uses frozen running statistics "
+         "(train==inference)\n");
+#endif
+
   for (uint32_t update_step = 0; update_step < N_TRAIN_STEPS; update_step++) {
 
     for (uint32_t accum_step = 0; accum_step < N_ACCUM_STEPS; accum_step++) {
