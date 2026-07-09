@@ -106,6 +106,26 @@ Artifacts: `frozenbn_fair.log`, `speechnet_frozenbn_fair.py`.
   divide the baked lr by n_accum. n_accum=1 needs no compensation. (Draw seed1000 is favorable →
   read the pattern, not the absolute numbers.)
 
+## FINAL full-training deployment config (frozen-stat BN via fold)
+Enabled by the new `--fold-bn` flag (Onnx4Deeploy, QW): folds BN into Conv with frozen pretrained
+stats → training graph has **no BatchNormInternal** (verified: `speechnet_train_fullfold` = Conv/ReLU/
+MaxPool + 12 InPlaceAccumulatorV2 = 5 conv w+b + fc w+b). Train==inference, no batch-stat corruption,
+no running-stat update, batch-1 deployable.
+
+```
+Onnx4Deeploy.py -model SpeechNet -mode train -o <Tests>/speechnet_train_fullfold \
+  --dataset silentwear --data-path <DATA> --pretrained-weights <CKPT> \
+  --subject S01 --session 3 --batch 1 --condition vocalized \
+  --stratified --data-size 54 --n-epochs 40 --n-accum 1 --lr 0.001 \
+  --training-strategy full --fold-bn
+deeployTrainingRunner_tiled_siracusa.py -t <Tests>/speechnet_train_fullfold \
+  --n-steps 2160 --n-accum 1 --cores 8 --l1 128000 --l2 2000000 \
+  --memAllocStrategy MiniMalloc --searchStrategy random-max -D DUMP_WEIGHTS=ON
+```
+Config: full+fold, batch 1, **n_accum 1, lr 0.001** (eff_lr 1e-3), data 54 (30%), ep40 → 2160 forwards.
+Rules: eff_lr = lr×n_accum ∈ ~1e-3..4e-3 (collapse ≳8e-3); do NOT raise lr; for n_accum>1 divide lr.
+Expected ~+4pp (sim +3.99±2.95, high variance — validate the run).
+
 ## TODO (deferred)
 - Rename the "GPU" ablation script/wording → "host PyTorch (CPU)" (no CUDA in this env; runs were
   full-precision CPU, numerically GPU-equivalent). File: `speechnet_full_gpu_ablation.py`.
