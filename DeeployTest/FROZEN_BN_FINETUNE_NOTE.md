@@ -93,6 +93,19 @@ Both need lr tuning. Realistic expected gain for this task ≈ **+3.4–4.0 pp**
 +4.44/+5.56/+8.33 peaks were all optimistic draws).
 Artifacts: `frozenbn_fair.log`, `speechnet_frozenbn_fair.py`.
 
+## Gradient-accumulation convention in TrainDeeploy = SUMMING (code-verified)
+- `FloatInPlaceAccumulatorV2Template.py`: `accum_buffer += gradient` (first micro-batch resets, rest
+  add) → `accum = Σ gradient_i`. `SGDTemplate.py`: `weight -= lr * grad_acc` — **no /n_accum**.
+  Loss grad = 1/batch_size = 1 at batch-1. ⇒ **effective LR = lr × n_accum.**
+- Consequence (device-faithful summing sweep, frozen-BN full-FT, 30% draw seed1000, ep40):
+  - **[A] fix lr=1e-3, raise n_accum** → eff_lr = 1e-3/4e-3/8e-3 → 85.56 / 86.11 / **43.89% (collapse)**.
+    n_accum is NOT a free knob: raising it at fixed lr blows up eff_lr and collapses.
+  - **[B] matched eff_lr≈1e-3** (lr=1e-3/n_accum) → n1/n4/n8 = 85.56 / 87.22 / 86.67% — n_accum>1 is
+    fine and marginally better (smoothing) when lr is compensated. (The averaging grid = view [B].)
+- **Deployment rule:** keep eff_lr = lr × n_accum in ~1e-3…4e-3 (collapse ≳8e-3). For n_accum>1,
+  divide the baked lr by n_accum. n_accum=1 needs no compensation. (Draw seed1000 is favorable →
+  read the pattern, not the absolute numbers.)
+
 ## TODO (deferred)
 - Rename the "GPU" ablation script/wording → "host PyTorch (CPU)" (no CUDA in this env; runs were
   full-precision CPU, numerically GPU-equivalent). File: `speechnet_full_gpu_ablation.py`.
