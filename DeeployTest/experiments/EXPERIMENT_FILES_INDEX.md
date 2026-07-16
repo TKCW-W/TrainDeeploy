@@ -27,6 +27,17 @@ The full-model n_accum-8 experiment showing the −17.78 pp regression + its dec
 - `speechnet_full_gpu_ablation.py` — host ablation decomposing the device-vs-paper gap.
 - `full8_e20_device.log`, `full8_e40_device.log`, `full8_sweep.log` — device WDUMP / sweep logs.
 
+## `headonly_ondevice_ft_fixedwindow/` — head-only FT re-run with fixed (onset) windowing
+Re-run of the shipped head-only + BN-fold on-device FT after fixing the SilentWear windowing
+(center → onset; Onnx4Deeploy `77e269d`) and switching the base model to `inter_session_ft`.
+Reproduces the paper's zero-shot exactly and confirms the FT gain fully on-device.
+- `SPEECHNET_ONDEVICE_FT_FIXEDWINDOW.md` — **the authoritative report** (results, paper comparison, gain decomposition).
+- `extract_device_fc.py` (+ `device_fc_{weight,bias}.npy`), `assemble_infer_fixtures.py`, `ort_ft_eval.py`,
+  `gain_decomposition.py`, `run_ondevice_evals.sh` — extraction / fixture assembly / ORT ref / decomposition / eval driver.
+- `run_train_isft_fw.log`, `eval_b{1_zs,2_zs,2_ft}_summary.log`, `results_b*.json` — on-device training + inference logs.
+- Result: on-device b1 zero-shot **80.56 %** (= host), b2 zero-shot **81.67 %** (= paper `balanced_acc_no_ft`),
+  b2 head-only fine-tuned **89.44 %** (+7.78 pp), all `sim_errors=0`.
+
 ## `frozen_bn_kernel_finetune/` — frozen-stat BN (the kernel modification)
 The frozen-stat BN recipe + the validated `BatchNorm.c` kernel modification for paper-faithful
 full-model FT at batch-1.
