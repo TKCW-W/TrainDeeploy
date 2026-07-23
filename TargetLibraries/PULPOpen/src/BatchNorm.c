@@ -10,6 +10,14 @@
 
 #include <math.h>
 
+/* QW: frozen-stat BN switch. 0 (default) = training-mode batch statistics (unchanged
+ * behaviour for all existing tests). 1 = normalize the training forward with the FROZEN
+ * pretrained running stats (train == inference), and use the matching affine backward
+ * (dX = gamma*inv_std*dY). Set by the training harness (extern) only when built with
+ * -D BN_FROZEN_STATS. Enables paper-faithful full-model FT at batch-1 without the
+ * batch-stat corruption. -- QW */
+uint32_t g_bn_frozen_stats = 0u;
+
 /*
  * Training-mode Batch Normalization forward pass (BatchNormInternal).
  *
@@ -42,29 +50,36 @@ void PULP_BatchNormInternal_fp32(
   int32_t c_end = MIN(c_start + chunk, (int32_t)C);
 
   for (int32_t c = c_start; c < c_end; c++) {
-    /* ── Compute batch mean ─────────────────────────────────────────────── */
-    float32_t mean = 0.0f;
-    for (uint32_t n = 0; n < N; n++) {
-      const float32_t *x_nc = X + (n * C + c) * N_hw;
-      for (uint32_t hw = 0; hw < N_hw; hw++) {
-        mean += x_nc[hw];
+    float32_t mean, inv_std;
+    if (g_bn_frozen_stats) {
+      /* QW: frozen-stat BN — normalize with the pretrained running stats (constants),
+       * exactly what inference uses, so training and inference are consistent. -- QW */
+      mean = running_mean[c];
+      inv_std = 1.0f / sqrtf(running_var[c] + epsilon);
+    } else {
+      /* ── Compute batch mean ───────────────────────────────────────────── */
+      mean = 0.0f;
+      for (uint32_t n = 0; n < N; n++) {
+        const float32_t *x_nc = X + (n * C + c) * N_hw;
+        for (uint32_t hw = 0; hw < N_hw; hw++) {
+          mean += x_nc[hw];
+        }
       }
+      mean *= inv_N;
+
+      /* ── Compute batch variance (unbiased=False) ──────────────────────── */
+      float32_t var = 0.0f;
+      for (uint32_t n = 0; n < N; n++) {
+        const float32_t *x_nc = X + (n * C + c) * N_hw;
+        for (uint32_t hw = 0; hw < N_hw; hw++) {
+          float32_t diff = x_nc[hw] - mean;
+          var += diff * diff;
+        }
+      }
+      var *= inv_N;
+      inv_std = 1.0f / sqrtf(var + epsilon);
     }
-    mean *= inv_N;
     saved_mean[c] = mean;
-
-    /* ── Compute batch variance (unbiased=False) ────────────────────────── */
-    float32_t var = 0.0f;
-    for (uint32_t n = 0; n < N; n++) {
-      const float32_t *x_nc = X + (n * C + c) * N_hw;
-      for (uint32_t hw = 0; hw < N_hw; hw++) {
-        float32_t diff = x_nc[hw] - mean;
-        var += diff * diff;
-      }
-    }
-    var *= inv_N;
-
-    float32_t inv_std = 1.0f / sqrtf(var + epsilon);
     saved_inv_std[c] = inv_std;
 
     float32_t g = gamma[c];
@@ -304,18 +319,31 @@ void PULP_BatchNormGrad_fp32(const float32_t *dY, const float32_t *X,
     dbeta[c] = sum_dbeta;
 
     /* ── Second pass: compute dX ─────────────────────────────────────────── */
-    /* scale = gamma * inv_std / N_total; gamma applies to all three terms:
-         dX = (g * inv_std / N) * (N*dY - dbeta - x_hat * dgamma) */
-    float32_t scale = g * inv_std * inv_N;
-
-    for (uint32_t n = 0; n < N; n++) {
-      const float32_t *x_nc = X + (n * C + c) * N_hw;
-      const float32_t *dy_nc = dY + (n * C + c) * N_hw;
-      float32_t *dx_nc = dX + (n * C + c) * N_hw;
-      for (uint32_t hw = 0; hw < N_hw; hw++) {
-        float32_t x_hat = (x_nc[hw] - mean) * inv_std;
-        dx_nc[hw] = scale * ((float32_t)N_total * dy_nc[hw] - sum_dbeta -
-                             x_hat * sum_dgamma);
+    if (g_bn_frozen_stats) {
+      /* QW: frozen stats are constants w.r.t. X, so the BN reduces to a plain per-channel
+       * affine y = gamma*inv_std*(x-mean)+beta -> dX = gamma*inv_std*dY. None of the
+       * batch-stat Jacobian terms (-dbeta, -x_hat*dgamma) apply. -- QW */
+      float32_t s = g * inv_std;
+      for (uint32_t n = 0; n < N; n++) {
+        const float32_t *dy_nc = dY + (n * C + c) * N_hw;
+        float32_t *dx_nc = dX + (n * C + c) * N_hw;
+        for (uint32_t hw = 0; hw < N_hw; hw++) {
+          dx_nc[hw] = s * dy_nc[hw];
+        }
+      }
+    } else {
+      /* scale = gamma * inv_std / N_total; gamma applies to all three terms:
+           dX = (g * inv_std / N) * (N*dY - dbeta - x_hat * dgamma) */
+      float32_t scale = g * inv_std * inv_N;
+      for (uint32_t n = 0; n < N; n++) {
+        const float32_t *x_nc = X + (n * C + c) * N_hw;
+        const float32_t *dy_nc = dY + (n * C + c) * N_hw;
+        float32_t *dx_nc = dX + (n * C + c) * N_hw;
+        for (uint32_t hw = 0; hw < N_hw; hw++) {
+          float32_t x_hat = (x_nc[hw] - mean) * inv_std;
+          dx_nc[hw] = scale * ((float32_t)N_total * dy_nc[hw] - sum_dbeta -
+                               x_hat * sum_dgamma);
+        }
       }
     }
   }

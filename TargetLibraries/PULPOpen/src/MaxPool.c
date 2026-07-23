@@ -7,6 +7,12 @@
 #include "DeeployPULPMath.h"
 #include "pmsis.h"
 
+/* QW: argmax-flip evidence — rolling hash of MaxPoolGrad argmax positions, gated by a
+ * runtime enable flag set only by the training harness (zero overhead when off). -- QW */
+uint32_t g_maxpool_argmax_sig = 0u;   /* Sum of within-window argmax offsets   */
+uint32_t g_maxpool_argmax_sig2 = 0u;  /* Sum of squared offsets (collision guard) */
+uint32_t g_maxpool_argmax_en = 0u;
+
 void PULP_MaxPool2d_fp32_fp32_HWC(const float32_t *__restrict__ pSrcA,
                                   uint32_t W, uint32_t H, uint32_t C,
                                   uint32_t Q, uint32_t P, uint32_t SQ,
@@ -128,4 +134,38 @@ void PULP_MaxPoolGrad2d_fp32_fp32_HWC(
       }
     }
   }
+
+  /* QW: argmax-flip evidence instrumentation ------------------------------- QW
+   * Core 0 re-scans ALL channels and accumulates Sum and SumSq of the *within-window*
+   * argmax offset (which element of the pooling window is the max).  That offset is
+   * TILE-invariant and the Sum/SumSq combiners are ORDER-invariant, so the device
+   * (tiled, multi-tile-call) value equals the ORT host (untiled) value when the argmax
+   * agrees, and differs the moment a tie flips.  Dormant unless harness sets the flag. */
+  if (core_id == 0 && g_maxpool_argmax_en) {
+    for (uint32_t h_out = 0; h_out < H_out; ++h_out) {
+      for (uint32_t w_out = 0; w_out < W_out; ++w_out) {
+        int32_t h0 = (int32_t)h_out * (int32_t)SP - (int32_t)pad_top;
+        int32_t w0 = (int32_t)w_out * (int32_t)SQ - (int32_t)pad_left;
+        for (uint32_t c = 0; c < C; ++c) {
+          float32_t mv = -inf;
+          int32_t mh = -1, mw = -1;
+          for (uint32_t p = 0; p < P; ++p) {
+            int32_t hi = h0 + (int32_t)p;
+            if (hi < 0 || hi >= (int32_t)H_in) continue;
+            for (uint32_t q = 0; q < Q; ++q) {
+              int32_t wi = w0 + (int32_t)q;
+              if (wi < 0 || wi >= (int32_t)W_in) continue;
+              float32_t v = pInput[((uint32_t)hi * W_in + (uint32_t)wi) * C + c];
+              if (v > mv) { mv = v; mh = hi; mw = wi; }
+            }
+          }
+          /* within-window argmax offset (tile-invariant); +1 so "no max" (=0) differs */
+          uint32_t off = (mh >= 0) ? (uint32_t)((mh - h0) * (int32_t)Q + (mw - w0)) + 1u : 0u;
+          g_maxpool_argmax_sig  += off;
+          g_maxpool_argmax_sig2 += off * off;
+        }
+      }
+    }
+  }
+  /* QW: end argmax-flip evidence ------------------------------------------- QW */
 }

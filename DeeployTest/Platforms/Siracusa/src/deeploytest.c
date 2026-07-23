@@ -41,6 +41,8 @@ void CompareFloatOnCluster(void *args) {
       float actual_val = actual[i];
       float diff = expected_val - actual_val;
 
+      printf("Logit[%u]: %10.6f\r\n", i, actual_val);
+
       if ((diff < -1e-4) || (diff > 1e-4) || isnan(diff)) {
         local_err_count += 1;
 
