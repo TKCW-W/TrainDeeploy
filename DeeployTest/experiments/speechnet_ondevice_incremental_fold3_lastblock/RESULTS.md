@@ -25,12 +25,39 @@ round runs the true tiled backward through the last block on the accelerator; we
 the `[WDUMP]` dump and validated by downstream accuracy.
 
 ## Reference-loss caveat (why the runner "fails" with exit 1)
-`create_training_test_data` computes the reference LOSS with **live-batch BN** (training_mode=1 in
-`network_train.onnx`), whereas the device trains with **frozen** BN stats (`BN_FROZEN_STATS=ON`). So the
-runner's bit-exactness check reports "Errors 2160/2160" and exits 1 — a **false failure**. The device is
-correct: `process_round_k1.py` extracts the 6 trainable tensors from `[WDUMP]` (produced regardless of the
-exit code), and accuracy validates them (b2 on-device 87.78 = PyTorch K=1 87.78). The per-round
-"DIVERGES" lines vs `outputs.npz` are the same artifact (buggy live-BN ORT reference), not a device error.
+`create_training_test_data` computes the reference LOSS/grads by running ORT on `network_train.onnx`, whose
+BN is **live-batch** (`BatchNormInternal`, `training_mode=1`), whereas the device trains with **frozen** BN
+stats (`BN_FROZEN_STATS=ON`, runtime `g_bn_frozen_stats=1`). So the runner's bit-exactness check reports
+"Errors 2160/2160" and exits 1 — a **false failure**. The device is correct: `process_round_k1.py` extracts
+the 6 trainable tensors from `[WDUMP]` (produced regardless of the exit code), and accuracy validates them
+(b2 on-device 87.78 = PyTorch K=1 87.78). The per-round "DIVERGES" lines vs `outputs.npz` are the same
+artifact (live-BN ORT reference), not a device error.
+
+### Root cause (verified 2026-07-24)
+The `--bn-frozen-stats` export flag *does* work — but only when BN is **not** trainable. Then eval-mode BN
+is a pure affine and the exporter **folds it into the preceding conv** (0 BN nodes → frozen reference =
+device; head-only fixtures pass cleanly). For K=1 (and full training) we make the **BN affine
+`blocks_4_1_weight/bias` trainable**, so ORT's training-artifact generator **cannot fold BN** — it must use
+training-mode `BatchNormInternal` (it feeds `saved_mean/var` to `BatchNormalizationGrad`). The eval export
+is therefore overridden and the reference graph comes back live-batch. The device re-freezes at runtime via
+the separate C flag, so device (frozen) ≠ ORT reference (live) ⇒ the false failure. Confirmed: head-only
+fixtures have **0 BN nodes**; K=1/full fixtures have `BatchNormInternal(training_mode=1)`.
+
+### TODO — fix the ORT reference so the bit-exact test passes (circle back later)
+Goal: make `create_training_test_data` emit a **frozen-BN** reference for `bn_frozen_stats` fixtures.
+- ❌ **Naive attribute patch does NOT work.** Flipping `BatchNormInternal.training_mode→0` on the reference
+  graph makes ORT reject it: *"number of op outputs should be 1 when Training_mode = False"* — the training
+  BN is a 5-output op welded to `BatchNormalizationGrad`; you can't freeze it in place.
+- **Option A (targeted):** when `bn_frozen_stats`, compute the single-step reference in **PyTorch
+  `model.eval()`** (frozen BN, trainable params get grads, one SGD step) instead of running the live graph —
+  matches `train_lastk`/the device by construction. Small change in `create_training_test_data`; only caveat
+  is non-BN ops become PyTorch-vs-device (within the 1e-3 tol).
+- **Option B (principled):** export frozen BN as explicit ops — `xn=(x−running_mean)·(1/√(running_var+ε))`
+  (constants) then `y=γ·xn+β` (trainable Mul/Add). ORT differentiates natively; Deeploy emits Mul/Add
+  kernels; graph = reference = device, and the runtime `BN_FROZEN_STATS` C override becomes unnecessary.
+  Bigger exporter change + full training-suite re-validation.
+- Recommendation: Option A to pass the test; Option B for the proper long-term cleanup. **Does not affect the
+  K=1 results above** — those are validated by accuracy, not this reference.
 
 ## Tiling
 K=1's heavier backward needs explicit runner flags (head-only tiled with defaults):
