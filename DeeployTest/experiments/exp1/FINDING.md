@@ -50,18 +50,54 @@ Device vs frozen ORT reference (sample of 36):
 | 33 | 0.557287 | 0.557287 | 0.000001 |
 | 35 | 0.049436 | 0.049436 | 0.000000 |
 
-**`Errors: 0 out of 36` — ✓ PASSED.** Max per-step `|diff|` ≈ 1e-6 (fp32/tiling round-off), far inside the
+**`Errors: 0 out of 36` — ✓ PASSED.** Max per-step `|diff|` ≈ 4e-6 (fp32/tiling round-off), far inside the
 1e-3 tolerance. The bit-exact check is now *meaningful* for full-training-frozen-BN: it validates the device
 against a reference that computes BN the same way the device does.
 
+> **Note:** this 36-pass / 9-update smoke is **below the MaxPool argmax-drift onset** (~36 updates), so
+> `0/36` confirms the **BN fix**, not that the *full* run is bit-exact — see the drift caveat below.
+
+## ⚠️ Caveat — MaxPool argmax drift is SEPARATE from Option A and NOT yet cleared
+
+The smoke test passed `0/36` **because it is below the MaxPool argmax-drift onset**, not because the full
+run is bit-exact. Option A fixes only the **BN reference**; the **MaxPool argmax drift** is an independent,
+inherent effect that a long run WILL hit.
+
+Evidence (`../maxpool_numerical_drift/SPEECHNET_FINETUNE_PRECISION_FINDINGS.md`):
+
+| run | eff-batch | lr | updates | breach rate | onset | max diff |
+|---|---|---|---|---|---|---|
+| acc1 | 1 | 1e-3 | 90 | **52/90** | ~step 36 (epoch 2) | 0.064 |
+| acc4 | 4 | 2.5e-4 | 90 | **58/90** | ~step 32 (epoch 7) | 0.020 |
+
+Root cause (inherent, not a bug): *MaxPool argmax discreteness* — fp32 reduction-order differences (~1e-6)
+flip argmax ties once the weights have moved enough. The device stays a valid training trajectory; it just
+diverges from the ORT/PyTorch reference at pooled-value ties (max ~0.02–0.06 loss). (The earlier ≈0.02
+"drift" from the MaxPoolGrad layout bug #4 was a *different*, already-fixed issue.)
+
+**Why the smoke didn't hit it:** it did only **9 optimiser updates** (36 passes ÷ n_accum 4) at lr 3e-4 —
+below the ~36-update onset AND ~3× lower lr than acc1. So no argmax tie had flipped yet.
+
+**Why the full run WILL hit it:** the real recipe is **54 windows × 40 epochs = 2160 passes = 540 updates**
+at lr 3e-4 — **~15× past the onset**. Expect the tight (1e-3) per-step loss check to breach on many steps,
+just like 52/90 before. **This is expected and is NOT an Option A regression or a training error.**
+
 ## Next steps
-1. **Full-scale run:** export the real recipe (data_size 54, 40 epochs, n_accum 4, lr 3e-4, full model,
-   `--bn-frozen-stats`) and confirm `Errors: 0/2160` end-to-end (longer GVSoC run).
-2. **Wire into the incremental on-device simulation** for full-training-frozen-BN (b1→b5, fold 3), mirroring
+1. **Full-scale run — and explicitly CHECK FOR MAXPOOL DRIFT.** Export the real recipe (data_size 54,
+   40 epochs, n_accum 4, lr 3e-4, full model, `--bn-frozen-stats`). Do **not** expect `0/2160`: with the BN
+   reference now correct, any remaining breaches are the **MaxPool argmax drift** — record the breach rate,
+   onset step, and max diff, and confirm they match the argmax-tie signature (small ~0.02–0.06, appears
+   after weights move) rather than a systematic BN mismatch (which would be large and from step 0).
+2. **Validate by ACCURACY, not strict per-step loss** (the deployment-realistic check). Because MaxPool
+   discreteness makes long-run bit-exact impossible, extract the device weights via `[WDUMP]` and evaluate
+   balanced accuracy per round — exactly as the K=1 chain did (`ondevice_simulation_lastblock`). Optionally
+   loosen TOL to ~0.1 to see how many steps still pass under the argmax-drift budget.
+3. **Wire into the incremental on-device simulation** for full-training-frozen-BN (b1→b5, fold 3), mirroring
    `ondevice_simulation_lastblock`/`_headonly`: per-round export → GVSoC train → carry weights → eval next
-   batch, now with a passing bit-exact check each round.
-3. **(Optional) Option B** later if we want to retire the `BN_FROZEN_STATS` C-flag and make frozen BN a
-   first-class graph construct — but only with a fused fp32 affine kernel to avoid the ~4× BN DMA.
+   batch — with accuracy as the acceptance criterion and the drift caveat documented per round.
+4. **(Optional) Option B** later if we want to retire the `BN_FROZEN_STATS` C-flag and make frozen BN a
+   first-class graph construct — but only with a fused fp32 affine kernel to avoid the ~4× BN DMA. (Note:
+   Option B does not fix MaxPool drift either — that's orthogonal to BN.)
 
 ## Files
 - `Onnx4Deeploy/onnx4deeploy/models/speechnet_exporter.py` — `_frozen_pytorch_reference` + gated
