@@ -82,9 +82,11 @@ aggregate the merged per-op numbers must reconcile to (they match to <0.2 %).
 
 ## 2. Convert the cycle log(s) → a Chrome/Perfetto trace
 
-There is **no** `/app/profiling_to_perfetto.py` in this container (it was referenced in the plan but is
-absent). We ship a self-contained parser+converter instead:
-`experiments/exp2/profiling_run/analyze_and_perfetto.py`. It
+Note on `profiling_to_perfetto.py`: it **does** exist — but in the **export** container (`agitated_hugle`)
+at `/app/profiling_to_perfetto.py`, **not** in the GVSoC container (`deeploy_arm_mounted`) where the train
+runner runs. Its CLI is `python /app/profiling_to_perfetto.py <log|-> -o trace.json` (same UART format). To
+avoid the cross-container hop — and to add per-step cycle analysis + the multi-pass merge (see §1) — we ship
+a self-contained equivalent: `experiments/exp2/profiling_run/analyze_and_perfetto.py`. It
 
 1. parses all `--profileTiling` logs (regex on the UART lines),
 2. de-dupes sections by node name, classifies each as **forward / backward / optimizer**

@@ -4,6 +4,11 @@
 **Branch:** TrainDeeploy `feat/BNFRozen_OptionB` · Onnx4Deeploy `feat/BNFRozen_OptionB`
 (new branches so the current state stays untouched on the old branches)
 
+> **FINAL STATUS (2026-07-29): CLOSED — reverted to Option A per user.** B-decompose was validated on the
+> ORT side (frozen reference matches Option A to 8.3e-7) but cannot run on device (tiler collapse + no
+> per-channel broadcast kernel); the true same-graph fix is **B-fused** (~2-3 wk, moderate risk). See
+> `FINDING.md` for the full write-up + recommendation. Onnx4Deeploy reverted in `c9285df`.
+
 ## Motivation (why not Option A)
 Option A computes the per-step reference loss in a **PyTorch** `eval()` model, not by ORT on the
 training graph. It is legit as a cross-check, but it is not *clean*: ORT and the device no longer run
@@ -133,6 +138,23 @@ This directly unblocks the clean B-decompose device path and helps any broadcast
   Deeploy fusion so the device uses a single BN-affine kernel — avoids the broadcast DMA entirely and
   satisfies "still use the BN kernel"), or keep **Option A** for the device chain while shipping
   B-decompose as the ORT-validated reference (per user's "keep Option A" fallback).
+
+## B-fused scope (2026-07-29, read-only investigation)
+Feasible, ~**400-450 LOC, ~2-3 weeks, moderate risk**. Already present: the C kernels
+(`PULP_ChannelNormalize`/`BNGradReduce`/`BNGradNormalize`, BatchNorm.c:159-278), their templates
+(FloatBatchNormTemplate.py:68-119), **and their tile constraints** (BatchNormTileConstraint.py:307-646,
+C/H/W free → avoids the BOP broadcast collapse). Missing: (a) a **fusion pass** (~200 LOC,
+`ReplaceSequentialPatternPass`+`NonBranchingMatcher` in PULPOpen Passes.py) to match the decomposed
+fwd `Add→Mul→Mul→Add` **and** the ORT-autodiff bwd (Mul/ReduceSum/Reshape) → the 3 fused nodes, reshaping
+the `[1,C,1,1]` consts to `[C]`; (b) 3 TypeCheckers + 3 Parsers + 3 Bindings + Platform.py mapping + Tiler
+bindings (boilerplate). Hardest/riskiest = the **backward pattern-match** (ORT node ordering variability);
+must ship fwd+bwd together (training needs both).
+
+## Decision point (raised to user 2026-07-29)
+- **Core win is DONE:** B-decompose gives an ORT-computed frozen reference (matches Option A to 8.3e-7).
+- **True "same graph on device" needs B-fused** (~2-3 wk). Interim **A2** (ORT decomposed reference +
+  working fused-BN device via `BN_FROZEN_STATS`) is available now but reference-graph ≠ device-graph.
+→ Asked user: implement B-fused now / ship B-decompose+A2 interim / revert to Option A.
 
 ## Open question the investigations must settle
 Is there a **clean** way to make ORT compute the frozen-BN forward+backward on a graph the device runs
