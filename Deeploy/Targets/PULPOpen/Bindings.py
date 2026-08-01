@@ -322,9 +322,10 @@ PULPMaxPool2DBindings = [
                 FloatMaxPoolTemplate.referenceTemplate, ForkTransformer)
 ]
 
-# QW: Part-4 MaxPoolArgmax — fp32 activation in -> uint8 within-window offset mask out. -- QW
+# QW: Part-4 MaxPoolArgmax — fp32 activation in -> fp32 within-window offset mask out
+# (offset stored as float; keeps the training graph all-float32). -- QW
 PULPMaxPoolArgmaxBindings = [
-    NodeBinding(PULPMaxPoolArgmaxChecker([PointerClass(float32_t)], [PointerClass(uint8_t)]),
+    NodeBinding(PULPMaxPoolChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatMaxPoolTemplate.argmaxTemplate, ForkTransformer)
 ]
 
@@ -339,12 +340,15 @@ PULPAveragePoolGrad2DBindings = [
 ]
 
 PULPMaxPoolGrad2DBindings = [
-    # QW: Part-4 mask-consuming variant — 2nd input is the uint8 argmax mask. Matched by
-    # dtype before the fp32 recompute variant below. -- QW
-    NodeBinding(MaxPoolGradChecker([PointerClass(float32_t), PointerClass(uint8_t)], [PointerClass(float32_t)]),
-                FloatMaxPoolTemplate.referenceGradMaskTemplate, ForkTransformer),
     NodeBinding(MaxPoolGradChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatMaxPoolTemplate.referenceGradTemplate, ForkTransformer)
+]
+
+# QW: Part-4 distinct mask-consuming grad op (2nd input = fp32 argmax offset mask, pooled
+# shape). Distinct op-type MaxPoolGradMask avoids ambiguity with the recompute grad. -- QW
+PULPMaxPoolGradMaskBindings = [
+    NodeBinding(MaxPoolGradChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatMaxPoolTemplate.referenceGradMaskTemplate, ForkTransformer)
 ]
 
 PULPMSELossBindings = [

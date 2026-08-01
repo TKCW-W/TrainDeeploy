@@ -64,7 +64,7 @@ ${data_in_type.typeName} ref_${data_out}_${data_in} = ${data_in};
 ${data_out_type.typeName} ref_${data_out}_${data_out} = ${data_out};
 
 for (uint32_t n=0; n<${batch}; ++n) {
-    PULP_MaxPoolArgmax2d_fp${data_in_type.referencedType.typeWidth}_u8_HWC(
+    PULP_MaxPoolArgmax2d_fp${data_in_type.referencedType.typeWidth}_fp${data_out_type.referencedType.typeWidth}_HWC(
         ref_${data_out}_${data_in},
         ${dim_im_in_y}, ${dim_im_in_x}, ${ch_im_in},
         ${dim_kernel_y}, ${dim_kernel_x},

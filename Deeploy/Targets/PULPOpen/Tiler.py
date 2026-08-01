@@ -23,7 +23,7 @@ from Deeploy.Targets.PULPOpen.Bindings import PULPAddBindings, PULPAveragePool2D
     PULPGlobalAveragePool2DBindings, PULPGlobalAveragePoolGrad2DBindings, PULPiHardswishBindings, \
     PULPInPlaceAccumulatorV2Bindings, PULPiRMSNormBindings, PULPiRQSGELUBindings, PULPLayernormBinding, \
     PULPLayernormGradBinding, PULPMatMulBindings, PULPMaxPool1DBindings, PULPMaxPool2DBindings, \
-    PULPMaxPoolArgmaxBindings, \
+    PULPMaxPoolArgmaxBindings, PULPMaxPoolGradMaskBindings, \
     PULPMaxPoolGrad2DBindings, PULPMSELossBindings, PULPMSELossGradBindings, PULPMulBindings, PULPReduceMeanBindings, \
     PULPReduceSumBindings, PULPReluBinding, PULPReluGradBinding, PULPReshapeBindings, PULPRQAddBindings, \
     PULPRQSBindings, PULPRQSConv1DBindings, PULPRQSConv2DBindings, PULPRQSDWConv2DBindings, PULPRQSGEMMBindings, \
@@ -127,6 +127,10 @@ PULPAveragePoolGrad2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings 
 
 PULPMaxPoolGrad2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPMaxPoolGrad2DBindings,
                                                                tileConstraint = MaxPoolGradCTileConstraint())
+
+# QW: Part-4 mask-grad reuses the channel-tiling grad constraint (reads x_in actual shape). -- QW
+PULPMaxPoolGradMaskTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPMaxPoolGradMaskBindings,
+                                                                 tileConstraint = MaxPoolGradCTileConstraint())
 
 PULPGlobalAveragePool2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPGlobalAveragePool2DBindings,
                                                                      tileConstraint = GlobalAveragePoolTileConstraint())

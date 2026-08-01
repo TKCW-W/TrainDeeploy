@@ -53,7 +53,7 @@ from Deeploy.Targets.PULPOpen.Tiler import PULPAddTilingReadyBindings, PULPAvera
     PULPInPlaceAccumulatorV2TilingReadyBindings, PULPiRMSNormTilingReadyBindings, PULPiRQSGELUTilingReadyBindings, \
     PULPLayernormGradTilingReadyBindings, PULPLayernormTilingReadyBindings, PULPMatMulTilingReadyBindings, \
     PULPMaxPool1DTilingReadyBindings, PULPMaxPool2DTilingReadyBindings, PULPMaxPoolGrad2DTilingReadyBindings, \
-    PULPMaxPoolArgmaxTilingReadyBindings, \
+    PULPMaxPoolArgmaxTilingReadyBindings, PULPMaxPoolGradMaskTilingReadyBindings, \
     PULPMSELossGradTilingReadyBindings, PULPMSELossTilingReadyBindings, PULPMulTilingReadyBindings, \
     PULPPWConvGradW2DTilingReadyBindings, PULPPWConvGradX2DTilingReadyBindings, PULPReduceMeanTilingReadyBindings, \
     PULPReduceSumTilingReadyBindings, PULPReluGradTilingReadyBindings, PULPReluTilingReadyBindings, \
@@ -106,6 +106,8 @@ MaxPoolArgmaxMapper = NodeMapper(MaxPool2DParser(), PULPMaxPoolArgmaxTilingReady
 AveragePool2DMapper = NodeMapper(AveragePool2DParser(), PULPAveragePool2DTilingReadyBindings)
 AveragePoolGrad2DMapper = NodeMapper(AveragePool2DParser(), PULPAveragePoolGrad2DTilingReadyBindings)
 MaxPoolGrad2DMapper = NodeMapper(MaxPoolGradParser(), PULPMaxPoolGrad2DTilingReadyBindings)
+# QW: Part-4 mask-grad reuses MaxPoolGradParser (2nd input = fp32 offset mask). -- QW
+MaxPoolGradMaskMapper = NodeMapper(MaxPoolGradParser(), PULPMaxPoolGradMaskTilingReadyBindings)
 GlobalAveragePoolMapper = NodeMapper(GlobalAveragePoolParser(), PULPGlobalAveragePool2DTilingReadyBindings)
 GlobalAveragePoolGradMapper = NodeMapper(GlobalAveragePoolGradParser(), PULPGlobalAveragePoolGrad2DTilingReadyBindings)
 BatchNormInternalMapper = NodeMapper(BatchNormInternalParser(), PULPBatchNormInternalTilingReadyBindings)
@@ -164,6 +166,7 @@ PULPMapping = {
     'AveragePool': AveragePoolLayer([AveragePool2DMapper]),
     'AveragePoolGrad': AveragePoolGradLayer([AveragePoolGrad2DMapper]),
     'MaxPoolGrad': MaxPoolGradLayer([MaxPoolGrad2DMapper]),
+    'MaxPoolGradMask': MaxPoolGradLayer([MaxPoolGradMaskMapper]),  # QW: Part-4 -- QW
     'GlobalAveragePool': GlobalAveragePoolLayer([GlobalAveragePoolMapper]),
     'GlobalAveragePoolGrad': GlobalAveragePoolGradLayer([GlobalAveragePoolGradMapper]),
     'BatchNormInternal': BatchNormInternalLayer([BatchNormInternalMapper]),

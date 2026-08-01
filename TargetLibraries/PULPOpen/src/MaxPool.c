@@ -177,12 +177,12 @@ void PULP_MaxPoolGrad2d_fp32_fp32_HWC(
  * the output position), so it survives tiling. This lets MaxPoolGrad scatter WITHOUT the
  * big forward activation, so that activation can be freed right after the forward pass.
  * Same (W,H,C,Q,P,SQ,SP) arg order as PULP_MaxPool2d. -- QW */
-void PULP_MaxPoolArgmax2d_fp32_u8_HWC(const float32_t *__restrict__ pSrcA,
-                                      uint32_t W, uint32_t H, uint32_t C,
-                                      uint32_t Q, uint32_t P, uint32_t SQ,
-                                      uint32_t SP, uint8_t *__restrict__ pMask,
-                                      uint32_t pad_top, uint32_t pad_bottom,
-                                      uint32_t pad_left, uint32_t pad_right) {
+void PULP_MaxPoolArgmax2d_fp32_fp32_HWC(const float32_t *__restrict__ pSrcA,
+                                        uint32_t W, uint32_t H, uint32_t C,
+                                        uint32_t Q, uint32_t P, uint32_t SQ,
+                                        uint32_t SP, float32_t *__restrict__ pMask,
+                                        uint32_t pad_top, uint32_t pad_bottom,
+                                        uint32_t pad_left, uint32_t pad_right) {
 
   int8_t core_id = pi_core_id();
   int8_t log2Core = LOG2(NUM_CORES);
@@ -198,7 +198,7 @@ void PULP_MaxPoolArgmax2d_fp32_u8_HWC(const float32_t *__restrict__ pSrcA,
     for (uint32_t w_out = 0; w_out < W_out; ++w_out) {
       for (uint32_t c = ch_start; c < ch_stop; ++c) {
         float32_t max_val = -inf;
-        uint8_t best_off = 0; /* within-window offset p*Q + q of the winner */
+        uint32_t best_off = 0; /* within-window offset p*Q + q of the winner */
 
         int32_t h_in_start = h_out * SP - pad_top;
         int32_t w_in_start = w_out * SQ - pad_left;
@@ -215,12 +215,13 @@ void PULP_MaxPoolArgmax2d_fp32_u8_HWC(const float32_t *__restrict__ pSrcA,
             float32_t val = pSrcA[((uint32_t)h_in * W + (uint32_t)w_in) * C + c];
             if (val > max_val) {
               max_val = val;
-              best_off = (uint8_t)(p * Q + q);
+              best_off = p * Q + q;
             }
           }
         }
 
-        pMask[(h_out * W_out + w_out) * C + c] = best_off;
+        /* store offset as a float32 (exactly representable for small windows) */
+        pMask[(h_out * W_out + w_out) * C + c] = (float32_t)best_off;
       }
     }
   }
@@ -234,7 +235,7 @@ void PULP_MaxPoolArgmax2d_fp32_u8_HWC(const float32_t *__restrict__ pSrcA,
  * same width-kernel dim used to encode the offset in the argmax kernel. -- QW */
 void PULP_MaxPoolGradMask2d_fp32_fp32_HWC(
     const float32_t *__restrict__ pGradOut,
-    const uint8_t *__restrict__ pMask, uint32_t H_out, uint32_t W_out,
+    const float32_t *__restrict__ pMask, uint32_t H_out, uint32_t W_out,
     uint32_t C, uint32_t H_in, uint32_t W_in, uint32_t P, uint32_t Q,
     uint32_t SP, uint32_t SQ, float32_t *__restrict__ pGradIn, uint32_t pad_top,
     uint32_t pad_bottom, uint32_t pad_left, uint32_t pad_right) {
@@ -264,9 +265,9 @@ void PULP_MaxPoolGradMask2d_fp32_fp32_HWC(
 
       for (uint32_t c = ch_start; c < ch_stop; ++c) {
         uint32_t out_idx = (h_out * W_out + w_out) * C + c;
-        uint8_t off = pMask[out_idx];
-        uint32_t p = (uint32_t)off / Q;
-        uint32_t q = (uint32_t)off % Q;
+        uint32_t off = (uint32_t)(pMask[out_idx] + 0.5f);
+        uint32_t p = off / Q;
+        uint32_t q = off % Q;
         int32_t h_in = h_in_start + (int32_t)p;
         int32_t w_in = w_in_start + (int32_t)q;
         if (h_in >= 0 && h_in < (int32_t)H_in && w_in >= 0 &&
