@@ -108,3 +108,21 @@ wrong layout. **Fixable in our code.**
 
 Commits: TD kernels 24c4a82, templates ca1952d, registration e844ada, fp32 e322b08; O4D rewrite
 56b3709, fp32 e6af342, ceil_mode 3f8ca50.
+
+## Build result AFTER layout fix (2026-08-02) — WORKS, but memory goal NOT met
+Layout fix (commit `22be691`) cleared the tiler. Full build+GVSoC run PASSED, **loss bit-correct
+(Errors 0/16, diff ≤4e-6 vs ORT ref)** — the argmax-mask MaxPoolGrad math + tiling-invariant offset
+are validated. BUT:
+- **L2 peak = 1,825,356 B vs baseline 1,793,800 B → +31,556 B (+1.8%). Memory did NOT drop; it rose.**
+- Mechanism DID work: the baseline's long-lived MaxPoolGrad recompute-input
+  (`node_4_...MaxPool_GradMaxPool`, 314,048 B, 88-step lifetime) is **eliminated** in the argmax version.
+- Why peak still rose: the L2 peak is set by a **stack of ~6 co-resident 314,048 B block-0 activations**
+  (Conv/BN/ReLU outputs + their grads), not by the single MaxPoolGrad stash. Removing one doesn't lower
+  that ceiling; and the argmax path slightly **lengthened** the Conv (95→98) and BN (93→96) lifetimes and
+  added the (fp32) mask + MaxPoolArgmax intermediates → net +31 KB.
+- **Implication:** exp2's attribution was incomplete — the MaxPoolGrad recompute-input was *one of many*
+  equal 314 KB block-0 buffers, not the peak driver. The real L2 lever is the co-resident block-0
+  activation stack (recompute/retile Conv/BN/ReLU activations), a different & bigger change. The
+  argmax-mask is correct + removes drift, but doesn't move peak L2 for this network.
+- Possible small improvements: uint8 mask (4× smaller than the current fp32 mask) — helps a little but
+  won't change the peak (mask < 314 KB). Artifacts: logs/memtest_afterfix.log, deeployStates/memory_alloc.html.
