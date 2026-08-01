@@ -169,3 +169,112 @@ void PULP_MaxPoolGrad2d_fp32_fp32_HWC(
   }
   /* QW: end argmax-flip evidence ------------------------------------------- QW */
 }
+
+/* QW: Part-4 argmax-mask forward -------------------------------------------- QW
+ * Emits the WITHIN-WINDOW argmax offset (p*Q + q, uint8) per output element, using the
+ * SAME window scan + tie-break (strict >) as PULP_MaxPool2d so the stored winner matches
+ * the pooled value. The offset is tile-invariant (reconstructed locally in backward from
+ * the output position), so it survives tiling. This lets MaxPoolGrad scatter WITHOUT the
+ * big forward activation, so that activation can be freed right after the forward pass.
+ * Same (W,H,C,Q,P,SQ,SP) arg order as PULP_MaxPool2d. -- QW */
+void PULP_MaxPoolArgmax2d_fp32_u8_HWC(const float32_t *__restrict__ pSrcA,
+                                      uint32_t W, uint32_t H, uint32_t C,
+                                      uint32_t Q, uint32_t P, uint32_t SQ,
+                                      uint32_t SP, uint8_t *__restrict__ pMask,
+                                      uint32_t pad_top, uint32_t pad_bottom,
+                                      uint32_t pad_left, uint32_t pad_right) {
+
+  int8_t core_id = pi_core_id();
+  int8_t log2Core = LOG2(NUM_CORES);
+
+  uint16_t ch_chunk = (C >> log2Core) + ((C & (NUM_CORES - 1)) != 0);
+  uint16_t ch_start = MIN(ch_chunk * core_id, C);
+  uint16_t ch_stop = MIN(ch_start + ch_chunk, C);
+
+  uint32_t H_out = (H + pad_top + pad_bottom - P) / SP + 1;
+  uint32_t W_out = (W + pad_left + pad_right - Q) / SQ + 1;
+
+  for (uint32_t h_out = 0; h_out < H_out; ++h_out) {
+    for (uint32_t w_out = 0; w_out < W_out; ++w_out) {
+      for (uint32_t c = ch_start; c < ch_stop; ++c) {
+        float32_t max_val = -inf;
+        uint8_t best_off = 0; /* within-window offset p*Q + q of the winner */
+
+        int32_t h_in_start = h_out * SP - pad_top;
+        int32_t w_in_start = w_out * SQ - pad_left;
+        for (uint32_t p = 0; p < P; ++p) {
+          int32_t h_in = h_in_start + (int32_t)p;
+          if (h_in < 0 || h_in >= (int32_t)H) {
+            continue;
+          }
+          for (uint32_t q = 0; q < Q; ++q) {
+            int32_t w_in = w_in_start + (int32_t)q;
+            if (w_in < 0 || w_in >= (int32_t)W) {
+              continue;
+            }
+            float32_t val = pSrcA[((uint32_t)h_in * W + (uint32_t)w_in) * C + c];
+            if (val > max_val) {
+              max_val = val;
+              best_off = (uint8_t)(p * Q + q);
+            }
+          }
+        }
+
+        pMask[(h_out * W_out + w_out) * C + c] = best_off;
+      }
+    }
+  }
+}
+
+/* QW: Part-4 mask-consuming MaxPoolGrad ------------------------------------- QW
+ * Reads the within-window argmax offset from pMask (produced by PULP_MaxPoolArgmax2d)
+ * and scatters the upstream gradient to that position — NO recompute from a stored
+ * forward activation. The target input position is reconstructed LOCALLY from the output
+ * position + offset (p = off/Q, q = off%Q), so it is tiling-invariant. Q here MUST be the
+ * same width-kernel dim used to encode the offset in the argmax kernel. -- QW */
+void PULP_MaxPoolGradMask2d_fp32_fp32_HWC(
+    const float32_t *__restrict__ pGradOut,
+    const uint8_t *__restrict__ pMask, uint32_t H_out, uint32_t W_out,
+    uint32_t C, uint32_t H_in, uint32_t W_in, uint32_t P, uint32_t Q,
+    uint32_t SP, uint32_t SQ, float32_t *__restrict__ pGradIn, uint32_t pad_top,
+    uint32_t pad_bottom, uint32_t pad_left, uint32_t pad_right) {
+
+  int8_t core_id = pi_core_id();
+  int8_t log2Core = LOG2(NUM_CORES);
+
+  uint16_t ch_chunk = (C >> log2Core) + ((C & (NUM_CORES - 1)) != 0);
+  uint16_t ch_start = MIN(ch_chunk * core_id, C);
+  uint16_t ch_stop = MIN(ch_start + ch_chunk, C);
+
+  /* Zero-initialise the gradient input for our channel slice */
+  for (uint32_t h = 0; h < H_in; ++h) {
+    for (uint32_t w = 0; w < W_in; ++w) {
+      for (uint32_t c = ch_start; c < ch_stop; ++c) {
+        pGradIn[(h * W_in + w) * C + c] = 0.0f;
+      }
+    }
+  }
+
+  /* Scatter upstream gradient to the stored argmax position in each window */
+  for (uint32_t h_out = 0; h_out < H_out; ++h_out) {
+    for (uint32_t w_out = 0; w_out < W_out; ++w_out) {
+
+      int32_t h_in_start = (int32_t)h_out * (int32_t)SP - (int32_t)pad_top;
+      int32_t w_in_start = (int32_t)w_out * (int32_t)SQ - (int32_t)pad_left;
+
+      for (uint32_t c = ch_start; c < ch_stop; ++c) {
+        uint32_t out_idx = (h_out * W_out + w_out) * C + c;
+        uint8_t off = pMask[out_idx];
+        uint32_t p = (uint32_t)off / Q;
+        uint32_t q = (uint32_t)off % Q;
+        int32_t h_in = h_in_start + (int32_t)p;
+        int32_t w_in = w_in_start + (int32_t)q;
+        if (h_in >= 0 && h_in < (int32_t)H_in && w_in >= 0 &&
+            w_in < (int32_t)W_in) {
+          pGradIn[((uint32_t)h_in * W_in + (uint32_t)w_in) * C + c] +=
+              pGradOut[out_idx];
+        }
+      }
+    }
+  }
+}
