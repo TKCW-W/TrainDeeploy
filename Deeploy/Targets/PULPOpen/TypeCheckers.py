@@ -136,3 +136,21 @@ class PULPMaxPoolChecker(SignPropTypeChecker):
     # Override this. This should compute the signednes of each output node of the Layer
     def checkOutputType(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> bool:
         return True
+
+
+class PULPMaxPoolArgmaxChecker(SignPropTypeChecker):
+    """QW: MaxPoolArgmax — fp32 activation in, uint8 within-window offset mask out. -- QW"""
+
+    def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):
+        super().__init__(input_types, output_types)
+
+    def _inferNumLevels(self, inputs: List[VariableBuffer],
+                        operatorRepresentation: OperatorRepresentation) -> List[int]:
+        return [2**8]  # uint8 mask
+
+    def _inferSignedness(self, inputs: List[VariableBuffer],
+                         operatorRepresentation: OperatorRepresentation) -> List[bool]:
+        return [False]  # unsigned offset
+
+    def checkOutputType(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> bool:
+        return True

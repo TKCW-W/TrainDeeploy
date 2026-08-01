@@ -40,6 +40,7 @@ from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, F
     SoftmaxCrossEntropyLossTemplate, TallGEMMTemplate, TransposeTemplate, UniformRequantShiftTemplate, \
     iRMSNormTemplate, iSoftmaxTemplate
 from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPLinearChecker, PULPMaxPoolChecker, \
+    PULPMaxPoolArgmaxChecker, \
     PULPRequantShiftChecker
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingVariableReplacement import TilingVariableReplacement, \
     TilingVariableReplacementUpdate
@@ -321,6 +322,12 @@ PULPMaxPool2DBindings = [
                 FloatMaxPoolTemplate.referenceTemplate, ForkTransformer)
 ]
 
+# QW: Part-4 MaxPoolArgmax — fp32 activation in -> uint8 within-window offset mask out. -- QW
+PULPMaxPoolArgmaxBindings = [
+    NodeBinding(PULPMaxPoolArgmaxChecker([PointerClass(float32_t)], [PointerClass(uint8_t)]),
+                FloatMaxPoolTemplate.argmaxTemplate, ForkTransformer)
+]
+
 PULPAveragePool2DBindings = [
     NodeBinding(PULPMaxPoolChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatAveragePoolTemplate.referenceTemplate, ForkTransformer)
@@ -332,6 +339,10 @@ PULPAveragePoolGrad2DBindings = [
 ]
 
 PULPMaxPoolGrad2DBindings = [
+    # QW: Part-4 mask-consuming variant — 2nd input is the uint8 argmax mask. Matched by
+    # dtype before the fp32 recompute variant below. -- QW
+    NodeBinding(MaxPoolGradChecker([PointerClass(float32_t), PointerClass(uint8_t)], [PointerClass(float32_t)]),
+                FloatMaxPoolTemplate.referenceGradMaskTemplate, ForkTransformer),
     NodeBinding(MaxPoolGradChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatMaxPoolTemplate.referenceGradTemplate, ForkTransformer)
 ]

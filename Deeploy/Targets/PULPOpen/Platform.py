@@ -53,6 +53,7 @@ from Deeploy.Targets.PULPOpen.Tiler import PULPAddTilingReadyBindings, PULPAvera
     PULPInPlaceAccumulatorV2TilingReadyBindings, PULPiRMSNormTilingReadyBindings, PULPiRQSGELUTilingReadyBindings, \
     PULPLayernormGradTilingReadyBindings, PULPLayernormTilingReadyBindings, PULPMatMulTilingReadyBindings, \
     PULPMaxPool1DTilingReadyBindings, PULPMaxPool2DTilingReadyBindings, PULPMaxPoolGrad2DTilingReadyBindings, \
+    PULPMaxPoolArgmaxTilingReadyBindings, \
     PULPMSELossGradTilingReadyBindings, PULPMSELossTilingReadyBindings, PULPMulTilingReadyBindings, \
     PULPPWConvGradW2DTilingReadyBindings, PULPPWConvGradX2DTilingReadyBindings, PULPReduceMeanTilingReadyBindings, \
     PULPReduceSumTilingReadyBindings, PULPReluGradTilingReadyBindings, PULPReluTilingReadyBindings, \
@@ -100,6 +101,8 @@ MatrixVecMapper = NodeMapper(PULPMatrixVecParser(), PULPRQSMatrixVecTilingReadyB
 TallGEMMMapper = NodeMapper(PULPTallGEMMParser(), PULPRQSTallGEMMTilingReadyBindings)
 MaxPool1DMapper = NodeMapper(MaxPool1DParser(), PULPMaxPool1DTilingReadyBindings)
 MaxPool2DMapper = NodeMapper(MaxPool2DParser(), PULPMaxPool2DTilingReadyBindings)
+# QW: Part-4 MaxPoolArgmax reuses MaxPool2DParser (same attrs/shapes, uint8 output). -- QW
+MaxPoolArgmaxMapper = NodeMapper(MaxPool2DParser(), PULPMaxPoolArgmaxTilingReadyBindings)
 AveragePool2DMapper = NodeMapper(AveragePool2DParser(), PULPAveragePool2DTilingReadyBindings)
 AveragePoolGrad2DMapper = NodeMapper(AveragePool2DParser(), PULPAveragePoolGrad2DTilingReadyBindings)
 MaxPoolGrad2DMapper = NodeMapper(MaxPoolGradParser(), PULPMaxPoolGrad2DTilingReadyBindings)
@@ -157,6 +160,7 @@ PULPMapping = {
     'LayerNormalization': LayerNormLayer([LayerNormMapper]),
     'LayerNormalizationGrad': LayerNormGradLayer([LayerNormGradMapper]),
     'MaxPool': MaxPoolLayer([MaxPool1DMapper, MaxPool2DMapper]),
+    'MaxPoolArgmax': MaxPoolLayer([MaxPoolArgmaxMapper]),  # QW: Part-4 argmax-mask op -- QW
     'AveragePool': AveragePoolLayer([AveragePool2DMapper]),
     'AveragePoolGrad': AveragePoolGradLayer([AveragePoolGrad2DMapper]),
     'MaxPoolGrad': MaxPoolGradLayer([MaxPoolGrad2DMapper]),

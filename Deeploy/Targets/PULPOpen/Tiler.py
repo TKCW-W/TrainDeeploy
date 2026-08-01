@@ -23,6 +23,7 @@ from Deeploy.Targets.PULPOpen.Bindings import PULPAddBindings, PULPAveragePool2D
     PULPGlobalAveragePool2DBindings, PULPGlobalAveragePoolGrad2DBindings, PULPiHardswishBindings, \
     PULPInPlaceAccumulatorV2Bindings, PULPiRMSNormBindings, PULPiRQSGELUBindings, PULPLayernormBinding, \
     PULPLayernormGradBinding, PULPMatMulBindings, PULPMaxPool1DBindings, PULPMaxPool2DBindings, \
+    PULPMaxPoolArgmaxBindings, \
     PULPMaxPoolGrad2DBindings, PULPMSELossBindings, PULPMSELossGradBindings, PULPMulBindings, PULPReduceMeanBindings, \
     PULPReduceSumBindings, PULPReluBinding, PULPReluGradBinding, PULPReshapeBindings, PULPRQAddBindings, \
     PULPRQSBindings, PULPRQSConv1DBindings, PULPRQSConv2DBindings, PULPRQSDWConv2DBindings, PULPRQSGEMMBindings, \
@@ -113,6 +114,10 @@ PULPMaxPool1DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPMa
 
 PULPMaxPool2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPMaxPool2DBindings,
                                                            tileConstraint = MaxPoolCTileConstraint())
+
+# QW: Part-4 MaxPoolArgmax reuses the single-output channel-tiling constraint (like MaxPool). -- QW
+PULPMaxPoolArgmaxTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPMaxPoolArgmaxBindings,
+                                                               tileConstraint = MaxPoolCTileConstraint())
 
 PULPAveragePool2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPAveragePool2DBindings,
                                                                tileConstraint = AveragePoolCTileConstraint())
