@@ -11,7 +11,7 @@ from Deeploy.AbstractDataTypes import Pointer
 from Deeploy.CommonExtensions.NetworkDeployers.SignPropDeployer import SignPropDeployer
 from Deeploy.CommonExtensions.OptimizationPasses.BindingsOptimizationPasses.AutoTranspose import AutoTransposeMergePass
 from Deeploy.CommonExtensions.OptimizationPasses.TopologyOptimizationPasses.LoweringOptimizationPasses import \
-    PULPNCHWtoNHWCPass, RemoveGlobalOutputReshapePass, TransposeMatmulInputsPass
+    MergeSiblingTransposesPass, PULPNCHWtoNHWCPass, RemoveGlobalOutputReshapePass, TransposeMatmulInputsPass
 from Deeploy.DeeployTypes import ConstantBuffer, DeploymentPlatform, NodeTemplate, TopologyOptimizer, VariableBuffer
 from Deeploy.Targets.GAP9.Platform import GAP9ClusterEngine
 from Deeploy.Targets.Generic.TopologyOptimizationPasses.Passes import ReshapeConstOptPass, TransposeConstOptPass, \
@@ -61,6 +61,7 @@ class PULPDeployer(SignPropDeployer):
             ReshapeConstOptPass(),
             TransposeNoPermOptPass(),
             RemoveGlobalOutputReshapePass(),
+            MergeSiblingTransposesPass(),  # QW: Part-4 dedupe per-op input transposes (after last split) -- QW
         ]
 
         self.extNameCount = 0

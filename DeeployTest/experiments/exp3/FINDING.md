@@ -1,3 +1,19 @@
+# FINDING — exp3 MaxPool argmax-mask (Part 4): correct, drift-free, relaxes L2 by ~16% (after transpose-dedup)
+
+## UPDATE 2026-08-02 (resolves the "does NOT relax L2" below) — IT DOES, once the redundant transpose is deduped
+The initial correct build showed +1.8% (1,825,356 B) — NOT because the approach is bad, but because the
+NCHW→NHWC layout passes give each op its own **input transpose**, so `MaxPool`, `MaxPoolArgmax`,
+`MaxPoolGradMask` each transposed the same 314 KB block-0 activation → a redundant 314 KB buffer. Fix:
+`MergeSiblingTransposesPass` (merge `Transpose` nodes with identical input+perm; placed at the END of the
+PULP lowering pipeline, after the last `TransposeSplitPass`). Result (same `random-max` settings, bit-exact
+0/16):
+- **L2 peak: 1,511,308 B vs baseline 1,793,800 B → −282,492 B (−15.7%).** Drop = exactly 314,048 B (one
+  block-0 buffer), confirming the redundant transpose was the sole cause. Determinism: all re-runs identical.
+- So the argmax-mask **does relax L2 (~16%)**, is bit-correct, and removes the MaxPool argmax-drift.
+  Change is layout-convention-preserving (no NCHW-native kernels needed).
+
+---
+### (original, now-superseded verdict)
 # FINDING — exp3 MaxPool argmax-mask (Part 4): correct, drift-free, but does NOT relax L2
 
 **Action date/time:** 2026-08-02

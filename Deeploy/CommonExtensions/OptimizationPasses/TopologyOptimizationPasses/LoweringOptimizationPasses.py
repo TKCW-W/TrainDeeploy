@@ -9,8 +9,8 @@ import numpy as np
 import onnx_graphsurgeon as gs
 
 from Deeploy.CommonExtensions.OptimizationPasses.Matchers import Match, NonBranchingMatcher
-from Deeploy.CommonExtensions.OptimizationPasses.PassClasses import ReplaceSequentialPatternPass, SequentialPass, \
-    contextagnostic
+from Deeploy.CommonExtensions.OptimizationPasses.PassClasses import Pass, ReplaceSequentialPatternPass, \
+    SequentialPass, contextagnostic
 from Deeploy.TilingExtension.TilingCodegen import HyperRectangle
 
 
@@ -459,6 +459,37 @@ class PULPNCHWtoNHWCPass(SequentialPass):
             NCHWtoNHWCConvPass(default_channels_first),
         ]
         super().__init__(*passes)
+
+
+# QW: Part-4. Merge sibling Transpose nodes (same input tensor + same perm) into a single
+# Transpose feeding all consumers. The layout passes create a SEPARATE input transpose for each
+# op that reads the same block activation (MaxPool, MaxPoolArgmax, MaxPoolGradMask), and each costs
+# a full-size buffer. Deduping them removes the redundant 314 KB-class transpose buffers. Must run
+# AFTER the last TransposeSplitPass so it is not re-split. -- QW
+@contextagnostic
+class MergeSiblingTransposesPass(Pass):
+
+    def __init__(self):
+        super().__init__()
+        self.name = "_MERGE_SIBLING_TRANSPOSES_PASS"
+
+    def run_pass(self, graph: gs.Graph) -> gs.Graph:
+        seen: dict = {}
+        for node in list(graph.nodes):
+            if node.op != "Transpose" or not node.inputs or not node.outputs:
+                continue
+            key = (node.inputs[0].name, tuple(node.attrs.get("perm", [])))
+            if key in seen:
+                keepOut = seen[key].outputs[0]
+                dupOut = node.outputs[0]
+                for consumer in list(dupOut.outputs):
+                    consumer.inputs = [keepOut if inp is dupOut else inp for inp in consumer.inputs]
+                node.inputs = []
+                node.outputs = []
+            else:
+                seen[key] = node
+        graph.cleanup().toposort()
+        return graph
 
 
 def _requantized_gemm_to_pw_fun(graph: gs.Graph, match: Match, name: str):
