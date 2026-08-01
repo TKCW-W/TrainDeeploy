@@ -4,6 +4,11 @@
 
 from Deeploy.DeeployTypes import NodeTemplate
 
+# QW: the forward MaxPool call below passes spatial dims as (H,W)=(y,x) to match the
+#     PULP_MaxPool2d_*_HWC kernel's convention. The base template passed (x,y), which
+#     is wrong for non-square / asymmetric pools (as in SpeechNet's 14x700 input). -- QW
+# QW-TODO: referenceGradTemplate below still passes (x,y) to PULP_MaxPoolGrad2d_*_HWC —
+#     reconcile to (y,x) when MaxPoolGrad is reworked (Part-4 argmax-mask). -- QW
 referenceTemplate = NodeTemplate("""
 // 2D Float MaxPool Channel Parallel (Name: ${nodeName}, Op: ${nodeOp})
 

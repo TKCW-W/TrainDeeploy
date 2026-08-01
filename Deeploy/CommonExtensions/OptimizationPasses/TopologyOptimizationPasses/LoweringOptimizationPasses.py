@@ -255,6 +255,9 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
                     perm = _transformLayoutPermutation(len(tensor.shape), spatialDims, default_channels_first)
                     graph.nodes.append(_appendTranspose(tensor, node, perm))
 
+        # QW: transpose MaxPoolGrad's 2nd activation input (forward X) to NHWC like the
+        #     primary input; otherwise X stays NCHW and the argmax recompute routes the
+        #     gradient wrong for non-square pools. -- QW
         if node.op == "MaxPoolGrad":
             # MaxPoolGrad has a SECOND activation input (inputs[1] = the forward input X,
             # used to recompute the argmax). The HWC kernel reads it in NHWC, so it must be
@@ -263,7 +266,7 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
             # wrong positions — a silent correctness bug for non-square / asymmetric pools.
             tensorX = node.inputs[1]
             permuteX = _transformLayoutPermutation(len(tensorX.shape), spatialDims, default_channels_first)
-            graph.nodes.append(_appendTranspose(tensorX, node, permuteX))
+            graph.nodes.append(_appendTranspose(tensorX, node, permuteX))  # -- QW
 
         node.attrs["channels_first"] = default_channels_first
 
