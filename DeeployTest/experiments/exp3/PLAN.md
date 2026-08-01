@@ -86,8 +86,25 @@ Implementation COMPLETE + mapping-clean, but blocked in the tiler. Progress:
    B-decompose** (exp1 optionB). The `memory_alloc.html` from this run is a partial (920 B)
    snapshot (codegen crashed mid-allocation) → **L2 peak NOT measured yet**.
 
-Next: fix the channel-tiling offset for the mask path (likely `MaxPoolGradCTileConstraint`
-serializeTilingSolution line ~109 setting a channel offset on a full/untiled axis for the pooled
-mask), or force single-tile for the argmax/mask nodes. Then re-run for the L2 comparison.
+## Root-cause analysis (2026-08-02, refined — supersedes the fork's tiler diagnosis)
+The blocker is **LAYOUT, not the fundamental B-decompose tiler limitation.** The new ops
+`MaxPoolArgmax`/`MaxPoolGradMask` are **not registered in the NCHW→NHWC lowering pass**:
+`LoweringOptimizationPasses.py` has a per-op pass (`NCHWtoNHWCMaxPoolPass`,
+`NCHWtoNHWCMaxPoolGradPass`, …Conv/AveragePool…) but **none for the new ops**, and
+`_NCHWtoNHWC_fun` line 232's spatialDims op-list also excludes them. So their tensors stay **NCHW**.
+The PULP MaxPool channel-tiling constraint assumes **HWC (C=last)**; on the NCHW `(1,16,14,5)` mask
+tensor (C=16=block-1, W=5) it tiles the **W axis** and stamps a full-axis offset → `minimizeRectangle`
+assertion at `TilingCodegen.py:537`. (Tell: `(1,16,14,5)` is NCHW; NHWC would be `(1,14,5,16)`.)
+Unlike B-decompose (genuine `(1,C,1,1)` broadcast tensors → real core limitation), the mask has the
+**same shape as the pooled output**, which tiles cleanly — it only broke because it was left in the
+wrong layout. **Fixable in our code.**
+
+## Proposed fix (NOT yet applied — awaiting go-ahead)
+1. Add `NCHWtoNHWCMaxPoolArgmaxPass` + `NCHWtoNHWCMaxPoolGradMaskPass` (mirror existing passes) and
+   register them in the platform's optimization-pass pipeline.
+2. Add `"MaxPoolArgmax"`/`"MaxPoolGradMask"` to `_NCHWtoNHWC_fun`'s spatialDims op-list (line 232).
+3. Extend our QW 2nd-input transpose (`if node.op == "MaxPoolGrad"`) to also handle `MaxPoolGradMask`
+   (mask 2nd input, pooled shape). Then rebuild + re-run `--plotMemAlloc` for the L2 number.
+
 Commits: TD kernels 24c4a82, templates ca1952d, registration e844ada, fp32 e322b08; O4D rewrite
 56b3709, fp32 e6af342, ceil_mode 3f8ca50.

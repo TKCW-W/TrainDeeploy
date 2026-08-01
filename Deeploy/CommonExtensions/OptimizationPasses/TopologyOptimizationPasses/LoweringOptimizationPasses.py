@@ -229,7 +229,9 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
 
         if node.op in ["RequantizedConv", "Conv"]:
             spatialDims = len(node.inputs[1].shape) - 2
-        elif node.op in ["MaxPool", "MaxPoolGrad", "AveragePool", "AveragePoolGrad"]:
+        elif node.op in [
+                "MaxPool", "MaxPoolGrad", "MaxPoolArgmax", "MaxPoolGradMask", "AveragePool", "AveragePoolGrad"
+        ]:  # QW: +MaxPoolArgmax/MaxPoolGradMask (Part-4) -- QW
             spatialDims = len(node.attrs["kernel_shape"])
         elif node.op == "Pad":
             spatialDims = 2  # Hack based on current status
@@ -255,10 +257,11 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
                     perm = _transformLayoutPermutation(len(tensor.shape), spatialDims, default_channels_first)
                     graph.nodes.append(_appendTranspose(tensor, node, perm))
 
-        # QW: transpose MaxPoolGrad's 2nd activation input (forward X) to NHWC like the
-        #     primary input; otherwise X stays NCHW and the argmax recompute routes the
-        #     gradient wrong for non-square pools. -- QW
-        if node.op == "MaxPoolGrad":
+        # QW: transpose the 2nd activation input to NHWC like the primary input.
+        #     MaxPoolGrad: inputs[1] = forward X (recompute source); MaxPoolGradMask (Part-4):
+        #     inputs[1] = the argmax mask (pooled shape). Both are 4D activations that must
+        #     match the NHWC layout, else the channel-tiler tiles the wrong axis. -- QW
+        if node.op in ("MaxPoolGrad", "MaxPoolGradMask"):
             # MaxPoolGrad has a SECOND activation input (inputs[1] = the forward input X,
             # used to recompute the argmax). The HWC kernel reads it in NHWC, so it must be
             # transposed like the primary input. Without this, X stays NCHW while dY/dX are
@@ -306,6 +309,26 @@ class NCHWtoNHWCMaxPoolGradPass(ReplaceSequentialPatternPass):
     def __init__(self, default_channels_first: bool = True):
         graph = _singleNodePattern(op = "MaxPoolGrad")
         name = "_NCHW_TO_NHWC_MAXPOOLGRAD_PASS"
+        super().__init__(graph, partial(_NCHWtoNHWC_fun, default_channels_first = default_channels_first), name)
+
+
+# QW: Part-4 layout passes for the argmax-mask ops (mirror MaxPool/MaxPoolGrad); without these
+# their activations stay NCHW and the HWC channel-tiler tiles the wrong axis. -- QW
+@contextagnostic
+class NCHWtoNHWCMaxPoolArgmaxPass(ReplaceSequentialPatternPass):
+
+    def __init__(self, default_channels_first: bool = True):
+        graph = _singleNodePattern(op = "MaxPoolArgmax")
+        name = "_NCHW_TO_NHWC_MAXPOOLARGMAX_PASS"
+        super().__init__(graph, partial(_NCHWtoNHWC_fun, default_channels_first = default_channels_first), name)
+
+
+@contextagnostic
+class NCHWtoNHWCMaxPoolGradMaskPass(ReplaceSequentialPatternPass):
+
+    def __init__(self, default_channels_first: bool = True):
+        graph = _singleNodePattern(op = "MaxPoolGradMask")
+        name = "_NCHW_TO_NHWC_MAXPOOLGRADMASK_PASS"
         super().__init__(graph, partial(_NCHWtoNHWC_fun, default_channels_first = default_channels_first), name)
 
 
@@ -430,6 +453,8 @@ class PULPNCHWtoNHWCPass(SequentialPass):
             NCHWtoNHWCAveragePoolPass(default_channels_first),
             NCHWtoNHWCAveragePoolGradPass(default_channels_first),
             NCHWtoNHWCMaxPoolGradPass(default_channels_first),
+            NCHWtoNHWCMaxPoolArgmaxPass(default_channels_first),   # QW: Part-4 -- QW
+            NCHWtoNHWCMaxPoolGradMaskPass(default_channels_first),  # QW: Part-4 -- QW
             PULPNCHWtoNHWCDwConvPass(default_channels_first),
             NCHWtoNHWCConvPass(default_channels_first),
         ]
