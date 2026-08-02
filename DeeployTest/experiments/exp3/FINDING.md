@@ -15,8 +15,16 @@ settings as the exp2 baseline, `--searchStrategy random-max`):
 | argmax-mask, no transpose-dedup | 1,825,356 B | +1.8% | bit-exact 0/16 |
 | **argmax-mask + transpose-dedup** | **1,511,308 B** | **−282,492 B (−15.7%)** | **bit-exact 0/16** |
 
-Deterministic (identical across re-runs). Bonus: eliminates the MaxPool **argmax-drift** (forward and
-backward now share one stored index instead of independently recomputing, so ties can't disagree).
+Deterministic (identical across re-runs).
+
+**Correction (2026-08-02): the argmax-mask does NOT eliminate the device-vs-ORT MaxPool argmax-drift**
+(an earlier draft claimed it did — wrong). The exp1 drift comes from fp reduction-order differences in **X**
+(the conv/BN output, device-tiled vs ORT-untiled, ~1e-6) flipping a MaxPool tie. Both the recompute
+`MaxPoolGrad` and the new `MaxPoolArgmax` compute `argmax(X)` from the *same* stashed X, so the tie-flip
+susceptibility is **unchanged** — the mask only guarantees device fwd/bwd agree, which they already did in
+the recompute path (both scanned the same X). The 0/16 memtest was too short to see it (`--n-steps 4` = 16
+micro-batches; exp1 round-1 drift onset ≈ step 133). So: memory win + math-correctness are validated, but
+**drift is inherent and expected to persist** at full round length.
 
 ## Motivation
 On-device FT is L1/L2-bound (exp2). Deeploy's `PULP_MaxPoolGrad2d` **recomputes the argmax from the forward

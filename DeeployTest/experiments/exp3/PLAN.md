@@ -34,7 +34,9 @@ output. Supervisor confirmed: Deeploy currently handles single-output nodes only
   Every node single-output → **no tiler change**, standard machinery. `MaxPoolArgmax` reads X in the
   **forward** pass (X still live), so after MaxPool+MaxPoolArgmax run, X is freed; only the small uint8 mask
   survives. Cost: +1 forward-scan op (~2–3 % of step) − backward recompute saved → ~compute-neutral; memory
-  win + eliminates the MaxPool argmax-drift (fwd/bwd now share one stored index).
+  win. (Earlier note claimed it "eliminates the MaxPool argmax-drift" — CORRECTED 2026-08-02: it does NOT.
+  The device-vs-ORT drift is from `argmax(X)` tie-flips on fp-differing X; both recompute-grad and
+  MaxPoolArgmax compute argmax from the same X, so the susceptibility is unchanged. See FINDING.md.)
 
 ## Correctness invariant (the key design decision)
 Store the **within-window offset** (0…k-1, uint8), NOT a global input coordinate. The offset is
@@ -123,6 +125,6 @@ are validated. BUT:
 - **Implication:** exp2's attribution was incomplete — the MaxPoolGrad recompute-input was *one of many*
   equal 314 KB block-0 buffers, not the peak driver. The real L2 lever is the co-resident block-0
   activation stack (recompute/retile Conv/BN/ReLU activations), a different & bigger change. The
-  argmax-mask is correct + removes drift, but doesn't move peak L2 for this network.
+  argmax-mask is correct, but does NOT remove the device-vs-ORT drift (corrected 2026-08-02; see FINDING).
 - Possible small improvements: uint8 mask (4× smaller than the current fp32 mask) — helps a little but
   won't change the peak (mask < 314 KB). Artifacts: logs/memtest_afterfix.log, deeployStates/memory_alloc.html.
