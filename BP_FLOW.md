@@ -261,11 +261,18 @@ changes**.
 ### B.4 Result
 | build | L2 peak | vs baseline | fits GAP9 1.5 MB? | loss |
 |---|--:|--:|:--:|---|
-| recompute `MaxPoolGrad` (baseline) | 1,793,800 B | — | ❌ | bit-exact |
+| recompute `MaxPoolGrad` (baseline, **pre-dedup**) | 1,793,800 B | — | ❌ | bit-exact |
+| recompute `MaxPoolGrad` (**with** transpose-dedup) | 1,735,180 B | −3.3 % | ❌ | bit-exact 0 err |
 | argmax-mask, **no** transpose-dedup | 1,825,356 B | +1.8 % | ❌ | bit-exact 0/16 |
 | **argmax-mask + transpose-dedup** (loose 2 MB budget) | **1,511,308 B** | **−15.7 %** | — | **bit-exact 0/16** |
 | **argmax-mask + dedup, strict `--l2 1500000`** | **1,482,636 B** | | ✅ (~17 KB spare @ decimal, ~90 KB @ 1.5 MiB) | **bit-exact 0/16** |
 
+- **Dedup note.** The `1,793,800 B` recompute baseline was measured *before* `MergeSiblingTransposesPass`
+  (transpose-dedup) was wired **unconditionally** into the PULP lowering pipeline (`Deployer.py:64`). That pass
+  is general — it also dedups the recompute path — so recompute-*with*-dedup is **1,735,180 B** (A/B-confirmed:
+  disabling the pass returns it to exactly 1,793,800 B). The fair, both-with-dedup comparison is therefore
+  **recompute 1,735,180 B → argmax-mask 1,511,308 B (−12.9 %)** (see
+  `DeeployTest/experiments/deliverable/SUMMARY.md`). It is a memory reduction, correctness-preserving.
 - Deterministic (identical across re-runs). L1 fits at `--l1 128000` (< GAP9's 131,072 B).
 - **Where the peak is now:** after the dedup the L2 ceiling (1,511,308 B) is set in the **forward** pass by the
   `Conv_input_*_transposed` buffers of blocks 2–3 — **not** by any MaxPool/argmax buffer. The MaxPool-side win
