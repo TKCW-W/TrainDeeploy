@@ -334,12 +334,32 @@ void ApplyGaussianPerturbation(const float32_t *__restrict__ pweights,
     }
 }
 
-void ApplyRademacherPerturbation(const float32_t *__restrict__ pweights,
-                            float32_t *__restrict__ pweights_dest,
+void ApplyRademacherPerturbation(const float32_t *pweights,
+                            float32_t *pweights_dest,
                             uint32_t seed,
                             uint32_t dir,
                             uint32_t size,
                             float32_t epsilon) {
+
+    // QW: data_in (pweights) and data_out (pweights_dest) may partially OVERLAP in L1 when the tiler
+    // under-allocates a tiny tile (e.g. fc_bias, 9 elems: data_out is placed only +4 B into data_in). If
+    // data_out sits just AHEAD of data_in, writing dest[i] clobbers src[i+1] — on this core or the next —
+    // before it is read, corrupting elements (this was the odd-index fc_bias bug). Detect that small forward
+    // overlap (decision is identical on every core, since dest-src is constant, so no barrier divergence),
+    // have each core copy its chunk to a PRIVATE temp, then a team barrier guarantees all reads complete
+    // before any write. Such overlap only occurs for the tiny under-allocated tiles (offset < 128 B ⇒ tile
+    // < 32 elems ⇒ ≤ a few elems per core), so the bounded temp always suffices. z-stream/order is unchanged
+    // ⇒ bit-identical to the non-overlapping fast path. (dest behind src, or a normal gap, is already safe.)
+    // -- QW
+    const float32_t *src = pweights;                                          // -- QW
+    long off = (long)((const char *)pweights_dest - (const char *)pweights);  // -- QW
+    float32_t tmp[128];                                                       // -- QW  only tiny overlapping tiles use this
+    if (off > 0 && off < 128) {                                              // -- QW
+        uint32_t n = size < 128u ? size : 128u;                              // -- QW
+        for (uint32_t k = 0; k < n; k++) tmp[k] = pweights[k];               // -- QW  read chunk into private temp
+        pi_cl_team_barrier(0);                                               // -- QW  all reads done before any write
+        src = tmp;                                                           // -- QW  perturb from the temp copy
+    }
 
     uint32_t rng_state = (seed * 1664525u) + 1013904223u;
     if (dir == 0) epsilon *= -1.0f;
@@ -356,10 +376,10 @@ void ApplyRademacherPerturbation(const float32_t *__restrict__ pweights,
         uint32_t bits = rng_state;
         for (uint32_t b = 0; b < 32; b+=2, i+=2) {
             float32_t r = (bits & 1) ? 1.0f : -1.0f;
-            pweights_dest[i]   = pweights[i] + r * epsilon;
+            pweights_dest[i]   = src[i] + r * epsilon;
             bits >>= 1;
             r = (bits & 1) ? 1.0f : -1.0f;
-            pweights_dest[i+1] = pweights[i+1] + r * epsilon;
+            pweights_dest[i+1] = src[i+1] + r * epsilon;
             bits >>= 1;
         }
     }
@@ -370,12 +390,12 @@ void ApplyRademacherPerturbation(const float32_t *__restrict__ pweights,
         uint32_t bits = rng_state;
         for (uint32_t b = 0; b < leftover; b++, i++) {
             float32_t r = (bits & 1) ? 1.0f : -1.0f;
-            pweights_dest[i] = pweights[i] + r * epsilon;
+            pweights_dest[i] = src[i] + r * epsilon;
             bits >>= 1;
         }
     }
 
-    
+
 }
 
 void ApplySequentialRademacherPerturbation(const float32_t *__restrict__ pweights,

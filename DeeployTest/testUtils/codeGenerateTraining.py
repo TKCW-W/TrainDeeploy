@@ -76,8 +76,12 @@ def generateTrainingTestInputsHeader(deployer: NetworkDeployer,
     if num_grad_inputs > 0:
         retStr += f"#define TRAINING_GRAD_BUF_START_IDX {grad_buf_start_idx}\n"
         retStr += f"#define TRAINING_NUM_GRAD_INPUTS {num_grad_inputs}\n"
-        num_weight_inputs = grad_buf_start_idx - num_data
-        retStr += f"#define TRAINING_NUM_WEIGHT_INPUTS {num_weight_inputs}\n"
+    # QW: Emit the weight-input count whenever the graph exposes trainable weight inputs, even with
+    #     zero gradient-accumulation buffers — the ZO train graph is [data, weights] with no grads,
+    #     and the device harness gates its testInitWeights copy on TRAINING_NUM_WEIGHT_INPUTS. -- QW
+    if grad_buf_start_idx > num_data:  # -- QW
+        num_weight_inputs = grad_buf_start_idx - num_data  # -- QW
+        retStr += f"#define TRAINING_NUM_WEIGHT_INPUTS {num_weight_inputs}\n"  # -- QW
     retStr += f"#define TRAINING_LEARNING_RATE {learning_rate:.10g}f\n"
     retStr += "\n"
 

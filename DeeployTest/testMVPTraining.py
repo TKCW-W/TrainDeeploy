@@ -208,6 +208,14 @@ def generateTiledTrainingNetwork(args) -> None:
 
     if grad_buf_start_idx > num_data:
         init_weights = list(npz_base[num_data:grad_buf_start_idx])
+    elif grad_buf_start_idx == -1 and len(graph_input_names) > num_data:
+        # QW: the ZO train graph has no gradient-accumulation buffers, so every input after the
+        #     data inputs is a trainable weight (running to the end of the graph inputs). Set the
+        #     "grad start" to the input count so num_weight_inputs is emitted correctly and the
+        #     harness copies testInitWeights into the (deploy-promoted) weight buffers — otherwise
+        #     the weight inputs stay uninitialized and the forward produces NaN. -- QW
+        grad_buf_start_idx = len(graph_input_names)  # -- QW
+        init_weights = list(npz_base[num_data:grad_buf_start_idx])  # -- QW
     else:
         init_weights = []
 
