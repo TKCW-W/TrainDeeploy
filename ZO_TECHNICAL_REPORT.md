@@ -380,6 +380,15 @@ docker exec traindeeploy bash -lc "cd /app/ETH/TrainDeeploy/DeeployTest && \
 (train dir gets `network_zo_train.onnx`→`network.onnx`; update dir gets `network_zo_update.onnx`→`network.onnx`;
 both get the same `inputs.npz` + `outputs.npz`.)
 
+> ⚠️ **The fixture is two dirs — name the train dir with `_train` and give the runner BOTH paths.** The MeZO
+> runner needs the update (optimizer) graph from a **separate directory**, so Step 4 always passes it explicitly
+> via `--optimizer-dir …_update_2step`. If you omit `--optimizer-dir`, the runner auto-derives it by replacing
+> `_train`→`_optimizer` in the `-t` name (`resolve_optimizer_dir`), which for a `…_train_…` dir yields a
+> `…_optimizer_…` sibling — so the `-t` dir **must** contain `_train` for that fallback to resolve. If the `-t`
+> name has no `_train` (e.g. `…/zo_2step`), the auto-derive resolves to the *same* dir and the runner loads the
+> perturbed-forward `zo_train` graph as the update graph → generation fails. Keep the `pack` script's
+> `<name>_train_… / <name>_update_…` pair and pass both.
+
 ### Step 3 — kill any orphan GVSoC before each run (traindeeploy)
 ```bash
 docker exec traindeeploy bash -lc 'pgrep -f gvsoc_launcher | xargs -r kill -9; echo done'

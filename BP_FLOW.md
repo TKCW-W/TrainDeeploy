@@ -81,6 +81,17 @@ python3 Onnx4Deeploy.py -model SpeechNet -mode train \
 Produces in that dir: `network.onnx` / `network_train.onnx` (training graph), `inputs.npz` (init weights +
 54 windows), `outputs.npz` (per-step frozen reference losses + updated params).
 
+> ⚠️ **The `-o` directory name MUST contain `_train`.** The BP fixture is **two dirs**: the `_train` dir (above)
+> and a sibling **`_optimizer` dir** holding the standalone SGD graph (`Counter({'SGD': 22})`) as its
+> `network.onnx`. The export auto-creates that sibling via `derive_optimizer_dir` (`onnx4deeploy/core/optimizer_onnx.py`),
+> which **replaces `_train`→`_optimizer` and returns `None` (skips generation) if the name has no `_train`**
+> (`base_exporter.py:1201`). The device runner (A.2) resolves its optimizer graph the same way
+> (`resolve_optimizer_dir`: `name.replace("_train","_optimizer")`, or an explicit `--optimizer-dir`).
+> So `…/speechnet_train_fullfrozen_b1_fold3` → auto `…/speechnet_optimizer_fullfrozen_b1_fold3`. If you name the
+> dir without `_train` (e.g. `…/bp_argmax`), **no optimizer dir is generated**, the runner falls back to the
+> *same* dir, and it tries to tile the **full training graph** as the optimizer → *"Backtracking exhausted at
+> SoftmaxCrossEntropyLoss"*. Always name it `<model>_train[...]`.
+
 ### A.2 TRAIN on device — tiled Siracusa runner, dump device weights (run in `traindeeploy`)
 Kill any orphan GVSoC first, then run 540 update steps with `n_accum=4`, frozen-BN, weight-dump. The
 `--l2 1500000` matches **GAP9's 1.5 MB L2** (the argmax-mask + dedup make it fit; §B).
