@@ -6,7 +6,7 @@ include_directories(${GENERATED_SOURCE})
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if(TRAINING)
+if(TRAINING OR MEZO_TRAINING)  # QW: build training/optimizer OBJECT libs for both BP and MeZO (ZO) -- QW
   add_library(training_network OBJECT ${GENERATED_SOURCE}/TrainingNetwork.c)
   target_link_libraries(training_network PUBLIC deeploylib)
   # Optimizer network (SGD kernel, compiled separately to allow different prefix)
@@ -37,7 +37,7 @@ elseif(DEEPLOY_ARCH STREQUAL PULP)
   )
 
   if (NOT HEXLIST)
-    if(TRAINING)
+    if(TRAINING OR MEZO_TRAINING)  # QW: NOFLASH for both BP and MeZO training libs -- QW
       target_compile_options(training_network PUBLIC -DNOFLASH)
       target_compile_options(optimizer_network PUBLIC -DNOFLASH)
     else()
@@ -50,7 +50,7 @@ elseif(DEEPLOY_ARCH STREQUAL PULP)
 
   # SCHEREMO: Waive warnings
   # Pointer sign warnings are caused by the data width abstraction used in Deeploy. Signedness is not explicitly modelled, as this is handled by kernels
-  if(TRAINING)
+  if(TRAINING OR MEZO_TRAINING)  # QW: waive pointer-sign for both BP and MeZO training libs -- QW
     target_compile_options(training_network PRIVATE -Wno-pointer-sign)
     target_compile_options(optimizer_network PRIVATE -Wno-pointer-sign)
   else()

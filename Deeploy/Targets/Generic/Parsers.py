@@ -3053,6 +3053,42 @@ class InPlaceAccumulatorV2Parser(NodeParser):
         return ctxt, True
 
 
+# Ported from Deeploy zo-support (FP32 PerturbRademacher ZO op). -- QW
+class PerturbRademacherParser(NodeParser):  # -- QW
+
+    def __init__(self):  # -- QW
+        super().__init__()  # -- QW
+
+    def parseNode(self, node: gs.Node) -> bool:  # -- QW
+
+        ret = all([  # -- QW
+            len(node.inputs) == 1,  # -- QW
+            len(node.outputs) == 1,  # -- QW
+            'seed' in node.attrs,  # -- QW
+            'eps' in node.attrs,  # -- QW
+            'idx' in node.attrs  # -- QW
+        ])  # -- QW
+        return ret  # -- QW
+
+    def parseNodeCtxt(self,  # -- QW
+                      ctxt: NetworkContext,  # -- QW
+                      node: gs.Node,  # -- QW
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:  # -- QW
+
+        data_in = ctxt.lookup(node.inputs[0].name)  # -- QW
+        data_out = ctxt.lookup(node.outputs[0].name)  # -- QW
+        input_shape = data_in.shape  # -- QW
+        if isinstance(data_in.shape, int):  # -- QW
+            input_shape = tuple(input_shape, )  # -- QW
+        self.operatorRepresentation['data_in'] = data_in.name  # -- QW
+        self.operatorRepresentation['data_out'] = data_out.name  # -- QW
+        self.operatorRepresentation['seed'] = node.attrs['seed']  # -- QW
+        self.operatorRepresentation['size'] = np.prod(input_shape)  # -- QW
+        self.operatorRepresentation['nodeIdx'] = node.attrs['idx']  # -- QW
+        self.operatorRepresentation['eps'] = node.attrs['eps']  # -- QW
+        return ctxt, True  # -- QW
+
+
 class BatchNormParser(NodeParser):
 
     def __init__(self):

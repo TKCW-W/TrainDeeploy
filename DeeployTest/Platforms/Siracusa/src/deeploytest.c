@@ -97,6 +97,19 @@ int main(void) {
   printf("Input copied\r\n");
 #endif
 
+#ifdef BN_FROZEN_STATS /* QW: ZO single perturbed forward uses frozen (running) BN stats, matching the
+                        * frozen fine-tuning setup — avoids batch-stat corruption at batch-1 -- QW */
+  {
+    extern uint32_t g_bn_frozen_stats;
+    g_bn_frozen_stats = 1u;
+    printf("[BN_FROZEN_STATS] inference BN uses frozen running statistics\r\n");
+#ifdef BN_DEBUG /* QW: enable frozen-BN kernel value dump -- QW */
+    extern uint32_t g_bn_debug;
+    g_bn_debug = 1u;
+#endif
+  }
+#endif
+
   pi_cluster_task(&cluster_task, RunNetwork, NULL);
   cluster_task.stack_size = MAINSTACKSIZE;
   cluster_task.slave_stack_size = SLAVESTACKSIZE;

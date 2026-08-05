@@ -2900,6 +2900,10 @@ class NetworkContainer():
 
         callStack += "static const uint32_t " + self.ctxt._mangle("num_inputs") + f" = {len(inputs)};"
         callStack += "static const uint32_t " + self.ctxt._mangle("num_outputs") + f" = {len(outputs)};"
+        # ZO (MeZO) perturb controls (perturbation_sign / perturb_seed_base / perturb_eps_override) are
+        # now provided as mutable extern globals in TargetLibraries/PULPOpen/src/ZORuntime.c and declared
+        # via kernel/ZORuntime.h (pulled in through DeeployPULPMath.h). The ZO runner sets them per pass;
+        # neutral defaults reproduce the baked-attr behavior. -- QW
 
         callStack += "extern void* " + self.ctxt._mangle("inputs") + f"[{len(inputs)}];"
         callStack += "extern void* " + self.ctxt._mangle("outputs") + f"[{len(outputs)}];"

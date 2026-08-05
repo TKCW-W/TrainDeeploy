@@ -4,13 +4,32 @@
 set(ProjectId ${TESTNAME})
 
 option(TRAINING "Use training harness instead of inference harness" OFF)
+option(MEZO_TRAINING "Use MeZO (ZO) training harness instead of inference/BP harness" OFF)  # QW -- QW
+
+# QW: MeZO and BP training are mutually exclusive; MEZO takes precedence if both set. -- QW
+if(MEZO_TRAINING AND TRAINING)  # QW -- QW
+    message(WARNING "Both MEZO_TRAINING and TRAINING set; MEZO_TRAINING takes precedence, disabling TRAINING.")  # QW -- QW
+    set(TRAINING OFF)  # QW -- QW
+endif()  # QW -- QW
 
 # Compile-time training parameters (override via -D on cmake command line)
 set(N_TRAIN_STEPS "1" CACHE STRING "Number of optimizer steps")
 set(N_ACCUM_STEPS "1" CACHE STRING "Number of mini-batches per optimizer step")
 set(TRAINING_NUM_DATA_INPUTS "2" CACHE STRING "Number of data inputs per mini-batch")
 
-if(TRAINING)
+# QW: MeZO (ZO) compile-time hyperparameters (override via -D on cmake command line) -- QW
+set(ZO_EPS "0.01f" CACHE STRING "MeZO perturbation epsilon")   # QW -- QW
+set(ZO_LR "3e-6f" CACHE STRING "MeZO learning rate")           # QW -- QW
+set(ZO_Q "1" CACHE STRING "MeZO number of random directions per step")  # QW -- QW
+set(ZO_SEED "0" CACHE STRING "MeZO base seed (informational)") # QW -- QW
+
+if(MEZO_TRAINING)  # QW: MeZO (ZO) harness — parallel branch alongside BP TRAINING -- QW
+    file(GLOB_RECURSE SOURCES
+        src/CycleCounter.c
+        src/deeploymezotest.c
+    )
+    set(NETWORK_LIB training_network)
+elseif(TRAINING)
     file(GLOB_RECURSE SOURCES
         src/CycleCounter.c
         src/deeploytraintest.c
@@ -27,14 +46,30 @@ endif()
 add_deeploy_executable(${ProjectId} EXCLUDE_FROM_ALL ${SOURCES})
 target_include_directories(${ProjectId} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/inc)
 
-if(TRAINING)
+if(TRAINING OR MEZO_TRAINING)  # QW: MeZO links the same two OBJECT libs as BP -- QW
     target_link_libraries(${ProjectId} PRIVATE ${NETWORK_LIB} optimizer_network deeploylib)
 else()
     target_link_libraries(${ProjectId} PRIVATE ${NETWORK_LIB} deeploylib)
 endif()
 target_compile_options(${ProjectId} INTERFACE ${NETWORK_LIB})
 
-if(TRAINING)
+if(MEZO_TRAINING)  # QW: MeZO (ZO) compile-time defines — parallel block alongside BP TRAINING -- QW
+    target_compile_definitions(${ProjectId} PRIVATE
+        N_TRAIN_STEPS=${N_TRAIN_STEPS}
+        N_ACCUM_STEPS=${N_ACCUM_STEPS}
+        TRAINING_NUM_DATA_INPUTS=${TRAINING_NUM_DATA_INPUTS}
+        ZO_EPS=${ZO_EPS}
+        ZO_LR=${ZO_LR}
+        ZO_Q=${ZO_Q}
+        ZO_SEED=${ZO_SEED}
+    )  # QW
+    if(DUMP_WEIGHTS)  # QW: passthrough on-device weight dump -- QW
+        target_compile_definitions(${ProjectId} PRIVATE DUMP_WEIGHTS)  # QW
+    endif()  # QW
+    if(BN_FROZEN_STATS)  # QW: passthrough frozen-stat BN training -- QW
+        target_compile_definitions(${ProjectId} PRIVATE BN_FROZEN_STATS)  # QW
+    endif()  # QW
+elseif(TRAINING)
     target_compile_definitions(${ProjectId} PRIVATE
         N_TRAIN_STEPS=${N_TRAIN_STEPS}
         N_ACCUM_STEPS=${N_ACCUM_STEPS}
@@ -48,6 +83,13 @@ if(TRAINING)
     endif()  # QW
     if(BN_FROZEN_STATS)  # QW: opt-in frozen-stat BN training (-D BN_FROZEN_STATS=ON) -- QW
         target_compile_definitions(${ProjectId} PRIVATE BN_FROZEN_STATS)
+    endif()  # QW
+else()  # QW: inference harness — allow frozen-stat BN for the ZO single perturbed forward (-D BN_FROZEN_STATS=ON) -- QW
+    if(BN_FROZEN_STATS)  # QW
+        target_compile_definitions(${ProjectId} PRIVATE BN_FROZEN_STATS)  # QW
+    endif()  # QW
+    if(BN_DEBUG)  # QW: frozen-BN kernel value dump -- QW
+        target_compile_definitions(${ProjectId} PRIVATE BN_DEBUG)  # QW
     endif()  # QW
 endif()
 

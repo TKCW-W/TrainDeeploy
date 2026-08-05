@@ -183,6 +183,31 @@ def _transformLayoutDwWeightConst(const: gs.Constant, targetChannelsFirst: bool)
     const.values = const.values.transpose(perm)
 
 
+def _foldLayoutIntoPerturb(weightVar: gs.Variable, spatialDims: int, targetChannelsFirst: bool) -> bool:  # -- QW
+    """ZO (MeZO) weights are produced at runtime by a Perturb node, so the NCHW->NHWC layout change
+    can't be folded into a constant. Rather than emit a runtime Transpose (which materialises a SECOND
+    full-size weight buffer next to the Perturb output — the source of the ~100x slowdown), push the
+    permutation into the Perturb node's CONSTANT base weight at compile time and relabel the Perturb
+    output's shape. Layout-preserving: perturb is elementwise (out shape tracks in shape) and the conv
+    permutation keeps axis 0 (out channels) fixed. Ported from Deeploy zo-support. Returns True iff
+    folded; callers fall back to a runtime Transpose otherwise. -- QW
+    """  # -- QW
+    if weightVar.shape is None or len(weightVar.shape) < 2:  # -- QW
+        return False  # -- QW
+    if len(weightVar.inputs) != 1:  # -- QW
+        return False  # -- QW
+    perturbNode = weightVar.inputs[0]  # -- QW
+    if "Perturb" not in perturbNode.op:  # -- QW
+        return False  # -- QW
+    baseWeight = perturbNode.inputs[0]  # -- QW  data_in: the constant base weight
+    if not isinstance(baseWeight, gs.Constant) or list(baseWeight.shape) != list(weightVar.shape):  # -- QW
+        return False  # -- QW
+    perm = _transformLayoutPermutation(len(weightVar.shape), spatialDims, targetChannelsFirst)  # -- QW
+    baseWeight.values = baseWeight.values.transpose(perm)  # -- QW
+    weightVar.shape = _permute(weightVar.shape, perm)  # -- QW
+    return True  # -- QW
+
+
 def _transposeMatMulInputs_fun(graph: gs.Graph, match: Match, name: str):
     node = next(iter((match.nodes_map.values())))
 
@@ -252,8 +277,16 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
                     # Inference graph: weight is a fixed constant — permute its data in-place.
                     _transformLayoutConst(tensor, spatialDims, default_channels_first)
                 elif isinstance(tensor, gs.Variable) and tensor.shape is not None and len(tensor.shape) >= 2:
-                    # Training graph: weight is a Variable (updated by the optimizer) — cannot permute
-                    # in-place, so insert an explicit Transpose node that will run at inference/forward time.
+                    # ZO (MeZO): weight is a Perturb-node output. Use a runtime Transpose (exactly like the
+                    # BP/training path), NOT _foldLayoutIntoPerturb. Folding the NCHW->NHWC permutation into
+                    # the perturb's constant base weight makes the perturb kernel generate its Rademacher z
+                    # over the TRANSPOSED flat buffer, so for in_ch>1 conv weights z lands on different
+                    # elements than the reference (which perturbs in logical NCHW order) -> device perturbed
+                    # weight != reference -> wrong loss (verified: conv1-4 diverge, conv0 in_ch=1 does not).
+                    # The perturb MUST run in logical order to match the reference; the Transpose then
+                    # converts the already-perturbed weight to NHWC for the conv. (The fold's "~100x slowdown"
+                    # rationale was a misdiagnosis — that was the FP-on-FPU-less-FC illegal-instr trap, now
+                    # fixed in deeploymezotest.c.) -- QW
                     perm = _transformLayoutPermutation(len(tensor.shape), spatialDims, default_channels_first)
                     graph.nodes.append(_appendTranspose(tensor, node, perm))
 

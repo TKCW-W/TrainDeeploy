@@ -30,6 +30,8 @@
 #include "kernel/Layernorm.h"
 #include "kernel/Matmul.h"
 #include "kernel/MaxPool.h"
+#include "kernel/RandomNoise.h" // -- QW
+#include "kernel/ZORuntime.h" // -- QW (ZO runtime perturb controls)
 #include "kernel/RQiHardswish.h"
 #include "kernel/RequantShift.h"
 #include "kernel/Softmax.h"

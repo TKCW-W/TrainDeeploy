@@ -23,6 +23,7 @@ from Deeploy.Targets.Generic.TypeCheckers import AddChecker, BatchNormalizationG
     MaxPoolGradChecker, MSELossChecker, MulChecker, PULPConvGradBChecker, QuantChecker, ReduceMeanChecker, \
     ReluChecker, ReshapeChecker, RQAddChecker, RQHardswishChecker, SGDChecker, SliceChecker, SoftmaxChecker, \
     SoftmaxCrossEntropyLossChecker, TransposeChecker
+from Deeploy.Targets.Generic.TypeCheckers import PerturbZOChecker  # -- QW (FP32 PerturbRademacher ZO op)
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterSynch import PULPSynchCoresPass
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterTiling import PULPClusterTiling
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPL3Tiling import PULPL3Tiling
@@ -39,6 +40,7 @@ from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, F
     ReduceMeanTemplate, RequantShiftTemplate, ReshapeTemplate, RQAddTemplate, RQSiHardswishTemplate, SGDTemplate, \
     SoftmaxCrossEntropyLossTemplate, TallGEMMTemplate, TransposeTemplate, UniformRequantShiftTemplate, \
     iRMSNormTemplate, iSoftmaxTemplate
+from Deeploy.Targets.PULPOpen.Templates import FloatPerturbRademacherTemplate  # -- QW (FP32 PerturbRademacher ZO op)
 from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPLinearChecker, PULPMaxPoolChecker, \
     PULPMaxPoolArgmaxChecker, \
     PULPRequantShiftChecker
@@ -482,6 +484,13 @@ PULPInPlaceAccumulatorV2Bindings = [
              PointerClass(uint8_t)], [PointerClass(float32_t)]), FloatInPlaceAccumulatorV2Template.referenceTemplate,
         ForkTransformer)
 ]
+
+# Ported from Deeploy zo-support (FP32 PerturbRademacher ZO op): in-place-capable float32 perturb. -- QW
+PULPPerturbRademacherBindings = [  # -- QW
+    NodeBinding(  # -- QW
+        PerturbZOChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),  # -- QW
+        FloatPerturbRademacherTemplate.referenceTemplate,  # -- QW
+        ForkTransformer)]  # -- QW
 
 PULPTransposeBindings = [
     NodeBinding(TransposeChecker([PointerClass(type)], [PointerClass(type)]), TransposeTemplate.referenceTemplate,

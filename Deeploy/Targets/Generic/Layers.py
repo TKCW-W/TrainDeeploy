@@ -655,6 +655,16 @@ class InPlaceAccumulatorV2Layer(ONNXLayer):
         return self.mapper.parser.operatorRepresentation['size']
 
 
+# Ported from Deeploy zo-support (FP32 PerturbRademacher ZO op). -- QW
+class PerturbRademacherLayer(ONNXLayer):  # -- QW
+
+    def __init__(self, maps: List[NodeMapper]):  # -- QW
+        super().__init__(maps)  # -- QW
+
+    def computeOps(self):  # -- QW
+        return self.mapper.parser.operatorRepresentation['size']  # -- QW
+
+
 class LinearAttentionLayer(ONNXLayer):
 
     def __init__(self, maps: List[NodeMapper]):

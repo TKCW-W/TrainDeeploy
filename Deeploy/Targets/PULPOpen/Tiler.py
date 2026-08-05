@@ -29,7 +29,9 @@ from Deeploy.Targets.PULPOpen.Bindings import PULPAddBindings, PULPAveragePool2D
     PULPRQSBindings, PULPRQSConv1DBindings, PULPRQSConv2DBindings, PULPRQSDWConv2DBindings, PULPRQSGEMMBindings, \
     PULPRQSiHardswishBindings, PULPRQSMatrixVecBindings, PULPRQSTallGEMMBindings, PULPSGDBindings, PULPSliceBindings, \
     PULPSoftmaxBindings, PULPSoftmaxCrossEntropyLossBindings, PULPSoftmaxCrossEntropyLossGradBindings, \
-    PULPSoftmaxGradBindings, PULPTransposeBindings, PULPUniformRQSBindings
+    PULPSoftmaxGradBindings, PULPTransposeBindings, PULPUniformRQSBindings, \
+    PULPPerturbRademacherBindings  # -- QW (FP32 PerturbRademacher ZO op)
+from Deeploy.Targets.PULPOpen.TileConstraints.PerturbTileConstraint import PerturbTileConstraint  # -- QW
 from Deeploy.Targets.PULPOpen.TileConstraints.AveragePoolTileConstraint import AveragePoolCTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.BatchNormTileConstraint import BatchNormalizationGradTileConstraint, \
     BatchNormInternalTileConstraint
@@ -215,6 +217,10 @@ PULPSGDTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPSGDBindi
 
 PULPInPlaceAccumulatorV2TilingReadyBindings = TilingReadyNodeBindings(
     nodeBindings = PULPInPlaceAccumulatorV2Bindings, tileConstraint = InPlaceAccumulatorV2TileConstraint())
+
+# Ported from Deeploy zo-support (FP32 PerturbRademacher ZO op): per-tile seed via PerturbTileConstraint. -- QW
+PULPPerturbRademacherTilingReadyBindings = TilingReadyNodeBindings(  # -- QW
+    nodeBindings = PULPPerturbRademacherBindings, tileConstraint = PerturbTileConstraint())  # -- QW
 
 PULPSliceTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPSliceBindings,
                                                        tileConstraint = SliceTileConstraint())

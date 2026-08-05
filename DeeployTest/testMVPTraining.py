@@ -10,7 +10,8 @@ import sys
 import numpy as np
 import onnx
 import onnx_graphsurgeon as gs
-from testUtils.codeGenerateTraining import generateTrainingTestNetwork
+from testUtils.codeGenerateTraining import _load_reference_zo_losses, generateTrainingTestNetwork, \
+    generateZOTestOutputsHeader  # -- QW
 from testUtils.platformMapping import mapDeployer, mapPlatform, setupMemoryPlatform
 from testUtils.testRunner import TestGeneratorArgumentParser
 from testUtils.tilingUtils import TrainingSBTiler
@@ -231,6 +232,24 @@ def generateTiledTrainingNetwork(args) -> None:
                                 data_size = data_size,
                                 tolerance_abs = args.tolerance_abs)
 
+    # 14b. MeZO (ZO) mode: swap only the outputs-header emitter. The BP emitter
+    # (already run inside generateTrainingTestNetwork) greps the first 'loss'
+    # key; ZO instead needs explicit loss_plus / loss_minus references. Re-emit
+    # testoutputs.h with the ZO emitter, leaving all other files untouched. -- QW
+    if getattr(args, 'zo', False):  # -- QW
+        zo_lp, zo_lm = _load_reference_zo_losses(args.dir)  # -- QW
+        zo_out = generateZOTestOutputsHeader(reference_loss_plus = zo_lp,  # -- QW
+                                             reference_loss_minus = zo_lm,  # -- QW
+                                             tolerance_abs = args.tolerance_abs)  # -- QW
+        zo_out_path = os.path.join(args.dumpdir, 'testoutputs.h')  # -- QW
+        with open(zo_out_path, 'w') as f:  # -- QW
+            f.write(zo_out)  # -- QW
+        clang_format = "{BasedOnStyle: llvm, IndentWidth: 2, ColumnLimit: 160}"  # -- QW
+        os.system(f'clang-format -i --style="{clang_format}" {zo_out_path}')  # -- QW
+        log.info(f"[ZO] Re-emitted {zo_out_path} with loss_plus/loss_minus references "  # -- QW
+                 f"(plus={None if zo_lp is None else len(zo_lp)}, "  # -- QW
+                 f"minus={None if zo_lm is None else len(zo_lm)})")  # -- QW
+
     # 15. Write resolved config for execution.py to pick up.
     meta = {
         "n_train_steps": n_steps,
@@ -278,6 +297,10 @@ if __name__ == '__main__':
         metavar = "SUBSTR[,SUBSTR...]",
         help = "Restrict tiling profiling to nodes whose name contains any of the given comma-separated "
         "substrings. E.g. --profileNodes=conv_stem,ds_blocks_0_dw  (default: profile all nodes).")
+    parser.add_argument("--zo",  # -- QW
+                        action = "store_true",  # -- QW
+                        help = "MeZO (ZO) mode: emit loss_plus/loss_minus references in testoutputs.h "  # -- QW
+                        "instead of the BP single-loss reference.")  # -- QW
     parser.add_argument("--shouldFail", action = "store_true")
     parser.add_argument('--promoteToL2',
                         action = 'store_true',

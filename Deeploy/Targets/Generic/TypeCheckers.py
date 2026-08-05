@@ -711,6 +711,21 @@ class InPlaceAccumulatorV2Checker(SignPropTypeChecker):
         return [True]
 
 
+# Ported from Deeploy zo-support (FP32 PerturbRademacher ZO op): nLevels passthrough, signed out. -- QW
+class PerturbZOChecker(SignPropTypeChecker):  # -- QW
+
+    def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):  # -- QW
+        super().__init__(input_types, output_types)  # -- QW
+
+    def _inferNumLevels(self, inputs: List[VariableBuffer],  # -- QW
+                        operatorRepresentation: OperatorRepresentation) -> List[int]:  # -- QW
+        return [inputs[0].nLevels]  # -- QW
+
+    def _inferSignedness(self, inputs: List[VariableBuffer],  # -- QW
+                         operatorRepresentation: OperatorRepresentation) -> List[bool]:  # -- QW
+        return [True]  # -- QW
+
+
 class BatchNormChecker(SignPropTypeChecker):
 
     def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):

@@ -16,7 +16,7 @@ from Deeploy.Targets.Generic.Bindings import BasicGEMMBindings, BasicPad1DBindin
 from Deeploy.Targets.Generic.Layers import AddLayer, AveragePoolGradLayer, AveragePoolLayer, \
     BatchNormalizationGradLayer, BatchNormInternalLayer, ConcatLayer, ConvGradBLayer, ConvGradWLayer, ConvGradXLayer, \
     ConvLayer, GatherLayer, GELUGradLayer, GELULayer, GEMMLayer, GlobalAveragePoolGradLayer, GlobalAveragePoolLayer, \
-    InPlaceAccumulatorV2Layer, LayerNormGradLayer, LayerNormLayer, MatMulLayer, MaxPoolGradLayer, MaxPoolLayer, \
+    InPlaceAccumulatorV2Layer, PerturbRademacherLayer, LayerNormGradLayer, LayerNormLayer, MatMulLayer, MaxPoolGradLayer, MaxPoolLayer, \
     MSELossGradLayer, MSELossLayer, MulLayer, PadLayer, QuantLayer, ReduceMeanLayer, ReduceSumLayer, ReluGradLayer, \
     ReluLayer, RequantShiftLayer, ReshapeLayer, RQIntegerDivLayer, RQSiGELULayer, RQSiHardswishLayer, SGDLayer, \
     SliceLayer, SoftmaxCrossEntropyLossGradLayer, SoftmaxCrossEntropyLossLayer, SoftmaxGradLayer, SoftmaxLayer, \
@@ -24,7 +24,7 @@ from Deeploy.Targets.Generic.Layers import AddLayer, AveragePoolGradLayer, Avera
 from Deeploy.Targets.Generic.Parsers import AddParser, AveragePool2DParser, BatchNormalizationGradParser, \
     BatchNormInternalParser, ConcatParser, Conv2DGradBParser, DequantParser, FlattenParser, GatherParser, \
     GELUGradParser, GELUParser, GEMMParser, GlobalAveragePoolGradParser, GlobalAveragePoolParser, \
-    InPlaceAccumulatorV2Parser, LayerNormGradParser, LayerNormParser, MatMulParser, MaxPool1DParser, MaxPool2DParser, \
+    InPlaceAccumulatorV2Parser, PerturbRademacherParser, LayerNormGradParser, LayerNormParser, MatMulParser, MaxPool1DParser, MaxPool2DParser, \
     MaxPoolGradParser, MSELossGradParser, MSELossParser, MulParser, Pad1DParser, Pad2DParser, QuantParser, \
     ReduceSumParser, ReluGradParser, ReluParser, RequantShiftParser, ReshapeParser, RQAddParser, RQIntegerDivParser, \
     RQSiGELUParser, RQSiHardswishParser, SGDParser, SliceParser, SoftmaxCrossEntropyLossGradParser, \
@@ -50,7 +50,7 @@ from Deeploy.Targets.PULPOpen.Tiler import PULPAddTilingReadyBindings, PULPAvera
     PULPFlattenTilingReadyBindings, PULPFPGELUGradTilingReadyBindings, PULPFPGELUTilingReadyBindings, \
     PULPFPGEMMTilingReadyBindings, PULPGatherTilingReadyBindings, PULPGlobalAveragePool2DTilingReadyBindings, \
     PULPGlobalAveragePoolGrad2DTilingReadyBindings, PULPiHardswishTilingReadyBindings, \
-    PULPInPlaceAccumulatorV2TilingReadyBindings, PULPiRMSNormTilingReadyBindings, PULPiRQSGELUTilingReadyBindings, \
+    PULPInPlaceAccumulatorV2TilingReadyBindings, PULPPerturbRademacherTilingReadyBindings, PULPiRMSNormTilingReadyBindings, PULPiRQSGELUTilingReadyBindings, \
     PULPLayernormGradTilingReadyBindings, PULPLayernormTilingReadyBindings, PULPMatMulTilingReadyBindings, \
     PULPMaxPool1DTilingReadyBindings, PULPMaxPool2DTilingReadyBindings, PULPMaxPoolGrad2DTilingReadyBindings, \
     PULPMaxPoolArgmaxTilingReadyBindings, PULPMaxPoolGradMaskTilingReadyBindings, \
@@ -137,6 +137,7 @@ SoftmaxCrossEntropyLossGradMapper = NodeMapper(SoftmaxCrossEntropyLossGradParser
                                                PULPSoftmaxCrossEntropyGradTilingReadyBindings)
 SGDMapper = NodeMapper(SGDParser(), PULPSGDTilingReadyBindings)
 InPlaceAccumulatorV2Mapper = NodeMapper(InPlaceAccumulatorV2Parser(), PULPInPlaceAccumulatorV2TilingReadyBindings)
+PerturbRademacherMapper = NodeMapper(PerturbRademacherParser(), PULPPerturbRademacherTilingReadyBindings)  # -- QW (FP32 ZO op)
 QuantMapper = NodeMapper(QuantParser(), BasicQuantBindings)
 DequantMapper = NodeMapper(DequantParser(), BasicDequantBindings)
 GEMMDequantMapper = NodeMapper(PULPGEMMParser(), BasicGEMMBindings)
@@ -206,6 +207,7 @@ PULPMapping = {
     'SoftmaxCrossEntropyLossGrad': SoftmaxCrossEntropyLossGradLayer([SoftmaxCrossEntropyLossGradMapper]),
     'SGD': SGDLayer([SGDMapper]),
     'InPlaceAccumulatorV2': InPlaceAccumulatorV2Layer([InPlaceAccumulatorV2Mapper]),
+    'PerturbRademacher': PerturbRademacherLayer([PerturbRademacherMapper]),  # -- QW (FP32 ZO op)
 }
 
 

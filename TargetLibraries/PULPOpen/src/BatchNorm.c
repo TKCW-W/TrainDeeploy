@@ -17,6 +17,7 @@
  * -D BN_FROZEN_STATS. Enables paper-faithful full-model FT at batch-1 without the
  * batch-stat corruption. -- QW */
 uint32_t g_bn_frozen_stats = 0u;
+uint32_t g_bn_debug = 0u; /* QW: runtime-gated frozen-BN kernel debug print -- QW */
 
 /*
  * Training-mode Batch Normalization forward pass (BatchNormInternal).
@@ -56,6 +57,11 @@ void PULP_BatchNormInternal_fp32(
        * exactly what inference uses, so training and inference are consistent. -- QW */
       mean = running_mean[c];
       inv_std = 1.0f / sqrtf(running_var[c] + epsilon);
+      if (g_bn_debug && core_id == 0) { /* QW: dump what the frozen kernel reads per tile -- QW */
+        printf("[BN_DBG] C=%u c=%d gamma=%f beta=%f rmean=%f rvar=%f inv_std=%f x0=%f\n",
+               (unsigned)C, (int)c, gamma[c], beta[c], running_mean[c], running_var[c],
+               inv_std, X[(0 * C + c) * N_hw]);
+      }
     } else {
       /* ── Compute batch mean ───────────────────────────────────────────── */
       mean = 0.0f;
@@ -92,6 +98,11 @@ void PULP_BatchNormInternal_fp32(
       for (uint32_t hw = 0; hw < N_hw; hw++) {
         y_nc[hw] = (x_nc[hw] - mean) * inv_std * g + b;
       }
+    }
+    if (g_bn_frozen_stats && g_bn_debug && core_id == 0) { /* QW: dump BN output for first channel -- QW */
+      float32_t *y0 = Y + (0 * C + c) * N_hw;
+      printf("[BN_OUT] C=%u c=%d N_hw=%u y[0]=%f y[1]=%f y[last]=%f\n",
+             (unsigned)C, (int)c, (unsigned)N_hw, y0[0], y0[1], y0[N_hw - 1]);
     }
   }
 }
