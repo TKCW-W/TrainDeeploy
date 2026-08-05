@@ -22,7 +22,7 @@
 | **Single-step / `n_accum`=1, all 22 params (Conv+BN+fc), on-device == reference** | ✅ **bit-exact** |
 | **Multi-step 2-step / `n_accum`=1 (update propagates across steps)** | ✅ step-0 bit-exact, step-1 within 1e-6, Errors 0/4 |
 | **8-step / `n_accum`=2 (gradient accumulation + multi-step)** | ✅ Errors 0/32 (max diff 3e-6) |
-| **exp5_zo — 100 epochs / `n_accum`=4 (400 mini-batches, ~800 forwards)** | see §10 |
+| **exp5_zo — 100 epochs / `n_accum`=4 (400 mini-batches, 800 forwards)** | ✅ **Errors 0/800**, max diff 3.5e-5 (§10) |
 | **Weights-as-inputs emitted by Onnx4Deeploy; TrainDeeploy consumes it directly (no deploy-time promotion)** | ✅ clean flow, bit-exact |
 | `tile_seed_offset` across tiles (perturb tensor that tiles) | ⚠️ **not triggered** for SpeechNet (all single-tile); **open in general** (§4) |
 | Strip debug instrumentation (ZTRACE / BN_DEBUG / loss-bit dumps) | ⏳ cleanup |
@@ -176,8 +176,11 @@ consumers, so they can't be forced full-size.)
 **Verified (full flow: Onnx4Deeploy fixture gen → TrainDeeploy MeZO runner → GVSoC):**
 - 2-step / `n_accum`=1 (lr 1e-3): step-0 bit-exact (0.016488 / 0.069274), step-1 within 1e-6, **Errors 0/4**.
 - 8-step / `n_accum`=2 (lr 3e-6): **Errors 0/32**, max diff 3e-6.
-- **exp5_zo** — 100 epochs / `n_accum`=4 (data_size 4 → 100 update steps → 400 mini-batches → ~800 forwards), lr 3e-6:
-  _RESULT PLACEHOLDER — filled after the ~2–3 h GVSoC run completes; log `experiments/zo_smoke/exp5_zo.log`._
+- **exp5_zo** — 100 epochs / `n_accum`=4 (data_size 4 → 100 update steps → 400 mini-batches → **800 forwards**), lr 3e-6:
+  **Errors 0 out of 800**, max device-vs-reference diff **3.5e-5** (well within TOL 1e-3). Confirms the multi-step +
+  gradient-accumulation pipeline stays correct at scale and the per-step FP drift does **not** accumulate beyond
+  tolerance over 100 epochs. Log: `experiments/zo_smoke/exp5_zo.log`. (Note: the `BENCH train_cycles` counter is
+  uint32 and **overflows** on a run this long — it wrapped from ~14.2 B to 1.37 B; cosmetic, not a correctness issue.)
 
 **lr / stability note:** the ZO perturbation ε is baked into the ONNX Perturb node (0.01); the runner `--lr` only
 scales the update. lr=1e-3 diverges to NaN by ~step 11 (2-step is fine, 8-step already needs a smaller lr) — long
