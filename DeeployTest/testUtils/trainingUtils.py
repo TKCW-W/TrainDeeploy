@@ -315,71 +315,6 @@ def add_mezo_cmake_flags(cmd: List[str], config) -> None:  # -- QW
         cmd.append(f"-DTRAINING_NUM_DATA_INPUTS={config.training_num_data_inputs}")  # -- QW
 
 
-def _prep_zo_train_for_deploy(raw_train_dir: str, gen_dir: str) -> str:  # -- QW
-    """QW: Option-B deploy-side lowering of the reference ZO train graph. -- QW
-
-    Onnx4Deeploy's ``feat/ZO`` export emits ``zo_train`` with the trainable weights as
-    graph INITIALIZERS (the reference ZO design — the Perturb base of each weight is a
-    constant, matching the demo graph). On device, however, the two-graph *in-place* ZO
-    update needs those weights to live in WRITABLE, name-shareable buffers so that
-    ``zo_update``'s outputs can be redirected onto them (``build_shared_buffer_maps`` /
-    ``_patch_shared_buffers`` match by name against the *training graph inputs*). Baked
-    initializers are constant-tensor arena slots that the sharing pass can't resolve, so
-    the update never propagates to the next step.
-
-    This helper promotes — on a COPY, leaving the raw fixture and the exported artifact
-    untouched — the trainable initializers (the 22 PerturbRademacher bases) to graph INPUTS,
-    appended after ``[input, label]``, and augments ``inputs.npz`` with their initial values
-    (``arr_0002..``) in the same positional convention as the BP training fixtures. The frozen
-    BN running-mean/var stay initializers. The result flows through the EXISTING training +
-    optimizer codegen exactly like a BP graph, so the weight buffers are shared and the update
-    is in-place across steps. -- QW
-    """
-    import onnx  # -- QW
-    from onnx import helper, numpy_helper  # -- QW
-
-    raw = Path(raw_train_dir)  # -- QW
-    dest = Path(gen_dir) / "zo_train_prepped"  # -- QW
-    dest.mkdir(parents = True, exist_ok = True)  # -- QW
-
-    model = onnx.load(str(raw / "network.onnx"))  # -- QW
-    graph = model.graph  # -- QW
-    init_map = {i.name: i for i in graph.initializer}  # -- QW
-
-    # Trainable weights = PerturbRademacher bases that are currently initializers, in node order. -- QW
-    trainable: List[str] = []  # -- QW
-    seen = set()  # -- QW
-    for node in graph.node:  # -- QW
-        if "Perturb" in node.op_type and node.input and node.input[0] in init_map and node.input[0] not in seen:  # -- QW
-            trainable.append(node.input[0])  # -- QW
-            seen.add(node.input[0])  # -- QW
-
-    # Promote each trainable initializer to a graph INPUT (appended after input,label) and
-    # drop it from the initializer list so Deeploy treats it as a runtime (writable) buffer. -- QW
-    for name in trainable:  # -- QW
-        arr = numpy_helper.to_array(init_map[name])  # -- QW
-        graph.input.append(helper.make_tensor_value_info(name, init_map[name].data_type, list(arr.shape)))  # -- QW
-    kept = [i for i in graph.initializer if i.name not in seen]  # -- QW
-    del graph.initializer[:]  # -- QW
-    graph.initializer.extend(kept)  # -- QW
-    onnx.save(model, str(dest / "network.onnx"))  # -- QW
-
-    # inputs.npz: slim (input,label,meta,mb*) + the 22 initial weights as arr_0002.. (input order). -- QW
-    slim = dict(np.load(raw / "inputs.npz"))  # -- QW
-    full = {"arr_0000": slim["arr_0000"], "arr_0001": slim["arr_0001"]}  # -- QW
-    for i, name in enumerate(trainable):  # -- QW
-        full[f"arr_{i + 2:04d}"] = numpy_helper.to_array(init_map[name])  # -- QW
-    for k, v in slim.items():  # -- QW
-        if k.startswith("meta") or k.startswith("mb"):  # -- QW
-            full[k] = v  # -- QW
-    np.savez(dest / "inputs.npz", **full)  # -- QW
-    shutil.copy(raw / "outputs.npz", dest / "outputs.npz")  # -- QW
-
-    log.info(f"[Execution] ZO deploy-prep: promoted {len(trainable)} trainable initializers -> inputs "  # -- QW
-             f"({dest})")  # -- QW
-    return str(dest)  # -- QW
-
-
 def run_zo_codegen(config, script_dir: Path) -> None:  # -- QW
     """Drive the two-stage MeZO (ZO) codegen pipeline for one test. -- QW
 
@@ -413,11 +348,12 @@ def run_zo_codegen(config, script_dir: Path) -> None:  # -- QW
     # graph INPUTS here on a COPY (raw fixture + exported artifact untouched); the prepped graph then
     # flows through the EXISTING training + optimizer codegen exactly like a BP graph, and
     # build_shared_buffer_maps can alias zo_update's outputs onto the shared weight inputs. -- QW
-    if os.environ.get("ZO_NO_PREP"):  # -- QW  debug: deploy the raw initializer-form graph (no promotion)
-        train_dir = config.test_dir  # -- QW
-        log.info("[Execution] ZO_NO_PREP set: deploying raw initializer-form zo_train (no promotion)")  # -- QW
-    else:  # -- QW
-        train_dir = _prep_zo_train_for_deploy(config.test_dir, config.gen_dir)  # -- QW  prepped (weights-as-inputs)
+    # QW: Onnx4Deeploy's ZO export emits zo_train with the trainable weights already as graph INPUTS
+    #     (byte-structurally like a BP training graph), so we consume the fixture DIRECTLY — no deploy-time
+    #     promotion. The "make weights inputs" step lives in the exporter (zo_transform), keeping the flow
+    #     clean and identical to BP. (build_shared_buffer_maps then aliases zo_update's outputs onto the
+    #     zo_train weight inputs for the in-place cross-step update.) -- QW
+    train_dir = config.test_dir  # -- QW
 
     # --- Stage 1: ZO training network (perturb -> fwd -> SoftmaxCE loss). --- -- QW
     cmd = [  # -- QW

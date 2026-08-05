@@ -20,8 +20,11 @@
 | ZO device-loop harness `deeploymezotest.c` (±ε → g_proj → in-place update) | ✅ |
 | Full pipeline codegen → build → GVSoC on RISC-V | ✅ |
 | **Single-step / `n_accum`=1, all 22 params (Conv+BN+fc), on-device == reference** | ✅ **bit-exact** |
+| **Multi-step 2-step / `n_accum`=1 (update propagates across steps)** | ✅ step-0 bit-exact, step-1 within 1e-6, Errors 0/4 |
+| **8-step / `n_accum`=2 (gradient accumulation + multi-step)** | ✅ Errors 0/32 (max diff 3e-6) |
+| **exp5_zo — 100 epochs / `n_accum`=4 (400 mini-batches, ~800 forwards)** | see §10 |
+| **Weights-as-inputs emitted by Onnx4Deeploy; TrainDeeploy consumes it directly (no deploy-time promotion)** | ✅ clean flow, bit-exact |
 | `tile_seed_offset` across tiles (perturb tensor that tiles) | ⚠️ **not triggered** for SpeechNet (all single-tile); **open in general** (§4) |
-| Multi-step / `n_accum` > 1 → full recipe | ⏳ next (functional; full-accuracy stays in the PyTorch exp18 sim) |
 | Strip debug instrumentation (ZTRACE / BN_DEBUG / loss-bit dumps) | ⏳ cleanup |
 
 ## 2. Reproduction
@@ -129,7 +132,7 @@ The **conv0-passes / conv1-fails** contrast (in_ch=1 vs in_ch=8) pinned 5.2 imme
 - **Mis-diagnosed "~500× slowdown"**: earlier attributed to weights-as-inputs / fold-failing / runtime-transpose. **Wrong** — the real cause was the FP trap (5.1). The runtime `Transpose` is cheap and is the correct, shipped approach (5.2).
 
 ## 8. Remaining work
-1. **Scale up:** `n_accum` > 1 (one update step) → a few multi-step correctness runs. GVSoC is far too slow for the full exp18 recipe (200 epochs) — on-device tests validate **functional correctness on tiny step counts**; full-accuracy training stays in the PyTorch **exp18** sim (ZO 87.36 ≈ BP 86.11 ≈ paper fold-3 87.64).
+1. ~~**Scale up:** `n_accum` > 1, multi-step.~~ ✅ **Done** (§10): 2-step/`n_accum`=1, 8-step/`n_accum`=2, and exp5_zo 100-epoch/`n_accum`=4 all validated on device via the input-form flow. GVSoC is still too slow for the full exp18 recipe (200 epochs) at real lr — full-accuracy training stays in the PyTorch **exp18** sim (ZO 87.36 ≈ BP 86.11 ≈ paper fold-3 87.64).
 2. **Resolve the `tile_seed_offset` open item (§4)** before any model with a perturbed tensor large enough to tile: model the per-tile offset in `_perturb_rademacher`, or assert single-tile per perturb.
 3. **Strip debug instrumentation** (all `-- QW`): `ZTRACE` phase markers + loss-bit dumps in `deeploymezotest.c`; `g_bn_debug` in `BatchNorm.c`; `BN_DEBUG` passthroughs. Keep `g_bn_frozen_stats` / `BN_FROZEN_STATS` (functional).
 4. Optionally re-add a **correct** layout fold (perturb `z` indexed by the pre-transpose element position) if the runtime `Transpose` cost ever matters — it doesn't for SpeechNet (tiny weights).
@@ -138,3 +141,47 @@ The **conv0-passes / conv1-fails** contrast (in_ch=1 vs in_ch=8) pinned 5.2 imme
 - **`killall`/`pkill -f` do NOT reliably kill `gvsoc_launcher`.** Orphans survive and starve new sims via CPU contention → runs look "hung". **Kill by explicit PID** (`pgrep -f gvsoc_launcher | xargs -r kill -9`), verify 0 remaining before each run; also kill orphaned `gmake`/`gapy`/`cc1` build chains. A stray `gvsoc_launcher` once held **14 GB** of deleted trace files open, filling the disk.
 - **Device stdout flushes only at `main()` return** → a killed run shows an empty log. Use `fflush`/`ZTRACE` (immediate flush) or GVSoC `--trace=fc/insn|cluster/pe0/insn|cluster/dma` for live/where-stuck diagnosis (map PCs with `llvm-objdump`). Trace output is huge — bound it (`tail -c`) to avoid filling the disk.
 - Launch long runs via `nohup … &` inside a foreground `docker exec` (the `run_in_background`+`docker exec`+redirect combo drops the log); poll the on-disk log.
+
+## 10. Multi-step scaling, input-form export, and the fc_bias buffer-overlap fix
+
+**What changed.** The ZO on-device flow now runs multi-step / gradient-accumulation training bit-exact, and the
+"make weights inputs" step was moved into Onnx4Deeploy so the whole flow is clean:
+- **Onnx4Deeploy `feat/ZO`** now emits `zo_train` with the trainable weights as graph **INPUTS** (byte-structurally
+  like a BP training graph; `zo_transform._promote_initializers_to_inputs`). `zo_update` already emits weights-as-inputs.
+- **TrainDeeploy** consumes the fixture **directly** — no deploy-time promotion. `run_zo_codegen` points at the raw
+  fixture; the two-dir split (train/update) is the only packaging (`experiments/zo_smoke/pack_2step_fixture.py`).
+  `build_shared_buffer_maps` aliases `zo_update`'s `*_updated` outputs onto the `zo_train` weight inputs so the
+  in-place per-weight update propagates to the next step. (The interim TrainDeeploy `_prep_zo_train_for_deploy`
+  promotion — used to validate before moving it to the exporter — has been removed.)
+
+**The multi-step correctness bug (fc_bias L1 buffer overlap).** The 2-step test (step-1 reads the weights step-0's
+`zo_update` wrote) exposed a bug the single-step test structurally could not: step-1 diverged. Differential tracing
+(dump on-device weights, perturbed weights, pooled features, and the fc Gemm's actual read inputs — all guarded, now
+stripped) proved every weight, every perturbation, the whole conv/BN/GlobalAveragePool feature chain, and `fc_weight`
+were bit-exact; **only `fc_bias` was corrupted on its odd indices**. Cause: `fc_bias` is the only param whose length
+(9) is not a multiple of `NUM_CORES`=8, so the tiler placed the perturb's L1 `data_out` only **+4 B into `data_in`** —
+the two 36-byte buffers overlap. The element-wise perturb writes `data_out[i]` (= `data_in[i+1]`) before reading it,
+so each odd element reads an already-perturbed value → odd `fc_bias` wrong → odd fc logits wrong → the whole ~0.002
+step-0 bias. Init-form (constant `fc_bias`, non-tiled) is unaffected — which is why step-0 was bit-exact there and gave
+the confidence the input-form should match.
+
+**Fix (`TargetLibraries/PULPOpen/src/ApplyRademacherPerturbation`).** Made the kernel overlap-safe: when `data_out`
+sits just ahead of `data_in` (small forward overlap — the decision is identical on every core since `dest-src` is
+constant), each core copies its chunk to a private temp, a `pi_cl_team_barrier(0)` guarantees all reads finish before
+any write, then it perturbs from the temp. The RNG stream/order is unchanged ⇒ bit-identical to the non-overlapping
+fast path; large tensors (`data_out` far from `data_in`) take the fast path unchanged. (A tiler-level fix — forcing
+full-size perturb tiles — was infeasible: the perturb sees every tensor as flat, and weights/biases feed tiled
+consumers, so they can't be forced full-size.)
+
+**Verified (full flow: Onnx4Deeploy fixture gen → TrainDeeploy MeZO runner → GVSoC):**
+- 2-step / `n_accum`=1 (lr 1e-3): step-0 bit-exact (0.016488 / 0.069274), step-1 within 1e-6, **Errors 0/4**.
+- 8-step / `n_accum`=2 (lr 3e-6): **Errors 0/32**, max diff 3e-6.
+- **exp5_zo** — 100 epochs / `n_accum`=4 (data_size 4 → 100 update steps → 400 mini-batches → ~800 forwards), lr 3e-6:
+  _RESULT PLACEHOLDER — filled after the ~2–3 h GVSoC run completes; log `experiments/zo_smoke/exp5_zo.log`._
+
+**lr / stability note:** the ZO perturbation ε is baked into the ONNX Perturb node (0.01); the runner `--lr` only
+scales the update. lr=1e-3 diverges to NaN by ~step 11 (2-step is fine, 8-step already needs a smaller lr) — long
+runs use **lr=3e-6** to keep losses finite. Separately, the harness's loss comparison treats a NaN diff as a pass
+(minor robustness gap — flag NaN as an error).
+
+Full debugging trail: `experiments/zo_smoke/STEP0_BIAS_FINDINGS.md`.
