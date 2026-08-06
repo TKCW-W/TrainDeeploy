@@ -117,8 +117,11 @@ struct pi_device cluster_dev;    // -- QW
  * Cycle accumulators -- QW
  * ---------------------------------------------------------------------- */
 
-static unsigned int g_train_cycles_acc = 0;  // -- QW
-static unsigned int g_opt_cycles_acc = 0;    // -- QW
+/* QW: 64-bit cycle accumulators — a uint32 sum wraps on long rounds (e.g. the 200-epoch ZO
+ * round is ~385 G cycles, ~90x past 2^32). getCycles() per call (~17.8 M) is safe; only the
+ * running sum needs 64-bit. -- QW */
+static unsigned long long g_train_cycles_acc = 0;  // -- QW
+static unsigned long long g_opt_cycles_acc = 0;    // -- QW
 
 /* -------------------------------------------------------------------------
  * Loss storage — one L+ and one L- per forward-pass pair (per mini-batch). -- QW
@@ -214,6 +217,35 @@ static void CompareLossesOnCluster(void *args) {  // -- QW
 /* QW: immediate-flush trace to locate on-device stalls (device stdout is
  * otherwise buffered until main() returns, so a killed run shows nothing) -- QW */
 #define ZTRACE(...) do { printf(__VA_ARGS__); fflush(stdout); } while (0)
+
+#ifdef DUMP_WEIGHTS
+/* QW: on-device ZO weight extraction (mirror of deeploytraintest.c dump_weights) - whole fn added by QW -- QW
+ * Dump the final ZO-updated trainable weights as raw 32-bit hex words (FPU-free, bit-exact). The updated
+ * weights live in the training-input buffers DeeployNetwork_inputs[TRAINING_NUM_DATA_INPUTS + wi] (the
+ * zo_update graph writes them in place, aliased onto zo_train's weight inputs). Prints one line per tensor:
+ * "[WDUMP s=<step> wi=<i> n=<#floats>] <hex> <hex> ...", parsed off the runner log by extract_zo_weights.py. */
+static void dump_zo_weights(uint32_t step) {  // -- QW
+#if defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)  // -- QW
+  for (uint32_t wi = 0; wi < (uint32_t)TRAINING_NUM_WEIGHT_INPUTS; wi++) {   // -- QW
+    uint32_t idx = (uint32_t)TRAINING_NUM_DATA_INPUTS + wi;                  // -- QW
+    uint32_t bytes = DeeployNetwork_inputs_bytes[idx];                      // -- QW
+    void *buf = DeeployNetwork_inputs[idx];                                 // -- QW
+    uint32_t n = bytes / 4u;                                                // -- QW
+    printf("[WDUMP s=%u wi=%u n=%u]", (unsigned)step, (unsigned)wi, (unsigned)n);  // -- QW
+    for (uint32_t k = 0; k < n; k++) {                                      // -- QW
+      uint32_t word;                                                        // -- QW
+      if (IS_L2(buf)) {                                                     // -- QW
+        word = ((const uint32_t *)buf)[k];                                  // -- QW
+      } else {                                                             // -- QW
+        ram_read(&word, (uint8_t *)buf + 4u * k, 4u);                       // -- QW
+      }                                                                    // -- QW
+      printf(" %08x", (unsigned)word);                                     // -- QW
+    }                                                                      // -- QW
+    printf("\r\n");                                                        // -- QW
+  }                                                                        // -- QW
+#endif                                                                     // -- QW
+}                                                                          // -- QW
+#endif /* DUMP_WEIGHTS -- QW */
 
 int main(void) {                 // -- QW
 
@@ -425,6 +457,12 @@ int main(void) {                 // -- QW
 
   } /* end update_step loop -- QW */
 
+#ifdef DUMP_WEIGHTS
+  /* QW: dump the final on-device ZO-updated weights (after the last update step) so
+   * extract_zo_weights.py can rebuild the carry checkpoint. FPU-free. -- QW */
+  dump_zo_weights((uint32_t)(N_TRAIN_STEPS - 1));  // -- QW
+#endif
+
   /* ------------------------------------------------------------------
    * Numerical verification — run on cluster (FC has no FPU). -- QW
    * ------------------------------------------------------------------ */
@@ -464,8 +502,11 @@ int main(void) {                 // -- QW
   printf("Errors: %u out of %u\r\n", (unsigned)loss_err_count,  // -- QW
          (unsigned)total_checks);                          // -- QW
 
-  printf("BENCH train_cycles=%u opt_cycles=%u\r\n",        // -- QW
-         g_train_cycles_acc, g_opt_cycles_acc);            // -- QW
+  /* QW: print 64-bit totals as hi/lo 32-bit halves (FC-safe integer, no %llu dependency).
+   * Host reassembles: cycles = hi*4294967296 + lo. Faithful even when the round exceeds 2^32. -- QW */
+  printf("BENCH train_cycles_hi=%u train_cycles_lo=%u opt_cycles_hi=%u opt_cycles_lo=%u\r\n",  // -- QW
+         (unsigned)(g_train_cycles_acc >> 32), (unsigned)(g_train_cycles_acc & 0xffffffffu),   // -- QW
+         (unsigned)(g_opt_cycles_acc >> 32), (unsigned)(g_opt_cycles_acc & 0xffffffffu));      // -- QW
 
   return loss_err_count == 0 ? 0 : 1;  // -- QW
 }                                      // -- QW
