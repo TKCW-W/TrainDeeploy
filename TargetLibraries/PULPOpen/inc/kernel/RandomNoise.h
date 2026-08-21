@@ -97,7 +97,8 @@ void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
                             const uint32_t channel_width,
                             const uint32_t seed,
                             const uint32_t size,
-                            const uint32_t start_offset);
+                            const uint32_t start_offset,
+                            const uint32_t dir);         // -- QW: ZO perturbation_sign
 
 
 void ApplyPerturbQuantUniform_NHWC(int8_t *__restrict__ pweights,
@@ -116,7 +117,8 @@ void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
                             const uint32_t channel_width,
                             const uint32_t seed,
                             const uint32_t size,
-                            const uint32_t start_offset);
+                            const uint32_t start_offset,
+                            const uint32_t dir);         // -- QW: ZO perturbation_sign
 
 // As ApplyPerturbQuantRademacher_CHW, but for weights stored output-channel
 // first ([out, in], GEMM kernel layout): indexes the per-output-channel scale M

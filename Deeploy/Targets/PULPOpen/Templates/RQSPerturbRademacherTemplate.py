@@ -36,7 +36,9 @@ uint32_t ${nodeName}_local_size = ${nodeName}_chunk_stop - ${nodeName}_chunk_sta
 uint32_t ${nodeName}_channel_start_offset = ${nodeName}_chunk_start % ${channel_width};
 
 // Pick large enough stride to minimize correlation between nodes.
-uint32_t chunk_seed = (${seed} + NUM_CORES * ${node_id} + ${nodeName}_core_id) ^ (${tile_seed_offset} * 0x9E3779B1u);
+// -- QW: add perturb_seed_base (ZORuntime.h) so L+/L- share one RNG pattern and
+// the seed advances per update step (neutral 0 -> baked ${seed} behavior).
+uint32_t chunk_seed = ((${seed} + perturb_seed_base) + NUM_CORES * ${node_id} + ${nodeName}_core_id) ^ (${tile_seed_offset} * 0x9E3779B1u);
 <%
 if isinstance(log2D, int):
     log2Dstring = log2D
@@ -50,6 +52,7 @@ ApplyPerturbQuantRademacher_CHW((const int8_t *)  &${data_in}[${nodeName}_chunk_
                                 ${channel_width},
                                 chunk_seed,
                                 ${nodeName}_local_size,
-                                ${nodeName}_chunk_start);
+                                ${nodeName}_chunk_start,
+                                perturbation_sign);  // -- QW: +eps (L+) / -eps (L-)
 
 """)

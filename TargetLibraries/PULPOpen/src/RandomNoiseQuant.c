@@ -19,10 +19,15 @@ void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
                             const uint32_t channel_width,
                             const uint32_t seed,
                             const uint32_t size,
-                            const uint32_t start_offset)
+                            const uint32_t start_offset,
+                            const uint32_t dir)          // -- QW: ZO perturbation_sign (1:+eps, 0:-eps)
 {
     uint32_t rng_state = (seed * 1664525u) + 1013904223u;
     const int32_t rounding = (S > 0) ? (1 << (S - 1)) : 0;
+    // -- QW: flip the Rademacher sign for the L- pass. Negating r is exactly
+    // equivalent to negating the per-channel multiplier M, which is how the
+    // host reference computes L- (negated rqs_mul) -> device matches host.
+    const int32_t sgn = (dir != 0u) ? 1 : -1;
 
     uint32_t n_full_batches = size / 32;
     uint32_t leftover = size % 32;
@@ -33,14 +38,14 @@ void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
         rng_state = Xorshift32(rng_state);
         uint32_t bits = rng_state;
         for (uint32_t b = 0; b < 32; b+=2, i+=2) {
-            int32_t r = (bits & 1) ? 1 : -1;
+            int32_t r = sgn * ((bits & 1) ? 1 : -1);
             int32_t m_val = M[(start_offset + i) % channel_width];
             // Fixed-point multiplication: noise_q = round(r * M / 2^S)
             int32_t noise_q = (r * m_val + rounding) >> S;
             int32_t val = (int32_t)pweights[i] + noise_q;
             pweights_dest[i] = (int8_t)CLAMP(val, -127, 127); // Saturate to int8 range
             bits >>= 1;
-            r = (bits & 1) ? 1 : -1;
+            r = sgn * ((bits & 1) ? 1 : -1);
             m_val = M[(start_offset + i + 1) % channel_width];
             // Fixed-point multiplication: noise_q = round(r * M / 2^S)
             noise_q = (r * m_val + rounding) >> S;
@@ -55,7 +60,7 @@ void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
         rng_state = Xorshift32(rng_state);
         uint32_t bits = rng_state;
         for (uint32_t b = 0; b < leftover; b++, i++) {
-            int32_t r = (bits & 1) ? 1 : -1;
+            int32_t r = sgn * ((bits & 1) ? 1 : -1);
             int32_t m_val = M[(start_offset + i) % channel_width];
             int32_t noise_q = (r * m_val + rounding) >> S;
             int32_t val = (int32_t)pweights[i] + noise_q;
@@ -142,10 +147,12 @@ void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
                             const uint32_t channel_width,
                             const uint32_t seed,
                             const uint32_t size,
-                            const uint32_t start_offset)
+                            const uint32_t start_offset,
+                            const uint32_t dir)          // -- QW: ZO perturbation_sign (1:+eps, 0:-eps)
 {
     uint32_t rng_state = (seed * 1664525u) + 1013904223u;
     const int32_t rounding = (S > 0) ? (1 << (S - 1)) : 0;
+    const int32_t sgn = (dir != 0u) ? 1 : -1;  // -- QW: flip for L- pass
 
     uint32_t n_full_batches = size / 32;
     uint32_t leftover = size % 32;
@@ -155,7 +162,7 @@ void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
         rng_state = Xorshift32(rng_state);
         uint32_t bits = rng_state;
         for (uint32_t b = 0; b < 32; b++, i++) {
-            int32_t r = (bits & 1) ? 1 : -1;
+            int32_t r = sgn * ((bits & 1) ? 1 : -1);
             int32_t m_val = M[(start_offset + i) % channel_width];
             int32_t noise_q = (r * m_val + rounding) >> S;
             pweights_dest[i] = pweights[i] + noise_q;
@@ -167,7 +174,7 @@ void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
         rng_state = Xorshift32(rng_state);
         uint32_t bits = rng_state;
         for (uint32_t b = 0; b < leftover; b++, i++) {
-            int32_t r = (bits & 1) ? 1 : -1;
+            int32_t r = sgn * ((bits & 1) ? 1 : -1);
             int32_t m_val = M[(start_offset + i) % channel_width];
             int32_t noise_q = (r * m_val + rounding) >> S;
             pweights_dest[i] = pweights[i] + noise_q;

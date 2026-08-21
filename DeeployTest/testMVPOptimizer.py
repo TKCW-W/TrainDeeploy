@@ -38,7 +38,7 @@ from testUtils.tilingUtils import TrainingSBTiler
 from testUtils.trainingUtils import _mockScheduler, add_optimizer_training_dir_arg
 
 from Deeploy.AbstractDataTypes import PointerClass
-from Deeploy.CommonExtensions.DataTypes import float32_t
+from Deeploy.CommonExtensions.DataTypes import float32_t, int8_t, int32_t, uint8_t  # -- QW: int8/int32 for QZO update
 from Deeploy.DeeployTypes import CodeGenVerbosity, _NoVerbosity
 from Deeploy.Logging import DEFAULT_LOGGER as log
 from Deeploy.MemoryLevelExtension.MemoryLevels import MemoryHierarchy, MemoryLevel
@@ -68,9 +68,24 @@ def generateTiledOptimizerNetwork(args) -> None:
     for cluster in clusters:
         cluster.n_cores = args.cores
 
-    # 3. All optimizer inputs are float32 (weights + grad acc buffers).
+    # 3. Optimizer input types: derive from each ONNX input's declared dtype so
+    #    mixed-precision (quantized-ZO) update graphs type-check.  The float BP
+    #    optimizer keeps all-float32 inputs; the QZO update graph feeds int8
+    #    weights whose RQSPerturb binding requires int8_t (a hardcoded float32_t
+    #    made partialOrderUpcast(float32->int8) fail -> "no adequate mapping").  -- QW
     graph_input_names = [inp.name for inp in onnx_model.graph.input]
-    inputTypes = {f"input_{i}": PointerClass(float32_t) for i in range(len(graph_input_names))}
+    _ONNX_ELEM_TO_PTR = {  # -- QW
+        onnx.TensorProto.FLOAT: float32_t,
+        onnx.TensorProto.INT8: int8_t,
+        onnx.TensorProto.INT32: int32_t,
+        onnx.TensorProto.UINT8: uint8_t,
+    }
+
+    def _ptrForInput(inp):  # -- QW
+        et = inp.type.tensor_type.elem_type
+        return PointerClass(_ONNX_ELEM_TO_PTR.get(et, float32_t))
+
+    inputTypes = {f"input_{i}": _ptrForInput(inp) for i, inp in enumerate(onnx_model.graph.input)}
     inputOffsets = {f"input_{i}": 0 for i in range(len(graph_input_names))}
 
     # 4. Create deployer with _mockScheduler (required for TilerDeployerWrapper).

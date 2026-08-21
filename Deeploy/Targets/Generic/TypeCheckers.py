@@ -802,7 +802,17 @@ class RQSPerturbZOChecker(SignPropTypeChecker):  # -- QW: ported from shipped De
         super().__init__(input_types, output_types)
 
     def _inferNumLevels(self, inputs, operatorRepresentation):
-        return [inputs[0].nLevels]
+        # -- QW: the perturbed int8 weight retains the input weight's levels when
+        # known; but in the bare zo_update graph the weight is an unconstrained
+        # graph-input (nLevels=None, no downstream Dequant/Conv to back-infer it).
+        # Propagating None crashes fitsNumLevels(None) for the int8 output ->
+        # binding silently rejected ("no adequate mapping"). Fall back to the
+        # int8 output type's full range (256 levels), which the clipped
+        # Rademacher perturbation stays within. zo_train (nLevels set) unchanged.
+        n = inputs[0].nLevels
+        if n is None:
+            n = self.output_types[0].referencedType.nLevels
+        return [n]
 
     def _inferSignedness(self, inputs, operatorRepresentation):
         return [True]
