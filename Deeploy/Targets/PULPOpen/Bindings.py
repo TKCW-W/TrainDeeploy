@@ -601,3 +601,15 @@ BasicDequantBindings = [
     NodeBinding(DequantChecker([PointerClass(int32_t)], [PointerClass(float32_t)]), DequantTemplate.referenceTemplate,
                 ForkTransformer),
 ]
+
+
+# -- QW: RQSPerturbRademacher bindings (quantized ZO), ported from shipped Deeploy
+from Deeploy.Targets.Generic.TypeCheckers import RQSPerturbZOChecker as _RQSPerturbZOChecker  # -- QW
+from Deeploy.Targets.PULPOpen.Templates import RQSPerturbRademacherTemplate as _RQSPRT  # -- QW
+from Deeploy.Targets.PULPOpen.Templates import RQSPerturbRademacher_i32_Template as _RQSPRT32  # -- QW
+PULPRQSPerturbRademacherBindings = [  # -- QW
+    NodeBinding(_RQSPerturbZOChecker([PointerClass(int8_t), PointerClass(int32_t)], [PointerClass(int8_t)]),
+                _RQSPRT.referenceTemplate, ForkTransformer),
+    NodeBinding(_RQSPerturbZOChecker([PointerClass(int32_t), PointerClass(int32_t)], [PointerClass(int32_t)]),
+                _RQSPRT32.referenceTemplate, ForkTransformer),
+]

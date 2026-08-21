@@ -138,6 +138,11 @@ SoftmaxCrossEntropyLossGradMapper = NodeMapper(SoftmaxCrossEntropyLossGradParser
 SGDMapper = NodeMapper(SGDParser(), PULPSGDTilingReadyBindings)
 InPlaceAccumulatorV2Mapper = NodeMapper(InPlaceAccumulatorV2Parser(), PULPInPlaceAccumulatorV2TilingReadyBindings)
 PerturbRademacherMapper = NodeMapper(PerturbRademacherParser(), PULPPerturbRademacherTilingReadyBindings)  # -- QW (FP32 ZO op)
+# -- QW: RQSPerturbRademacher mapper (quantized ZO), ported from shipped Deeploy
+from Deeploy.Targets.Generic.Parsers import RQSPerturbRademacherParser as _RQSPRParser  # -- QW
+from Deeploy.Targets.Generic.Layers import RQSPerturbRademacherLayer as _RQSPRLayer  # -- QW
+from Deeploy.Targets.PULPOpen.Tiler import PULPRQSPerturbRademacherTilingReadyBindings as _RQSPRTRB  # -- QW
+RQSPerturbRademacherMapper = NodeMapper(_RQSPRParser(), _RQSPRTRB)  # -- QW
 QuantMapper = NodeMapper(QuantParser(), BasicQuantBindings)
 DequantMapper = NodeMapper(DequantParser(), BasicDequantBindings)
 GEMMDequantMapper = NodeMapper(PULPGEMMParser(), BasicGEMMBindings)
@@ -208,6 +213,7 @@ PULPMapping = {
     'SGD': SGDLayer([SGDMapper]),
     'InPlaceAccumulatorV2': InPlaceAccumulatorV2Layer([InPlaceAccumulatorV2Mapper]),
     'PerturbRademacher': PerturbRademacherLayer([PerturbRademacherMapper]),  # -- QW (FP32 ZO op)
+    'RQSPerturbRademacher': _RQSPRLayer([RQSPerturbRademacherMapper]),  # -- QW (quantized ZO)
 }
 
 

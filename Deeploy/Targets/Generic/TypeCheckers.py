@@ -795,3 +795,14 @@ class PULPConvGradBChecker(SignPropTypeChecker):
     def _inferSignedness(self, inputs: List[VariableBuffer],
                          operatorRepresentation: OperatorRepresentation) -> List[bool]:
         return [inputs[0]._signed]
+
+
+class RQSPerturbZOChecker(SignPropTypeChecker):  # -- QW: ported from shipped Deeploy for quantized-ZO RQSPerturb
+    def __init__(self, input_types, output_types):
+        super().__init__(input_types, output_types)
+
+    def _inferNumLevels(self, inputs, operatorRepresentation):
+        return [inputs[0].nLevels]
+
+    def _inferSignedness(self, inputs, operatorRepresentation):
+        return [True]

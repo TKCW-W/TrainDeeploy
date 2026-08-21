@@ -248,3 +248,9 @@ PULPPWConvGradX2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PU
 
 PULPConvGradBTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPFloatConvGradBBindings,
                                                            tileConstraint = ConvGradBTileConstraint())
+
+
+# -- QW: RQSPerturbRademacher tiling-ready binding (quantized ZO), ported from shipped Deeploy
+from Deeploy.Targets.PULPOpen.TileConstraints.RQSPerturbTileConstraint import RQSPerturbTileConstraint as _RQSPerturbTC  # -- QW
+from Deeploy.Targets.PULPOpen.Bindings import PULPRQSPerturbRademacherBindings as _PULPRQSPRB  # -- QW
+PULPRQSPerturbRademacherTilingReadyBindings = TilingReadyNodeBindings(nodeBindings=_PULPRQSPRB, tileConstraint=_RQSPerturbTC())  # -- QW

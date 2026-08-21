@@ -3665,3 +3665,30 @@ class Conv2DGradXWBParser(NodeParser):
         self.operatorRepresentation['gradw_dim_im_in_y'] = data_in.shape[3]
 
         return ctxt, True
+
+
+class RQSPerturbRademacherParser(NodeParser, RQSParserInterface):  # -- QW: ported from shipped Deeploy (quantized ZO)
+    def __init__(self):
+        super().__init__()
+
+    def parseNode(self, node: gs.Node) -> bool:
+        return all([len(node.inputs) == 2, len(node.outputs) == 1,
+                    'seed' in node.attrs, 'idx' in node.attrs])
+
+    def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        data_in = ctxt.lookup(node.inputs[0].name)
+        mul = ctxt.lookup(node.inputs[1].name)
+        data_out = ctxt.lookup(node.outputs[0].name)
+        input_shape = data_in.shape
+        if isinstance(data_in.shape, int):
+            input_shape = tuple(input_shape, )
+        self.operatorRepresentation['data_in'] = data_in.name
+        self.operatorRepresentation['data_out'] = data_out.name
+        self.operatorRepresentation['mul'] = mul.name
+        self.operatorRepresentation['seed'] = node.attrs['seed']
+        self.operatorRepresentation['size'] = np.prod(input_shape)
+        self.operatorRepresentation['nodeIdx'] = node.attrs['idx']
+        self.operatorRepresentation['channel_width'] = np.prod(mul.shape)
+        self.operatorRepresentation['log2D'] = int(math.log2(node.attrs['div']))
+        return ctxt, True

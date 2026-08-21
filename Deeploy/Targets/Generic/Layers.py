@@ -914,3 +914,11 @@ class ConvTransposeLayer(ONNXLayer):
             numPx = opRep['dim_im_out_x']
 
         return numPx * opsPerPx
+
+
+class RQSPerturbRademacherLayer(ONNXLayer):  # -- QW: ported from shipped Deeploy (quantized-ZO RQSPerturb)
+    def __init__(self, maps):
+        super().__init__(maps)
+
+    def computeOps(self):
+        return self.mapper.parser.operatorRepresentation['size']
