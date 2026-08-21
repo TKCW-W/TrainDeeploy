@@ -254,3 +254,9 @@ PULPConvGradBTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPFl
 from Deeploy.Targets.PULPOpen.TileConstraints.RQSPerturbTileConstraint import RQSPerturbTileConstraint as _RQSPerturbTC  # -- QW
 from Deeploy.Targets.PULPOpen.Bindings import PULPRQSPerturbRademacherBindings as _PULPRQSPRB  # -- QW
 PULPRQSPerturbRademacherTilingReadyBindings = TilingReadyNodeBindings(nodeBindings=_PULPRQSPRB, tileConstraint=_RQSPerturbTC())  # -- QW
+
+
+# -- QW: Quant/Dequant tiling-ready bindings (UnaryTileConstraint) for the unfolded-BN mixed quant graph
+from Deeploy.Targets.PULPOpen.Bindings import BasicQuantBindings as _BQB2, BasicDequantBindings as _BDB2  # -- QW
+PULPQuantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings=_BQB2, tileConstraint=UnaryTileConstraint())  # -- QW
+PULPDequantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings=_BDB2, tileConstraint=UnaryTileConstraint())  # -- QW

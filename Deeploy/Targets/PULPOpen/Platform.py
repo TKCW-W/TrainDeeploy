@@ -143,8 +143,9 @@ from Deeploy.Targets.Generic.Parsers import RQSPerturbRademacherParser as _RQSPR
 from Deeploy.Targets.Generic.Layers import RQSPerturbRademacherLayer as _RQSPRLayer  # -- QW
 from Deeploy.Targets.PULPOpen.Tiler import PULPRQSPerturbRademacherTilingReadyBindings as _RQSPRTRB  # -- QW
 RQSPerturbRademacherMapper = NodeMapper(_RQSPRParser(), _RQSPRTRB)  # -- QW
-QuantMapper = NodeMapper(QuantParser(), BasicQuantBindings)
-DequantMapper = NodeMapper(DequantParser(), BasicDequantBindings)
+from Deeploy.Targets.PULPOpen.Tiler import PULPQuantTilingReadyBindings, PULPDequantTilingReadyBindings  # -- QW
+QuantMapper = NodeMapper(QuantParser(), PULPQuantTilingReadyBindings)      # -- QW (tiling-ready for mixed quant graph)
+DequantMapper = NodeMapper(DequantParser(), PULPDequantTilingReadyBindings)  # -- QW
 GEMMDequantMapper = NodeMapper(PULPGEMMParser(), BasicGEMMBindings)
 
 ConvGradXMapper = NodeMapper(PULPConvGradX2DParser(), PULPConvGradX2DTilingReadyBindings)
