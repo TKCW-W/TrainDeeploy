@@ -173,7 +173,11 @@ def _merge_conv_rq_fun(graph: gs.Graph, match: Match, name: str):
     # Artifically add half the shift division value to implement rounding
     rounding = 2**(totalShift - 1) if totalShift > 0 else 0
 
-    rqs.inputs[-1].values = copy.deepcopy(rqs.inputs[-1].values) + rounding
+    # QW (quantized ZO): the RequantShift `add` (bias) may be a perturbed VARIABLE (RQSPerturbRademacher
+    # output), not a constant. Only bake the rounding into a constant add; for a variable add the kernel
+    # truncates (no rounding) — matching the host reference (run_onnx_graph add_is_initializer=False). -- QW
+    if hasattr(rqs.inputs[-1], 'values') and rqs.inputs[-1].values is not None:
+        rqs.inputs[-1].values = copy.deepcopy(rqs.inputs[-1].values) + rounding
 
     _inputs = list(conv.inputs) + list(rqs.inputs[1:])
 
