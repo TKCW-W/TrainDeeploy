@@ -548,8 +548,12 @@ class ConvChecker(SignPropTypeChecker):
     def _inferNumLevels(self, inputs: List[VariableBuffer],
                         operatorRepresentation: OperatorRepresentation) -> List[int]:
         weight = inputs[1]
+        # QW (quantized ZO): the conv weight may be an RQSPerturbRademacher output whose buffer inherits
+        # nLevels from a promoted graph-input weight (nLevels=None). Fall back to the weight type's full
+        # range (256 for int8), which the clipped Rademacher perturbation stays within. -- QW
+        wnLevels = weight.nLevels if weight.nLevels is not None else 2**(weight._type.referencedType.typeWidth)
         return [
-            np.prod(operatorRepresentation['kernel_shape']) * weight.nLevels * weight.shape[1] *
+            np.prod(operatorRepresentation['kernel_shape']) * wnLevels * weight.shape[1] *
             2**(self.input_types[0].referencedType.typeWidth)
         ]
 
