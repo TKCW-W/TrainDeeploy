@@ -29,10 +29,11 @@ attributes, from real-data PTQ calibration), per-channel weight scales, and thei
 scale-dependent** (empirically verified by the on-device weight dump, `logs/sim_wdump.log`, decoded and
 compared element-wise against the initial values and the host `updated_*` reference):
 
-- **int8 conv weights: byte-identical to initial** — sub-LSB stall (grid quantum `s_w≈0.02` ≫ update ~1e-4).
+- **int8 conv weights: byte-identical to initial** — sub-LSB stall: measured `s_w ≈ 0.001–0.004`, so the
+  weight step `|coeff|/s_w ≈ 9.4e-5/0.0015 ≈ 0.06 LSB` rounds to 0 (margin only ~8×).
 - **int32 conv biases: genuinely updated** by ±1..±7 integer LSBs (blocks 1–4; block-0's coarser bias scale
-  truncates to 0) — the bias scale `s_b = s_w·s_in` is ~128× finer, so the same coefficient crosses LSB
-  thresholds there.
+  truncates to 0) — the bias lives at the accumulator scale `s_b = s_in·s_w` (≈ `1/s_in ≈ 5×` finer than
+  `s_w`, `s_in≈0.2`), so the same coefficient gives `≈0.35–0.6 LSB` and crosses the threshold.
 - **fp32 BN γ/β + fc: real updates**; 20/22 of all dumped params match the host `updated_*` reference
   **bit-exactly**, the remaining 2 fp32 tensors at 1 ulp (2.3e-10, the same fp32 op-ordering class as the
   1e-6 on `loss+ 6`).

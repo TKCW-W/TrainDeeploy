@@ -35,9 +35,13 @@ On the deployed network the parameters are not fp32 — they live on **integer g
 
 | parameter group (SpeechNet: 22 tensors) | representation | grid quantum (float space) |
 |---|---|---|
-| 5 conv weights | **int8** `w_int`, per-output-channel scale `s_w[c]` → `w = w_int·s_w[c]` | `s_w ≈ 0.02` |
-| 5 conv biases | **int32**, folded into the requant `add` (see §3.2) | `s_b = s_w·s_in` (~128× finer) |
+| 5 conv weights | **int8** `w_int`, per-output-channel scale `s_w[c]=max(\|W[c]\|)/127` → `w = w_int·s_w[c]` | `s_w ≈ 0.001–0.004` (measured from fixture) |
+| 5 conv biases | **int32** at the *accumulator* scale `s_b = s_in·s_w[c]`, folded into the requant `add` (see §3.2) | `s_b ≈ s_w/5` (finer by `1/s_in`, `s_in≈0.2`) |
 | 10 BN γ/β + 2 fc (weight, bias) | **fp32** | none |
+
+(Why int32 bias: the conv accumulates int8·int8 over `in_ch·kh·kw` taps into an **int32 accumulator** at
+scale `s_in·s_w[c]`; the bias is added there *before* requant, so it must live at that fine scale —
+`b_int32 = round(b/(s_in·s_w))` reaches thousands–millions, far past int8's ±127. Universal PTQ convention.)
 
 Three consequences define quantized ZO:
 
@@ -45,12 +49,14 @@ Three consequences define quantized ZO:
    `round(ε/s_w[c])` (≈ ±8 LSBs for our convs — comfortably above the grid, so the *probes* are exact and
    informative). Encoded as a per-channel magnitude vector `mul[c] = round(ε/s_w[c]·2^S)` and applied by an
    integer kernel: `noise = (±mul[c] + 2^(S−1)) >> S`.
-2. **The update must also round to the grid** — and `−lr·g_proj ≈ 1e-4` is far below the weight quantum
-   (`0.02`). Result (empirically verified by the on-device weight dump, exp8): the **conv weights stall at
-   exactly 0 LSB** (sub-LSB stall), the **conv biases** (finer grid) genuinely tick **±1..±7 LSBs**, and the
-   **fp32 params train normally**. The stall is *per-parameter, scale-dependent* — not a bug: host and
-   device compute the identical rounding. The planned remedy is **master weights** (fp32 shadow copies that
-   accumulate sub-LSB updates and re-quantize with the frozen scale).
+2. **The update must also round to the grid** — the weight step in LSBs is `|coeff|/s_w ≈ 9.4e-5/0.0015 ≈
+   0.06 LSB`, below the 0.5 rounding threshold. Result (empirically verified by the on-device weight dump,
+   exp8): the **conv weights stall at exactly 0 LSB** (sub-LSB stall), the **conv biases** (grid `1/s_in≈5×`
+   finer → step `≈0.35–0.6 LSB`) genuinely tick **±1..±7 LSBs**, and the **fp32 params train normally**. The
+   stall is *per-parameter, scale-dependent* — not a bug: host and device compute the identical rounding.
+   Note the margin is modest (~8×): a ~10× higher lr or more accumulation would start flipping weight LSBs —
+   which is what the planned remedy, **master weights** (fp32 shadow copies that accumulate sub-LSB updates
+   and re-quantize with the frozen scale), exploits.
 3. **All quantization scales are frozen at export**: per-tensor activation scales (from PTQ calibration on
    real data), per-channel weight scales, and the fused requant constants. Nothing is per-sample and
    nothing is updated at runtime (out-of-range activations simply clip at ±127). "Re-calibration" = re-run
