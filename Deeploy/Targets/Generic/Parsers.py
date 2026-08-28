@@ -2845,7 +2845,11 @@ class QuantParser(NodeParser):
         ])
 
         if ret:
-            self.operatorRepresentation['scale'] = float(node.attrs['scale'])
+            # QW: the float QuantTemplate MULTIPLIES by ${scale} ("Multiply instead of divide"), but the
+            #     ONNX/Brevitas Quant convention is int8 = round(x / scale). Pass the RECIPROCAL so the device
+            #     matches the host (run_onnx_graph divides by scale) — otherwise the online input Quant used
+            #     x*scale and saturated the int8 input (e.g. x*23.79 vs x/23.79 → device dequant ~29× off). -- QW
+            self.operatorRepresentation['scale'] = 1.0 / float(node.attrs['scale'])
             self.operatorRepresentation['zero_point'] = float(node.attrs['zero_point'])
             self.operatorRepresentation['bit_width'] = int(node.attrs['bit_width'])
 

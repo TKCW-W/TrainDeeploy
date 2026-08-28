@@ -258,6 +258,12 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
                 "MaxPool", "MaxPoolGrad", "MaxPoolArgmax", "MaxPoolGradMask", "AveragePool", "AveragePoolGrad"
         ]:  # QW: +MaxPoolArgmax/MaxPoolGradMask (Part-4) -- QW
             spatialDims = len(node.attrs["kernel_shape"])
+        elif node.op in ["Quant", "Dequant"]:
+            # QW: Quant/Dequant are ELEMENTWISE — NHWC is a pure layout permutation of the activation.
+            #     Making them NHWC (like their MaxPool/RequantizedConv neighbours) lets the transpose-merge
+            #     passes CANCEL the round-trip transposes (NHWC→NCHW→Quant→NCHW→NHWC) that otherwise
+            #     scramble C>1 inter-block quant on device (block-0 C=1 hid it; block-1 C=8 exposed it). -- QW
+            spatialDims = len(tensorIn.shape) - 2
         elif node.op == "Pad":
             spatialDims = 2  # Hack based on current status
         else:
@@ -315,6 +321,24 @@ class NCHWtoNHWCMaxPoolPass(ReplaceSequentialPatternPass):
     def __init__(self, default_channels_first: bool = True):
         graph = _singleNodePattern(op = "MaxPool")
         name = "_NCHW_TO_NHWC_MAXPOOL_PASS"
+        super().__init__(graph, partial(_NCHWtoNHWC_fun, default_channels_first = default_channels_first), name)
+
+
+@contextagnostic
+class NCHWtoNHWCQuantPass(ReplaceSequentialPatternPass):
+    # QW: wrap elementwise Quant in the NHWC layout so MaxPool→Quant→RequantizedConv are all NHWC and the
+    #     redundant round-trip transposes cancel (fixes C>1 inter-block quant on device). -- QW
+    def __init__(self, default_channels_first: bool = True):
+        graph = _singleNodePattern(op = "Quant")
+        name = "_NCHW_TO_NHWC_QUANT_PASS"
+        super().__init__(graph, partial(_NCHWtoNHWC_fun, default_channels_first = default_channels_first), name)
+
+
+@contextagnostic
+class NCHWtoNHWCDequantPass(ReplaceSequentialPatternPass):  # QW -- QW
+    def __init__(self, default_channels_first: bool = True):
+        graph = _singleNodePattern(op = "Dequant")
+        name = "_NCHW_TO_NHWC_DEQUANT_PASS"
         super().__init__(graph, partial(_NCHWtoNHWC_fun, default_channels_first = default_channels_first), name)
 
 
@@ -488,6 +512,9 @@ class PULPNCHWtoNHWCPass(SequentialPass):
             NCHWtoNHWCMaxPoolGradPass(default_channels_first),
             NCHWtoNHWCMaxPoolArgmaxPass(default_channels_first),   # QW: Part-4 -- QW
             NCHWtoNHWCMaxPoolGradMaskPass(default_channels_first),  # QW: Part-4 -- QW
+            # QW: NCHWtoNHWCQuantPass DISABLED — cancels the MaxPool→Quant→Conv transposes structurally but
+            #     changes the numerics net-worse (L- 10.36→20.89); the transposes (verified correct perms)
+            #     were NOT the root cause. Left the pass class defined for future use. -- QW
             PULPNCHWtoNHWCDwConvPass(default_channels_first),
             NCHWtoNHWCConvPass(default_channels_first),
         ]

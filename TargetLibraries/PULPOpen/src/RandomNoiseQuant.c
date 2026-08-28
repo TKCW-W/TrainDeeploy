@@ -39,14 +39,22 @@ void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
         uint32_t bits = rng_state;
         for (uint32_t b = 0; b < 32; b+=2, i+=2) {
             int32_t r = sgn * ((bits & 1) ? 1 : -1);
-            int32_t m_val = M[(start_offset + i) % channel_width];
+            /* QW: PER-OUTPUT-CHANNEL M indexing = (position / channel_width), channel_width = elements per
+             * output channel (what RQSPerturbTileConstraint passes, "always channel first"). The original
+             * modulo indexing assumed channels-last and reads M OUT OF BOUNDS for channels-first weights
+             * (M has C entries, i%channel_width ranges over the spatial width) — same bug shipped fixed in
+             * ApplyPerturbQuantRademacher_CHW_ChannelFirst. Verified on device: the int32 bias perturb
+             * (channel_width=1) broadcast M[0] to all channels instead of per-channel M[c]. -- QW */
+            // int32_t m_val = M[(start_offset + i) % channel_width];  // -- QW: original (channels-last)
+            int32_t m_val = M[(start_offset + i) / channel_width];  // -- QW
             // Fixed-point multiplication: noise_q = round(r * M / 2^S)
             int32_t noise_q = (r * m_val + rounding) >> S;
             int32_t val = (int32_t)pweights[i] + noise_q;
             pweights_dest[i] = (int8_t)CLAMP(val, -127, 127); // Saturate to int8 range
             bits >>= 1;
             r = sgn * ((bits & 1) ? 1 : -1);
-            m_val = M[(start_offset + i + 1) % channel_width];
+            // m_val = M[(start_offset + i + 1) % channel_width];  // -- QW: original (channels-last)
+            m_val = M[(start_offset + i + 1) / channel_width];  // -- QW
             // Fixed-point multiplication: noise_q = round(r * M / 2^S)
             noise_q = (r * m_val + rounding) >> S;
             val = (int32_t)pweights[i+1] + noise_q;
@@ -61,7 +69,8 @@ void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
         uint32_t bits = rng_state;
         for (uint32_t b = 0; b < leftover; b++, i++) {
             int32_t r = sgn * ((bits & 1) ? 1 : -1);
-            int32_t m_val = M[(start_offset + i) % channel_width];
+            // int32_t m_val = M[(start_offset + i) % channel_width];  // -- QW: original (channels-last)
+            int32_t m_val = M[(start_offset + i) / channel_width];  // -- QW: per-output-channel
             int32_t noise_q = (r * m_val + rounding) >> S;
             int32_t val = (int32_t)pweights[i] + noise_q;
             pweights_dest[i] = (int8_t)CLAMP(val, -127, 127);
@@ -163,7 +172,8 @@ void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
         uint32_t bits = rng_state;
         for (uint32_t b = 0; b < 32; b++, i++) {
             int32_t r = sgn * ((bits & 1) ? 1 : -1);
-            int32_t m_val = M[(start_offset + i) % channel_width];
+            // int32_t m_val = M[(start_offset + i) % channel_width];  // -- QW: original (channels-last)
+            int32_t m_val = M[(start_offset + i) / channel_width];  // -- QW: per-output-channel (see _CHW note)
             int32_t noise_q = (r * m_val + rounding) >> S;
             pweights_dest[i] = pweights[i] + noise_q;
             bits >>= 1;
@@ -175,7 +185,8 @@ void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
         uint32_t bits = rng_state;
         for (uint32_t b = 0; b < leftover; b++, i++) {
             int32_t r = sgn * ((bits & 1) ? 1 : -1);
-            int32_t m_val = M[(start_offset + i) % channel_width];
+            // int32_t m_val = M[(start_offset + i) % channel_width];  // -- QW: original (channels-last)
+            int32_t m_val = M[(start_offset + i) / channel_width];  // -- QW: per-output-channel (see _CHW note)
             int32_t noise_q = (r * m_val + rounding) >> S;
             pweights_dest[i] = pweights[i] + noise_q;
             bits >>= 1;

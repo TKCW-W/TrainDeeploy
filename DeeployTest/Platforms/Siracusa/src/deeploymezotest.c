@@ -408,9 +408,6 @@ int main(void) {                 // -- QW
       }                                                          // -- QW
       memcpy(&stored_loss_minus[mb], &lm_bits, sizeof(lm_bits)); // -- QW  integer store into float[] (no FP)
       ZTRACE("[PHASE] -eps loss read OK: lm_bits=0x%08x\r\n", (unsigned)lm_bits);  // -- QW
-      /* QW: dump -eps log_prob[9] raw bits (outputs[1]) for host vs-ORT logit comparison (no FP on FC) -- QW */
-      { const uint32_t *lpb9 = (const uint32_t *)DeeployNetwork_outputs[1];  // -- QW
-        for (int _k = 0; _k < 9; _k++) ZTRACE("[LP- %d]=0x%08x\r\n", _k, (unsigned)lpb9[_k]); }  // -- QW
 
       /* ④ acc += (L+ - L-)  — FP done on cluster (FC has no FPU). -- QW */
       {                                                          // -- QW

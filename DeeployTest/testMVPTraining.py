@@ -20,7 +20,18 @@ from testUtils.trainingUtils import _GRAD_ACC, _infer_data_size, _infer_n_accum,
 from testUtils.typeMapping import inferTypeAndOffset
 
 from Deeploy.AbstractDataTypes import PointerClass
-from Deeploy.CommonExtensions.DataTypes import float32_t, uint8_t
+from Deeploy.CommonExtensions.DataTypes import float32_t, int8_t, int16_t, int32_t, int64_t, uint8_t
+
+# QW: map every ONNX-declared element type to its Deeploy pointer type, so graph inputs are typed by the ONNX
+#     (not by value inference, which mis-types int8 weights, int64 labels, etc.). Mirrors testMVPOptimizer.
+_ONNX_ELEM_TO_PTR = {
+    onnx.TensorProto.FLOAT: float32_t,
+    onnx.TensorProto.INT8: int8_t,
+    onnx.TensorProto.INT16: int16_t,
+    onnx.TensorProto.INT32: int32_t,
+    onnx.TensorProto.INT64: int64_t,
+    onnx.TensorProto.UINT8: uint8_t,
+}
 from Deeploy.DeeployTypes import CodeGenVerbosity, _NoVerbosity
 from Deeploy.Logging import DEFAULT_LOGGER as log
 from Deeploy.MemoryLevelExtension.MemoryLevels import MemoryHierarchy, MemoryLevel
@@ -86,7 +97,17 @@ def generateTiledTrainingNetwork(args) -> None:
         else:
             arr = npz_base[npz_idx]
             npz_idx += 1
-            if arr.dtype == bool or arr.dtype == np.bool_:
+            # QW: honor the ONNX-declared element type for EVERY graph input — quantized-ZO int8/int32 conv
+            #     weights+biases, fp32 BN γ/β + fc weight/bias, and the int64 label. Value inference
+            #     (astype(float32)+inferTypeAndOffset) mis-types them (int8 weight→float32, int64 label→
+            #     float32), so the RQSPerturb / RequantizedConv / BatchNormInternal / SoftmaxCrossEntropyLoss
+            #     bindings reject them. Mirrors testMVPOptimizer._ONNX_ELEM_TO_PTR (7cc4199). -- QW
+            _et = onnx_graph.graph.input[graph_idx].type.tensor_type.elem_type
+            _ptr = _ONNX_ELEM_TO_PTR.get(_et)
+            if _ptr is not None:
+                inputTypes[f"input_{graph_idx}"] = PointerClass(_ptr)
+                inputOffsets[f"input_{graph_idx}"] = 0
+            elif arr.dtype == bool or arr.dtype == np.bool_:
                 inputTypes[f"input_{graph_idx}"] = PointerClass(uint8_t)
                 inputOffsets[f"input_{graph_idx}"] = 0
             elif arr.dtype in (np.float32, np.float64):

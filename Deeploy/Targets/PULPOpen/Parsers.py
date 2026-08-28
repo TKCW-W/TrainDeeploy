@@ -27,7 +27,10 @@ class PULPConv2DParser(RQSConv2DParser):
                 self.operatorRepresentation['group'] == 1,
                 self.operatorRepresentation['pads'][0] == self.operatorRepresentation['pads'][2],
                 self.operatorRepresentation['pads'][1] == self.operatorRepresentation['pads'][3],
-                self.operatorRepresentation['pads'][0] == self.operatorRepresentation['pads'][1],
+                # QW: mirror shipped ETH/Deeploy — the square-padding guard is intentionally disabled there so
+                # non-square padding (e.g. SpeechNet's [0,K/2,0,K/2]) maps; the int8 pulp_nn_conv kernel takes
+                # all four pads separately. Our vendored copy had re-enabled it (a regression). -- QW
+                # self.operatorRepresentation['pads'][0] == self.operatorRepresentation['pads'][1],
                 len(node.inputs) == 4,
                 'shift' in node.attrs,
             ])
