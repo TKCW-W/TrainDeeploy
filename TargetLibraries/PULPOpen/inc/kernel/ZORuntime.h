@@ -24,5 +24,9 @@ extern uint32_t perturb_seed_base;
 extern float32_t perturb_eps_override;
 // When non-zero, kernels use perturb_eps_override instead of the baked ${eps}.
 extern uint32_t perturb_eps_use_override;
+// The baked export-time eps (the magnitude encoded in the RQSPerturb integer `mul` vectors). The ZO
+// runner sets it to ZO_EPS so integer perturb kernels can scale mul by (override/baked) when the
+// override is active (the zo_update coefficient -lr*g_proj). Default 1.0 = no scaling. -- QW
+extern float32_t perturb_eps_baked;
 
 #endif //__DEEPLOY_ZO_RUNTIME_HEADER_

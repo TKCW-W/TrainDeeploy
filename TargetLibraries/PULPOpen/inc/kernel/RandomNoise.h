@@ -90,6 +90,7 @@ void ApplySequentialRademacherPerturbation(const float32_t *__restrict__ pweight
 
 static inline float u32_to_u01_open(uint32_t u);
 
+// QW: eps_scale scales the per-channel mul at runtime (update coeff / baked eps); 1.0f = off. -- QW
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
                             int8_t *__restrict__ pweights_dest,
                             const int32_t *__restrict__ M, // Fixed-point multipliers
@@ -98,7 +99,8 @@ void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
                             const uint32_t seed,
                             const uint32_t size,
                             const uint32_t start_offset,
-                            const uint32_t dir);         // -- QW: ZO perturbation_sign
+                            const uint32_t dir,
+                            const float32_t eps_scale);         // -- QW: ZO perturbation_sign
 
 
 void ApplyPerturbQuantUniform_NHWC(int8_t *__restrict__ pweights,
@@ -118,7 +120,8 @@ void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
                             const uint32_t seed,
                             const uint32_t size,
                             const uint32_t start_offset,
-                            const uint32_t dir);         // -- QW: ZO perturbation_sign
+                            const uint32_t dir,
+                            const float32_t eps_scale);         // -- QW: ZO perturbation_sign
 
 // As ApplyPerturbQuantRademacher_CHW, but for weights stored output-channel
 // first ([out, in], GEMM kernel layout): indexes the per-output-channel scale M

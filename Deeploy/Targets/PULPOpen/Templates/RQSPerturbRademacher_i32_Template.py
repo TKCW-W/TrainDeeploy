@@ -37,6 +37,9 @@ uint32_t ${nodeName}_channel_start_offset = ${nodeName}_chunk_start % ${channel_
 // Pick large enough stride to minimize correlation between nodes.
 // -- QW: add perturb_seed_base + perturbation_sign (ZORuntime.h) for L+/L- flip.
 uint32_t chunk_seed = ((${seed} + perturb_seed_base) + NUM_CORES * ${node_id} + ${nodeName}_core_id) ^ (${tile_seed_offset} * 0x9E3779B1u);
+// QW: zo_update runtime coefficient — scale the baked integer mul by (override / baked eps); 1.0f in
+// train passes (override off). Mirrors FloatPerturbRademacherTemplate's eps override. -- QW
+float32_t ${nodeName}_eps_scale = perturb_eps_use_override ? (perturb_eps_override / perturb_eps_baked) : 1.0f;
 <%
 if isinstance(log2D, int):
     log2Dstring = log2D
@@ -51,6 +54,7 @@ ApplyPerturbQuantRademacher_i32((const int32_t *)  &${data_in}[${nodeName}_chunk
                                 chunk_seed,
                                 ${nodeName}_local_size,
                                 ${nodeName}_chunk_start,
-                                perturbation_sign);  // -- QW: +eps (L+) / -eps (L-)
+                                perturbation_sign,  // -- QW: +eps (L+) / -eps (L-)
+                                ${nodeName}_eps_scale);  // -- QW: zo_update coeff scaling (1.0f = train pass)
 
 """)

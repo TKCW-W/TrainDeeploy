@@ -322,6 +322,10 @@ int main(void) {                 // -- QW
   ZTRACE("Starting ZO training (%u update steps x %u accum steps)...\r\n",  // -- QW
          (unsigned)N_TRAIN_STEPS, (unsigned)N_ACCUM_STEPS);                 // -- QW
 
+  /* QW: publish the export-time eps so the integer RQSPerturb kernels can scale their baked `mul` by
+   * (perturb_eps_override / perturb_eps_baked) during the zo_update pass. -- QW */
+  { extern float32_t perturb_eps_baked; perturb_eps_baked = (float32_t)ZO_EPS; }  // -- QW
+
 #ifdef BN_FROZEN_STATS  /* QW: normalize training BN with frozen pretrained running stats -- QW */
   extern uint32_t g_bn_frozen_stats;  // -- QW
   g_bn_frozen_stats = 1u;             // -- QW
