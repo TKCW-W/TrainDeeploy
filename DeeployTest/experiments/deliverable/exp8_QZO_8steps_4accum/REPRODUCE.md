@@ -25,10 +25,22 @@ The ZO update moves **only**: the int8 conv weights + int32 conv biases (integer
 fc weight/bias. **All quantization scales are frozen at export**: activation scales (`Quant`/`Dequant`
 attributes, from real-data PTQ calibration), per-channel weight scales, and their fused RequantShift
 `mul[c]`/perturb `pmul[c]` constants. The integer update is
-`w += round((coeff/ε)·pmul[c]) >> S` — at `lr=1e-5` this rounds to **zero** (sub-LSB stall, expected): in
-this experiment the int8/int32 params stay static and the fp32 BN/fc params receive the real updates. The
-planned remedy for the stall is the **master-weight** scheme (fp32 shadow copies accumulating updates,
-re-quantized with the same frozen scale); adaptive scale re-calibration is out of scope.
+`w += (r·lrintf(pmul[c]·coeff/ε) + 2^(S−1)) >> S` — whether it survives the grid is **per-parameter,
+scale-dependent** (empirically verified by the on-device weight dump, `logs/sim_wdump.log`, decoded and
+compared element-wise against the initial values and the host `updated_*` reference):
+
+- **int8 conv weights: byte-identical to initial** — sub-LSB stall (grid quantum `s_w≈0.02` ≫ update ~1e-4).
+- **int32 conv biases: genuinely updated** by ±1..±7 integer LSBs (blocks 1–4; block-0's coarser bias scale
+  truncates to 0) — the bias scale `s_b = s_w·s_in` is ~128× finer, so the same coefficient crosses LSB
+  thresholds there.
+- **fp32 BN γ/β + fc: real updates**; 20/22 of all dumped params match the host `updated_*` reference
+  **bit-exactly**, the remaining 2 fp32 tensors at 1 ulp (2.3e-10, the same fp32 op-ordering class as the
+  1e-6 on `loss+ 6`).
+
+The planned remedy for the (weight) stall is the **master-weight** scheme (fp32 shadow copies accumulating
+updates, re-quantized with the same frozen scale); adaptive scale re-calibration is out of scope.
+To reproduce the dump: append `-D DUMP_WEIGHTS=ON` to the Step-3 runner command — the harness prints the 22
+weight buffers as `[WDUMP wi=..]` hex lines after the final update step.
 
 ## Update mechanism (new in this experiment)
 
