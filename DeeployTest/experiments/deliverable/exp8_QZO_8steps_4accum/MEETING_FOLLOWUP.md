@@ -54,6 +54,37 @@ max |s_w(no-calib) − s_w(calib)|  =  0.0        (exactly identical, all 5 conv
 ```
 Activation calibration sets *activation* scales; it has **zero** effect on the *weight* grid. So calibration cannot be the cause of a *weight* stall. (Measured s_w ≈ 0.0010–0.0030 per channel — the grid our earlier analysis used, now confirmed.)
 
+**(a2) Could a per-channel OUTLIER be inflating `s_w`? — checked per channel, worst case.**
+`s_w = max|W[c]|/127` is outlier-sensitive, so one large weight in a channel would coarsen that channel's grid.
+Measured across all **104 output channels** (ratio = `max|w| / p99|w|`; the quantization scale cancels):
+
+| block | elem/channel | median `s_w` | max/p99 (median ch) | max/p99 (**worst ch**) | channels with ratio > 2 |
+|---|---|---|---|---|---|
+| 0 | 4 | 0.00339 | 1.01 | 1.01 | **0** |
+| 1 | 128 | 0.00130 | 1.15 | 1.34 | **0** |
+| 2 | 128 | 0.00177 | 1.14 | 1.51 | **0** |
+| 3 | 112 | 0.00150 | 1.10 | 1.47 | **0** |
+| 4 | 224 | 0.00134 | 1.14 | **1.80** | **0** |
+
+The worst channel in the whole network is inflated only **1.80×**, and **no** channel exceeds 2×. The decisive
+test — would outlier-clipping un-stall *any* channel? (step-0 `coeff = 9.4e-5`):
+```
+current s_w : median = 0.065 LSB, max = 0.095 LSB  ->  channels reaching 0.5 LSB:  0 / 104
+p99-clipped : median = 0.077 LSB, max = 0.108 LSB  ->  channels reaching 0.5 LSB:  0 / 104
+need 7.7x finer s_w to un-stall the median channel; outlier-clipping offers 1.18x
+```
+Even the **most favorable channel** with **aggressive p99 clipping** reaches only 0.108 LSB — **4.6× short** of the
+0.5 threshold. These weights are near-Gaussian per channel (typical of a small trained CNN; pathological weight
+outliers are a transformer phenomenon), so abs-max is already near-optimal and there is nothing to reclaim.
+
+**So the calibration/scale hypothesis fails in all three of its possible forms:**
+
+| form | test | result |
+|---|---|---|
+| activation calibration inflates the weight grid | `s_w` with vs without calibration | **Δ = 0.0 exactly** (data-free) |
+| a per-channel outlier inflates `s_w` | per-channel `max/p99`, worst case | **1.80× worst; 0/104 channels > 2×** |
+| a better weight-scale method would fix it | best channel + p99 clipping vs 0.5 LSB | **0.108 vs 0.5 — 4.6× short** |
+
 **(b) The per-step stall is REAL and dominant for direct-int8; master weights move every step.** (lr=1e-5, 100 steps)
 
 | | Regime A (master) | Regime B (direct int8 = device) |
