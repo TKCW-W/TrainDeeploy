@@ -106,8 +106,31 @@ def build_model_and_data():
 # ---------------------------------------------------------------------------
 # Extract the quantized conv/fc layers and their FROZEN per-channel weight scales
 # ---------------------------------------------------------------------------
+class ConstScale(torch.nn.Module):
+    """Replaces Brevitas' StatsFromParameterScaling so s_w can NEVER re-track the latent weight.
+
+    Brevitas re-derives the weight scale from the parameter on every quant_weight() call
+    (StatsFromParameterScaling, brevitas/core/scaling/runtime.py:25). During fine-tuning that
+    means the grid follows the weights -- exactly the "that's cheating" case. Swapping the
+    scaling_impl for this constant module pins s_w to its post-calibration value while leaving
+    the rest of Brevitas' quantization path (round -> clamp -> *scale) fully in charge.
+    """
+
+    def __init__(self, v: torch.Tensor):
+        super().__init__()
+        self.register_buffer("v", v.detach().clone())
+
+    def forward(self, *a, **k):
+        return self.v
+
+
 def collect_quant_layers(model):
-    """Return list of (name, module, s_w tensor, W_latent_init tensor) for conv+fc."""
+    """Return list of (name, module, s_w tensor, W_latent_init tensor) for conv+fc.
+
+    ALSO freezes each layer's weight scale by module surgery, so that from here on Brevitas
+    itself performs the quantization with a fixed s_w (faithful methodology: we do NOT
+    pre-quantize and inject; we hand Brevitas the latent weight and let it quantize).
+    """
     import brevitas.nn as qnn
     layers = []
     for name, m in model.named_modules():
@@ -115,6 +138,8 @@ def collect_quant_layers(model):
             qw = m.quant_weight()
             s_w = qw.scale.detach().clone()          # per-output-channel [Cout,1,1,1] or [Cout,1]
             W_init = m.weight.detach().clone()        # latent fp32 weight
+            # FREEZE: pin the scale so it cannot re-track the latent weight during training.
+            m.weight_quant.tensor_quant.scaling_impl = ConstScale(s_w)
             layers.append({"name": name, "module": m, "s_w": s_w,
                            "W_init": W_init,
                            "is_conv": isinstance(m, qnn.QuantConv2d)})
@@ -136,24 +161,29 @@ def to_int8(W, s_w):
 # ---------------------------------------------------------------------------
 def loss_with_weights(model, layers, weight_override, x, y):
     """
-    Run the model but with each conv/fc's *latent* weight temporarily set to the
-    given (already-fake-quant-ready) fp32 tensor W, which will be fake-quantized by
-    the FROZEN s_w. We bypass Brevitas' abs-max re-tracking by directly injecting the
-    fake-quant weights AND restoring afterwards. To force the frozen s_w to be used,
-    we replace the weight so that round(W/s_w) is exactly what we want and s_w is
-    fixed.
+    Run the model with each conv/fc's LATENT fp32 weight temporarily set to the given tensor,
+    and let BREVITAS perform the quantization.
 
-    weight_override: dict name -> latent fp32 W to install (BEFORE fake-quant).
+    Methodology note (this is the faithful path, and it matters):
+      We install the RAW latent weight into `m.weight.data` -- NOT a pre-quantized one -- and
+      Brevitas' own forward then computes round(W/s_w) -> clamp -> *s_w via
+      quant_layer.py:146 -> mixin/parameter.py:49 -> core/quant/int_base.py:54-74.
+      Because collect_quant_layers() pinned scaling_impl to a ConstScale, that s_w is the
+      frozen post-calibration value and cannot re-track the weight.
+
+      (An earlier version pre-quantized with a local fake_quant() and injected the result,
+      intending to bypass abs-max re-tracking. That was NOT a no-op: Brevitas re-derived a
+      slightly finer scale from the injected tensor and re-rounded, shifting some elements by
+      1 LSB. Freezing scaling_impl is the correct fix and lets Brevitas stay in charge.)
+
+    weight_override: dict name -> latent fp32 W to install.
     Returns scalar CE loss (fp32).
     """
     saved = {}
     for L in layers:
         m = L["module"]
         saved[L["name"]] = m.weight.data
-        # install the fake-quantized weight directly as the latent weight, using the
-        # FROZEN s_w (so any residual abs-max tracking is a no-op: |fq(W)| <= |W_grid|).
-        Wq = fake_quant(weight_override[L["name"]], L["s_w"])
-        m.weight.data = Wq
+        m.weight.data = weight_override[L["name"]]   # LATENT weight; Brevitas quantizes it
     try:
         with torch.no_grad():
             logits = model(x)
@@ -403,6 +433,34 @@ def main():
             log(f"  {L['name']}: ROUND-TRIP FAIL")
     log(f"  round-trip stable for all layers: {rt_ok}")
 
+    # ---- FREEZE GATE: prove Brevitas' own quantizer now uses the pinned s_w -------
+    # (a) perturbing the latent weight must NOT move the scale, and
+    # (b) Brevitas' quant_weight() must equal our reference round(W/s_w)*s_w exactly.
+    log("\n== freeze gate: Brevitas quantizes with the PINNED s_w (no re-tracking) ==")
+    freeze_ok, max_scale_drift, max_val_err = True, 0.0, 0.0
+    for L in layers:
+        m = L["module"]
+        saved = m.weight.data
+        try:
+            # a deliberately large latent perturbation: would move an abs-max scale a lot
+            W_test = L["W_init"] * 0.3 + 0.7 * L["s_w"] * torch.sign(torch.randn_like(L["W_init"]))
+            m.weight.data = W_test
+            s_now = m.quant_weight().scale.detach()
+            drift = float((s_now - L["s_w"]).abs().max())
+            # Brevitas' quantized value vs our frozen-scale reference
+            ref = to_int8(W_test, L["s_w"]) * L["s_w"]
+            err = float((m.quant_weight().value.detach() - ref).abs().max())
+        finally:
+            m.weight.data = saved
+        max_scale_drift = max(max_scale_drift, drift)
+        max_val_err = max(max_val_err, err)
+        if drift > 0.0 or err > 1e-9:
+            freeze_ok = False
+            log(f"  {L['name']}: scale drift={drift:.3e}  value err={err:.3e}")
+    log(f"  max scale drift = {max_scale_drift:.3e} (must be 0.0)")
+    log(f"  max |brevitas_quant_weight - frozen-scale reference| = {max_val_err:.3e} (must be 0)")
+    log(f"  FREEZE GATE: {'PASS' if freeze_ok else 'FAIL'}")
+
     # ---- MAIN RUN: 100 steps at lr=1e-5 ----------------------------------------
     log(f"\n{'='*70}\nMAIN RUN: {N_STEPS} steps, lr={LR_MAIN:.0e}, eps={EPS}, n_accum={N_ACCUM}, seed={SEED}\n{'='*70}")
     resA, resB, tot = run_regimes(model, layers, windows, labels, LR_MAIN, N_STEPS,
@@ -445,6 +503,10 @@ def main():
         "A_eventually_moves_lr1e5": bool(resA["pct_moved_cumulative"][-1] > 0),
         "step0_roundtrip_ok": bool(rt_ok),
         "s_w_data_free_maxdiff_lt_1e6": bool(df_maxdiff < 1e-6),
+        # Brevitas itself does the quantization, with the scale pinned to its calibrated value
+        "freeze_gate_brevitas_uses_pinned_s_w": bool(freeze_ok),
+        "freeze_max_scale_drift": float(max_scale_drift),
+        "freeze_max_value_err": float(max_val_err),
     }
     log(f"\n{'='*70}\nVALIDATION CHECKPOINTS\n{'='*70}")
     for k, v in chk.items():

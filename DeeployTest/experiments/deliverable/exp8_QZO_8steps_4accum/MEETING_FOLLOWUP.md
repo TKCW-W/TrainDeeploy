@@ -91,11 +91,21 @@ outliers are a transformer phenomenon), so abs-max is already near-optimal and t
 |---|---|---|
 | steps with **0%** weights moved | **0 / 100** | **98 / 100** |
 | first step any weight moves | step 0 | step 15 |
-| cumulative % moved @100 steps | 72.4% | 55.1% |
+| cumulative % moved @100 steps | 71.7% | 61.1% |
 | how it moves | smooth every step (fp32 latent accumulates) | only on 2 gradient **spikes** |
 | fp32 latent drift @100 | grows steadily to 4.76 LSB | n/a (no latent) |
 
-**(c) Direct-int8's movement is NOISE, not descent.** Regime B's entire 55% comes from **2 of 100 steps**:
+> **Methodology correction (2026-09-01).** The first version of this experiment pre-quantized the weights with
+> a local `fake_quant()` and injected the result, intending to bypass Brevitas' scale re-tracking. That was
+> **not** a no-op: Brevitas re-derived a slightly finer scale from the injected tensor and re-rounded, shifting
+> some elements by 1 LSB (`brevitas_evidence/idem.py` reproduces it). The script now does it properly — it
+> pins `weight_quant.tensor_quant.scaling_impl` to a constant (`ConstScale`) and hands Brevitas the **latent**
+> weight, so **Brevitas itself performs the quantization** with a provably frozen scale. A new freeze gate
+> asserts this: `max scale drift = 0.0`, `max |brevitas_quant_weight − frozen-scale reference| = 0.0`.
+> Numbers above are from the corrected run (Regime B cumulative moved 55.1% → 61.1%); **every conclusion is
+> unchanged** — A moves on 100/100 steps, B stalls on 98/100.
+
+**(c) Direct-int8's movement is NOISE, not descent.** Regime B's entire movement comes from **2 of 100 steps**:
 ```
 step 15:  g_proj = 67  → 44.2% of weights flip at once
 step 42:  g_proj = 82  → 77.5% of weights flip at once
@@ -119,6 +129,27 @@ At lr≥1e-4 the per-step update itself exceeds ½ LSB, so even direct-int8 move
 |---|---|---|
 | "issue might be **calibration**" | **Refuted** | `s_w` is data-free (Δ=0.0); activation calibration cannot change the weight grid or the stall. Also: our calibration is already correct (loss ≈ real, not the random-calib 9.07 regime). |
 | "the LSB stall **should not happen**" | **Right — *for master-weight training*** | In standard QAT / Brevitas fine-tuning (Regime A) weights move on every step and never stall. His suggested Brevitas flow *is* the master-weight scheme — so it demonstrates the **fix**, not a calibration bug. |
+
+### Precise statement of the Brevitas / master-weight claim (please use this wording)
+
+Brevitas **performs no weight update at all** — it never writes `self.weight`; it is a forward-time quantizer
+that reads the weight and returns a transient value (`nn/mixin/parameter.py:49`). What is true is narrower:
+
+> **Brevitas' parameter interface is fp32-only**, so any training loop whose trainable state is Brevitas' own
+> parameters necessarily accumulates in fp32 — master-weight training, without the author choosing it.
+> Evidence: the module holds **zero int8 tensors** (params all `float32`); `torch.optim.SGD(m.parameters())`
+> captures `conv.weight` itself; and assigning an int8 tensor raises
+> `RuntimeError: data set to a tensor that requires gradients must be floating point`.
+> The fp32 accumulation happens in **`torch/optim/sgd.py:366` `param.add_(grad, alpha=-lr)`** — outside Brevitas.
+
+**Therefore the stall is decided by the update implementation, not by Brevitas.** In our experiment the two
+regimes differ by exactly two lines (`:302` fp32 accumulate vs `:307` round-to-grid) on the *same* model with
+the *same* frozen scales. On device we store only int8 (a choice made in `build_int8_forward`), so there is no
+fp32 to accumulate into. "Master weights" is therefore **not a bug fix but the other storage design** — paying
+~60 KB of L2 for what fake-quant gets for free.
+
+*(Avoid saying "Brevitas is intrinsically master-weight" — he can correctly reply that he never implemented
+master weights. Full runnable evidence + Brevitas source extracts: `brevitas_evidence/`.)*
 | run the Brevitas experiment, measure % moving | **Exactly the right diagnostic** | It isolates master-vs-direct as *the* deciding variable and points straight at master weights. |
 
 **Bottom line:** the stall is caused by our **direct-int8 update discarding the sub-LSB gradient**, not by calibration. The remedy is **master weights** (latent fp32 that accumulates the sub-LSB updates and re-quantizes with the *frozen* scale) — which is precisely what the supervisor's Brevitas fine-tuning does. His intuition ("weights should move") is correct *because* he was implicitly assuming the master-weight regime; his calibration guess is not the mechanism.
