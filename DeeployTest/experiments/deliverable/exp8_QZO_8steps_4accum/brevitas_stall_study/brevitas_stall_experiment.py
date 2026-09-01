@@ -8,12 +8,15 @@ DIRECT-INT8 MeZO updates, and does it DISAPPEAR under "master weights" (a latent
 copy re-quantized each step, = standard Brevitas QAT fine-tuning)?  And is the weight
 scale s_w data-free (independent of activation calibration)?
 
-Two regimes, identical everything else (same frozen s_w, same z per step, same windows,
-same g_proj formula). The ONLY difference:
-  Regime A (MASTER):   maintain W_latent fp32, update W_latent += coeff*z (unrounded),
-                       re-quantize to int8 each step.
-  Regime B (DIRECT):   maintain int8 directly, delta_int8 = round(coeff*z / s_w),
-                       int8 += delta_int8 (sub-LSB discarded each step -> memoryless).
+Three regimes, identical everything else (same frozen s_w, same z per step, same windows,
+same g_proj formula). The ONLY difference is the UPDATE RULE:
+  Regime A (MASTER):    maintain W_latent fp32, update W_latent += coeff*z (unrounded),
+                        re-quantize to int8 each step.        [4 B/weight extra state]
+  Regime B (DIRECT):    maintain int8 directly, delta = round(coeff*z / s_w),
+                        int8 += delta (sub-LSB discarded -> memoryless).   [0 B, stalls]
+  Regime C (STOCHASTIC) maintain int8 directly, delta = floor(x) + Bernoulli(frac(x)),
+                        x = coeff*z/s_w. E[delta] = x exactly -> unbiased, so sub-LSB
+                        steps are applied in expectation.     [0 B, pays in variance]
 
 Writes results.json, cumulative_pct_moved.png, run.log to this directory.
 
@@ -224,9 +227,19 @@ def run_regimes(model, layers, windows, labels, lr, n_steps, eps=EPS,
     B_int8 = {L["name"]: to_int8(L["W_init"], L["s_w"]) for L in trainable}
     B_int8_init = {k: v.clone() for k, v in B_int8.items()}
 
-    # cache initial int8 for A too (both start from the SAME int8 grid)
+    # Regime C state: int8 grid, updated with STOCHASTIC ROUNDING (no fp32 state at all).
+    #   delta = floor(x) + Bernoulli(frac(x))   with x = coeff*z/s_w
+    #   -> E[delta] = x exactly, so a sub-LSB update is applied in expectation rather than
+    #      discarded. Costs ZERO extra memory (the device kernel already owns an RNG), at the
+    #      price of variance. This is the third escape from the stall, alongside master
+    #      weights (A) and error feedback. -- QW
+    C_int8 = {L["name"]: to_int8(L["W_init"], L["s_w"]) for L in trainable}
+    C_int8_init = {k: v.clone() for k, v in C_int8.items()}
+
+    # cache initial int8 for A too (all regimes start from the SAME int8 grid)
     A_int8_prev = {L["name"]: to_int8(L["W_init"], L["s_w"]) for L in trainable}
     B_int8_prev = {k: v.clone() for k, v in B_int8.items()}
+    C_int8_prev = {k: v.clone() for k, v in C_int8.items()}
 
     # total trainable conv-weight element count
     tot = sum(int(L["W_init"].numel()) for L in trainable)
@@ -238,6 +251,8 @@ def run_regimes(model, layers, windows, labels, lr, n_steps, eps=EPS,
             "max_abs_latent_drift": [], "mean_abs_latent_drift": [], "g_proj": [],
             "coeff": [], "L_plus_mean": [], "L_minus_mean": []}
     resB = {"pct_moved_step": [], "pct_moved_cumulative": [], "g_proj": [], "coeff": []}
+    resC = {"pct_moved_step": [], "pct_moved_cumulative": [], "g_proj": [], "coeff": [],
+            "expected_lsb_step": [], "realized_lsb_step": []}
 
     def build_override(state, is_latent):
         """Merge frozen (non-trainable) + trainable state into a full latent-weight override."""
@@ -261,6 +276,7 @@ def run_regimes(model, layers, windows, labels, lr, n_steps, eps=EPS,
         # ---- accumulate g_proj (shared windows) --------------------------------
         accA = 0.0
         accB = 0.0
+        accC = 0.0
         lpA = lmA = 0.0
         for a in range(n_accum):
             idx = (u * n_accum + a) % n_win
@@ -292,10 +308,25 @@ def run_regimes(model, layers, windows, labels, lr, n_steps, eps=EPS,
             Lm_B = loss_with_weights(model, layers, ovB_m, x, y)
             accB += (Lp_B - Lm_B)
 
+            # ---- Regime C: identical forward to B (int8 grid, integer perturb) -
+            # C differs from B ONLY in the UPDATE rule (stochastic vs nearest rounding),
+            # so its probe path is the same integer perturbation.
+            ovC_p = build_override(C_int8, is_latent=False)
+            ovC_m = dict(ovC_p)
+            for L in trainable:
+                dz_int = torch.round(torch.tensor(eps) / L["s_w"]) * z[L["name"]]
+                ovC_p[L["name"]] = (C_int8[L["name"]] + dz_int) * L["s_w"]
+                ovC_m[L["name"]] = (C_int8[L["name"]] - dz_int) * L["s_w"]
+            Lp_C = loss_with_weights(model, layers, ovC_p, x, y)
+            Lm_C = loss_with_weights(model, layers, ovC_m, x, y)
+            accC += (Lp_C - Lm_C)
+
         gA = accA / (2.0 * eps * n_accum)
         gB = accB / (2.0 * eps * n_accum)
+        gC = accC / (2.0 * eps * n_accum)
         coeffA = -lr * gA
         coeffB = -lr * gB
+        coeffC = -lr * gC
 
         # ---- Regime A update: W_latent += coeff*z (unrounded fp32) --------------
         for L in trainable:
@@ -307,6 +338,25 @@ def run_regimes(model, layers, windows, labels, lr, n_steps, eps=EPS,
             delta = torch.round(coeffB * z[L["name"]] / L["s_w"])
             B_int8[L["name"]] = torch.clamp(B_int8[L["name"]] + delta, -127, 127)
         B_int8_now = {k: v.clone() for k, v in B_int8.items()}
+
+        # ---- Regime C update: STOCHASTIC ROUNDING (unbiased, zero extra memory) -
+        #   x     = coeff*z/s_w                       (the desired step, in LSB; ~0.07 here)
+        #   delta = floor(x) + Bernoulli(x - floor(x))
+        #   => E[delta] = x  exactly, so sub-LSB steps are applied in expectation instead of
+        #      being discarded. Handles negative x correctly via floor (not trunc).
+        exp_lsb = 0.0
+        real_lsb = 0.0
+        for L in trainable:
+            x = coeffC * z[L["name"]] / L["s_w"]
+            fl = torch.floor(x)
+            prob = x - fl                                       # in [0,1)
+            u01 = torch.from_numpy(
+                rng.random_sample(size=tuple(x.shape)).astype(np.float32)).to(x.device)
+            delta = fl + (u01 < prob).to(x.dtype)               # stochastic round
+            C_int8[L["name"]] = torch.clamp(C_int8[L["name"]] + delta, -127, 127)
+            exp_lsb += float(x.abs().sum())
+            real_lsb += float(delta.abs().sum())
+        C_int8_now = {k: v.clone() for k, v in C_int8.items()}
 
         # ---- measurements -------------------------------------------------------
         # A
@@ -334,6 +384,17 @@ def run_regimes(model, layers, windows, labels, lr, n_steps, eps=EPS,
         resB["coeff"].append(coeffB)
         B_int8_prev = B_int8_now
 
+        # C (stochastic rounding)
+        moved_step_C = sum(int((C_int8_now[k] != C_int8_prev[k]).sum()) for k in C_int8_now)
+        moved_cum_C = sum(int((C_int8_now[k] != C_int8_init[k]).sum()) for k in C_int8_now)
+        resC["pct_moved_step"].append(100.0 * moved_step_C / tot)
+        resC["pct_moved_cumulative"].append(100.0 * moved_cum_C / tot)
+        resC["g_proj"].append(gC)
+        resC["coeff"].append(coeffC)
+        resC["expected_lsb_step"].append(exp_lsb / tot)     # mean |desired step| in LSB
+        resC["realized_lsb_step"].append(real_lsb / tot)    # mean |applied  step| in LSB
+        C_int8_prev = C_int8_now
+
         if verbose and (u < 5 or u % 20 == 0):
             log(f"  step {u:3d} lr={lr:.0e}  "
                 f"A: step%={resA['pct_moved_step'][-1]:.3f} cum%={resA['pct_moved_cumulative'][-1]:.3f} "
@@ -341,7 +402,7 @@ def run_regimes(model, layers, windows, labels, lr, n_steps, eps=EPS,
                 f"B: step%={resB['pct_moved_step'][-1]:.3f} cum%={resB['pct_moved_cumulative'][-1]:.3f}  "
                 f"coeff={coeffB:.2e}")
 
-    return resA, resB, tot
+    return resA, resB, resC, tot
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +524,7 @@ def main():
 
     # ---- MAIN RUN: 100 steps at lr=1e-5 ----------------------------------------
     log(f"\n{'='*70}\nMAIN RUN: {N_STEPS} steps, lr={LR_MAIN:.0e}, eps={EPS}, n_accum={N_ACCUM}, seed={SEED}\n{'='*70}")
-    resA, resB, tot = run_regimes(model, layers, windows, labels, LR_MAIN, N_STEPS,
+    resA, resB, resC, tot = run_regimes(model, layers, windows, labels, LR_MAIN, N_STEPS,
                                   trainable_conv_only=True, verbose=True)
     log(f"\ntrainable conv-weight elements = {tot}")
     log(f"Regime B (device)  lr=1e-5: cum% moved @100 = {resB['pct_moved_cumulative'][-1]:.4f}  "
@@ -484,11 +545,13 @@ def main():
     log(f"\n{'='*70}\nLR SWEEP: {N_SWEEP_STEPS} steps each, lr in {LR_SWEEP}\n{'='*70}")
     sweep = {}
     for lr in LR_SWEEP:
-        rA, rB, _ = run_regimes(model, layers, windows, labels, lr, N_SWEEP_STEPS,
+        rA, rB, rC, _ = run_regimes(model, layers, windows, labels, lr, N_SWEEP_STEPS,
                                 trainable_conv_only=True, verbose=False)
         sweep[f"{lr:.0e}"] = {
             "A_cum_pct": rA["pct_moved_cumulative"],
             "B_cum_pct": rB["pct_moved_cumulative"],
+            "C_cum_pct": rC["pct_moved_cumulative"],
+            "C_final_cum": rC["pct_moved_cumulative"][-1],
             "A_final_cum": rA["pct_moved_cumulative"][-1],
             "B_final_cum": rB["pct_moved_cumulative"][-1],
             "A_final_drift_max": rA["max_abs_latent_drift"][-1],
@@ -504,6 +567,7 @@ def main():
         "step0_roundtrip_ok": bool(rt_ok),
         "s_w_data_free_maxdiff_lt_1e6": bool(df_maxdiff < 1e-6),
         # Brevitas itself does the quantization, with the scale pinned to its calibrated value
+        "C_stochround_moves_lr1e5": bool(resC["pct_moved_cumulative"][-1] > 0),
         "freeze_gate_brevitas_uses_pinned_s_w": bool(freeze_ok),
         "freeze_max_scale_drift": float(max_scale_drift),
         "freeze_max_value_err": float(max_val_err),
@@ -524,6 +588,7 @@ def main():
         "data_free_check": {"per_layer": df, "max_abs_diff_nocal_vs_cal": df_maxdiff},
         "regime_A_master_lr1e5": resA,
         "regime_B_direct_lr1e5": resB,
+        "regime_C_stochround_lr1e5": resC,
         "lr_sweep": sweep,
         "validation_checkpoints": chk,
         "first_move": {"A": first_move(resA), "B": first_move(resB)},
@@ -533,13 +598,13 @@ def main():
     log(f"\nwrote {HERE / 'results.json'}")
 
     # ---- plot ------------------------------------------------------------------
-    make_plot(resA, resB, sweep)
+    make_plot(resA, resB, resC, sweep)
     log(f"wrote {HERE / 'cumulative_pct_moved.png'}")
 
     return results
 
 
-def make_plot(resA, resB, sweep):
+def make_plot(resA, resB, resC, sweep):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -550,6 +615,7 @@ def make_plot(resA, resB, sweep):
     steps = np.arange(1, len(resA["pct_moved_cumulative"]) + 1)
     ax.plot(steps, resA["pct_moved_cumulative"], "-o", ms=3, label="Regime A (master weights)")
     ax.plot(steps, resB["pct_moved_cumulative"], "-s", ms=3, label="Regime B (direct int8, device)")
+    ax.plot(steps, resC["pct_moved_cumulative"], "-^", ms=3, label="Regime C (stochastic rounding)")
     ax.set_xlabel("MeZO update step")
     ax.set_ylabel("cumulative % int8 conv-weights moved vs init")
     ax.set_title(f"Cumulative % moved  (lr={LR_MAIN:.0e}, eps={EPS}, n_accum={N_ACCUM})")
@@ -562,9 +628,10 @@ def make_plot(resA, resB, sweep):
         st = np.arange(1, len(s["A_cum_pct"]) + 1)
         ax2.plot(st, s["A_cum_pct"], "-", label=f"A master lr={lr:.0e}")
         ax2.plot(st, s["B_cum_pct"], "--", label=f"B direct lr={lr:.0e}")
+        ax2.plot(st, s["C_cum_pct"], ":", label=f"C stoch lr={lr:.0e}")
     ax2.set_xlabel("MeZO update step")
     ax2.set_ylabel("cumulative % int8 conv-weights moved")
-    ax2.set_title("lr sweep: master (solid) vs direct-int8 (dashed)")
+    ax2.set_title("lr sweep: master (solid) / direct (dashed) / stochastic (dotted)")
     ax2.legend(fontsize=8)
     ax2.grid(True, alpha=0.3)
 
