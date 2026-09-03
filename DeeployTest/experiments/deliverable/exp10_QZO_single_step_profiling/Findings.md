@@ -65,6 +65,38 @@ Top offending nodes (QZO, per pair):
    the float round (multi-day GVSoC). Options: fix the kernels first (correct long-term move),
    or run the long round as-is for the accuracy datapoint.
 
+## THE FIX (added same day) — shipped parallel templates + fp32 casts: QZO now 4.3× FASTER than float
+
+The shipped Deeploy reference **already delivers** 8-core parallel Quant/Dequant templates
+(`ETH/Deeploy/Deeploy/Targets/PULPOpen/Templates/{Quant,Dequant}Template.py`, per-core chunking
+via `pi_core_id()`), but its own `Bindings.py` — mirrored by our vendored copy — wires the
+**Generic single-core** templates instead (`BEGIN_SINGLE_CORE`, 7 cores idle). Additionally both
+templates interpolate the scale as a bare double literal (`* 0.04484...` without `f`), promoting
+every element to double-precision **soft-float** on the fp32-only cluster FPU.
+
+Fix in the vendored `TrainDeeploy/Deeploy` (shipped repo untouched):
+1. Copied the shipped parallel templates into `Targets/PULPOpen/Templates/`.
+2. Switched `BasicQuantBindings`/`BasicDequantBindings` to them (originals kept commented).
+3. Added explicit `(float32_t)` casts on scale/zero_point in the (vendored) templates.
+
+Staged measurement (profiled single step, 4 pairs; bit-exactness re-validated at every stage —
+all runs PASS against the export reference, stage 2 `Errors: 0/8`):
+
+| stage | step (4 pairs) | per pair | vs float ZO (35.8M) | attribution |
+|---|---|---|---|---|
+| 0 · Generic single-core + double | 1505.5M | 376.4M | 10.5× slower | baseline |
+| 1 · shipped 8-core templates | 261.8M | 65.4M | 1.8× slower | ÷5.75 from parallelization |
+| 2 · + fp32 casts | **33.5M** | **8.37M** | **4.3× FASTER** | ÷7.8 from killing soft-double |
+
+Fixed per-class profile (per pair, `results/breakdown_stage2.json`): Conv 3.17M (37.7%),
+MaxPool 1.82M (21.6%), BatchNorm 1.41M (16.8%), Transpose 0.90M (10.8%),
+**Quant/Dequant 0.54M (6.5%** — down 680×**)**, ReLU 0.49M. The step is now conv-dominated, as a
+healthy int8 pipeline should be, and the total 45× speedup lands within 8% of the §Conclusions
+prediction (7.8M).
+
+Consequence: the exp9 full round-1 (2700 steps) drops from ~4.2T to ~22.6G cycles — from
+multi-day to ~1 h of GVSoC, and 17× cheaper than the float-ZO round (385G).
+
 ## Reproduction
 
 ```bash

@@ -1,0 +1,42 @@
+{
+ "Conv": {
+  "kernel": 3112416,
+  "overhead": 55681
+ },
+ "MaxPool": {
+  "kernel": 1677282,
+  "overhead": 139808
+ },
+ "BatchNorm": {
+  "kernel": 1190630,
+  "overhead": 218986
+ },
+ "Transpose": {
+  "kernel": 554164,
+  "overhead": 349204
+ },
+ "Quant/Dequant": {
+  "kernel": 367512,
+  "overhead": 175060
+ },
+ "ReLU": {
+  "kernel": 268282,
+  "overhead": 219254
+ },
+ "Other": {
+  "kernel": 42113,
+  "overhead": 8827
+ },
+ "Loss(SCE)": {
+  "kernel": 8826,
+  "overhead": 550
+ },
+ "Gemm/FC": {
+  "kernel": 7323,
+  "overhead": 900
+ },
+ "GlobalAvgPool": {
+  "kernel": 1680,
+  "overhead": 927
+ }
+}

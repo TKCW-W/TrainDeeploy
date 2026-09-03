@@ -589,17 +589,31 @@ PULPGatherBindings = [
                 GatherTemplate.referenceTemplate, ForkTransformer) for type in IntegerDataTypes
 ]
 
+# QW: exp10 found the Generic (BEGIN_SINGLE_CORE) Quant/Dequant templates cost ~1400 cyc/element
+#     (97.9% of the QZO step). The shipped Deeploy reference DELIVERS 8-core parallel PULP
+#     templates (Targets/PULPOpen/Templates/{Quant,Dequant}Template.py) that were never wired
+#     into Bindings.py — wire them here. Originals kept commented below. -- QW
+from Deeploy.Targets.PULPOpen.Templates import QuantTemplate as PULPQuantTemplate  # -- QW
+from Deeploy.Targets.PULPOpen.Templates import DequantTemplate as PULPDequantTemplate  # -- QW
+
 BasicQuantBindings = [
-    NodeBinding(QuantChecker([PointerClass(float32_t)], [PointerClass(int8_t)]), QuantTemplate.referenceTemplate,
-                ForkTransformer),
+    NodeBinding(QuantChecker([PointerClass(float32_t)], [PointerClass(int8_t)]),
+                PULPQuantTemplate.referenceTemplate, ForkTransformer),  # -- QW parallel
+    # QW: original single-core Generic mapping (kept for reference):
+    # NodeBinding(QuantChecker([PointerClass(float32_t)], [PointerClass(int8_t)]), QuantTemplate.referenceTemplate,
+    #             ForkTransformer),
 ]
 
 BasicDequantBindings = [
-    NodeBinding(DequantChecker([PointerClass(int8_t)], [PointerClass(float32_t)]), DequantTemplate.referenceTemplate,
-                ForkTransformer),
-] + [
-    NodeBinding(DequantChecker([PointerClass(int32_t)], [PointerClass(float32_t)]), DequantTemplate.referenceTemplate,
-                ForkTransformer),
+    NodeBinding(DequantChecker([PointerClass(int8_t)], [PointerClass(float32_t)]),
+                PULPDequantTemplate.referenceTemplate, ForkTransformer),  # -- QW parallel
+    NodeBinding(DequantChecker([PointerClass(int32_t)], [PointerClass(float32_t)]),
+                PULPDequantTemplate.referenceTemplate, ForkTransformer),  # -- QW parallel
+    # QW: original single-core Generic mappings (kept for reference):
+    # NodeBinding(DequantChecker([PointerClass(int8_t)], [PointerClass(float32_t)]), DequantTemplate.referenceTemplate,
+    #             ForkTransformer),
+    # NodeBinding(DequantChecker([PointerClass(int32_t)], [PointerClass(float32_t)]), DequantTemplate.referenceTemplate,
+    #             ForkTransformer),
 ]
 
 
