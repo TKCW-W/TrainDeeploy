@@ -1,0 +1,79 @@
+# exp10 — QZO single-step latency profiling — Findings
+
+Date: **2026-09-03** · GVSoC/Siracusa, 8 cores · fixture = exp9 (pooled@99.99 baked, lr 1e-5)
+Raw: `logs/profiletiling.log` (614 profiled node sections, run PASSED), `results/breakdown.json`,
+plots `results/{per_class_comparison,total_comparison}.png` · Parser: `analyze_profile.py`
+Float-ZO counterpart: `../exp6_ZO_single_step_latency/logs/profiletiling.log`
+
+## Question
+
+exp6 (float ZO) vs exp7 (QZO) single-step logs show the quantized step costs **10.8×** more
+cycles (386.8M vs 35.7M per loss pair). Where does the time go — compute or DMA, and which
+operators?
+
+## Method
+
+`deeployMezoRunner_tiled_siracusa.py --profileTiling` on the exp9 QZO fixture (1 update step,
+n_accum 4 → normalized to ONE loss pair = 2 forwards to match exp6's n_accum 1). Per tile the
+profiler reports Pre-Kernel / Kernel / Post-Kernel cycles: Kernel = compute, Pre+Post = tiling +
+DMA. Sanity: profiled QZO total 376.4M/pair vs unprofiled exp7 386.8M — within 3%, attribution
+trustworthy.
+
+## Result — per loss pair (2 forwards + update share)
+
+| class | float ZO (exp6) | QZO (exp10) |
+|---|---|---|
+| **Quant/Dequant (QCDQ boundaries)** | — | **368.6M (97.9%)** |
+| Conv | 29.4M (82.2%) | **3.1M (0.8%)** |
+| MaxPool | 1.8M | 1.8M |
+| BatchNorm | 1.4M | 1.4M |
+| Transpose | 2.2M | 0.9M |
+| ReLU | 0.5M | 0.5M |
+| Perturb / Loss / FC / GAP / other | 0.5M | 0.1M |
+| **total** | **35.8M** | **376.4M** |
+| compute vs DMA/tiling | 95.8% / 4.2% | 99.7% / 0.3% |
+
+Top offending nodes (QZO, per pair):
+
+| node | cycles | tensor | ≈cyc/element |
+|---|---|---|---|
+| QCDQ_blocks_0_conv_output_dequantMul_Dequant | 218.2M | (8,14,700)=78,400 ×2 fwd | **~1,390** |
+| QCDQ_blocks_1_conv_output_dequantMul_Dequant | 51.8M | (16,14,87) ×2 | ~1,330 |
+| QCDQ_blocks_1_conv_input_quant_Clip_Quant | 29.2M | | ~1,400 |
+| QCDQ_blocks_0_conv_input_quant_Clip_Quant | 28.7M | (1,14,700)=9,800 ×2 | ~1,460 |
+| blocks_2..4 Quant/Dequant | 39.8M | | similar |
+
+## Conclusions
+
+1. **The user-observed 10.8× slowdown is 97.9% attributable to the Quant/Dequant boundary ops**
+   (the QCDQ Clip-Quant / dequant-Mul nodes at each conv's int8↔fp32 edge). It is neither DMA
+   (0.3% overhead) nor the quantized compute.
+2. **The int8 convolutions are 9.5× FASTER than the float convolutions** (3.1M vs 29.4M/pair) —
+   quantization delivers exactly the speedup it promises; the datapath design is sound.
+3. **~1,400 cycles/element for an elementwise mul+round+clip is pathological** (a sane 8-core
+   PULP implementation runs ~1–4 cyc/element). These nodes are hitting a naive/scalar fallback
+   kernel (likely single-core, per-element float call overhead), i.e. a **kernel-mapping /
+   implementation problem, not a structural cost of quantization**. The BN-unfolded design does
+   force int8→fp32→int8 at every block, but at proper elementwise speed those boundaries would
+   cost ~0.5M cycles total, not 368M.
+4. **Upside if fixed**: QZO pair without the QCDQ pathology ≈ 7.8M cycles vs float's 35.8M —
+   the quantized ZO step would be **~4.6× faster** than float ZO, flipping the current 10.8×
+   penalty into the speedup the QZO story is supposed to deliver. Fix = give Quant/Dequant real
+   parallel PULP kernels (or fold them into the adjacent RequantShift/Conv), a Deeploy
+   binding/kernel task.
+5. Practical implication for exp9: the full 2700-step device round at current speed costs ~11×
+   the float round (multi-day GVSoC). Options: fix the kernels first (correct long-term move),
+   or run the long round as-is for the accuracy datapoint.
+
+## Reproduction
+
+```bash
+docker exec traindeeploy bash -lc 'cd /app/ETH/TrainDeeploy/DeeployTest && rm -rf TEST_SIRACUSA && \
+  python3 deeployMezoRunner_tiled_siracusa.py \
+  -t Tests/Models/Training/SpeechNet/speechnet_qzo9_train \
+  --optimizer-dir Tests/Models/Training/SpeechNet/speechnet_qzo9_update \
+  --n-steps 1 --n-accum 4 --num-data-inputs 2 --eps 0.01 --lr 1e-5 --q 1 --seed 42 \
+  --l1 128000 --l2 2000000 --defaultMemLevel L2 --profileTiling \
+  > experiments/deliverable/exp10_QZO_single_step_profiling/logs/profiletiling.log 2>&1'
+# then: python3 analyze_profile.py   (in agitated_hugle for the plots)
+```
