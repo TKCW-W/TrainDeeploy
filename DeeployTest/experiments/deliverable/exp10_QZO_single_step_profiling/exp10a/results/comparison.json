@@ -52,13 +52,13 @@
     "kernel": 553813,
     "overhead": 349419
    },
-   "Conv": {
-    "kernel": 3319207,
-    "overhead": 60209
+   "Perturb": {
+    "kernel": 898354,
+    "overhead": 31775
    },
-   "Other": {
-    "kernel": 55175,
-    "overhead": 11417
+   "Conv": {
+    "kernel": 2476028,
+    "overhead": 39851
    },
    "BatchNorm": {
     "kernel": 1190495,

@@ -26,7 +26,14 @@ LINE = re.compile(r"^\[([^\]]+)\]\[SB\]\[\s*\d+ ops\]\[Tile\s+\d+\]\s+"
 CLASSES = [  # (keyword (lowercase), class) — first match wins
     ("perturbrademacher", "Perturb"),
     ("rqsperturb", "Perturb"),
+    # transpose BEFORE the rqsp_/pert_ prefixes: "..._pert_tensor_transpose" nodes are the
+    # NHWC data-movement of the perturbed weight, not perturb compute -- QW
     ("transpose", "Transpose"),
+    # QW: QZO node names — rqsp_* (int8 weight / int32 bias RQSPerturb, incl. rqsp_upd_*) and
+    #     pert_* (fp32 BN/fc perturbs, incl. pert_upd_*). Without these they were silently
+    #     absorbed into Conv ("...conv...") and Other — found via exp10a review. -- QW
+    ("rqsp_", "Perturb"),
+    ("pert_", "Perturb"),
     ("requantshift", "RequantShift"),
     ("requant", "RequantShift"),
     ("dequant", "Quant/Dequant"),

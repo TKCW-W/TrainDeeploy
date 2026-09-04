@@ -1,7 +1,7 @@
 {
  "Conv": {
-  "kernel": 3112416,
-  "overhead": 55681
+  "kernel": 2497679,
+  "overhead": 40131
  },
  "MaxPool": {
   "kernel": 1677282,
@@ -15,6 +15,10 @@
   "kernel": 554164,
   "overhead": 349204
  },
+ "Perturb": {
+  "kernel": 656850,
+  "overhead": 24377
+ },
  "Quant/Dequant": {
   "kernel": 367512,
   "overhead": 175060
@@ -22,10 +26,6 @@
  "ReLU": {
   "kernel": 268282,
   "overhead": 219254
- },
- "Other": {
-  "kernel": 42113,
-  "overhead": 8827
  },
  "Loss(SCE)": {
   "kernel": 8826,

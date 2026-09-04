@@ -88,11 +88,13 @@ all runs PASS against the export reference, stage 2 `Errors: 0/8`):
 | 1 · shipped 8-core templates | 261.8M | 65.4M | 1.8× slower | ÷5.75 from parallelization |
 | 2 · + fp32 casts | **33.5M** | **8.37M** | **4.3× FASTER** | ÷7.8 from killing soft-double |
 
-Fixed per-class profile (per pair, `results/breakdown_stage2.json`): Conv 3.17M (37.7%),
-MaxPool 1.82M (21.6%), BatchNorm 1.41M (16.8%), Transpose 0.90M (10.8%),
-**Quant/Dequant 0.54M (6.5%** — down 680×**)**, ReLU 0.49M. The step is now conv-dominated, as a
-healthy int8 pipeline should be, and the total 45× speedup lands within 8% of the §Conclusions
-prediction (7.8M).
+Fixed per-class profile (per pair, `results/breakdown_stage2.json`; classifier corrected
+2026-09-04 — the QZO perturb nodes `rqsp_*`/`pert_*` were previously absorbed into Conv/Other):
+Conv 2.54M (30.2%), MaxPool 1.82M (21.6%), BatchNorm 1.41M (16.8%), Transpose 0.90M (10.8%),
+**Perturb 0.68M (8.1%)**, **Quant/Dequant 0.54M (6.5%** — down 680×**)**, ReLU 0.49M. The step
+is conv-dominated as a healthy int8 pipeline should be — and with the reclassification the true
+int8-conv advantage is **29.4M → 2.5M = 11.6× faster convs** than float. Exact-config
+comparison (both n_steps=1 n_accum=1, exp10a): QZO 8.62M vs float 35.82M = **4.15×**.
 
 Consequence: the exp9 full round-1 (2700 steps) drops from ~4.2T to ~22.6G cycles — from
 multi-day to ~1 h of GVSoC, and 17× cheaper than the float-ZO round (385G).
