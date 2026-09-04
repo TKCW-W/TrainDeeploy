@@ -45,48 +45,48 @@
  "QZO (fixed)": {
   "per_class": {
    "Quant/Dequant": {
-    "kernel": 367412,
-    "overhead": 175046
+    "kernel": 367525,
+    "overhead": 175291
    },
    "Transpose": {
-    "kernel": 554058,
-    "overhead": 349204
+    "kernel": 553813,
+    "overhead": 349419
    },
    "Conv": {
-    "kernel": 3113201,
-    "overhead": 55683
+    "kernel": 3319207,
+    "overhead": 60209
    },
    "Other": {
-    "kernel": 41905,
-    "overhead": 8818
+    "kernel": 55175,
+    "overhead": 11417
    },
    "BatchNorm": {
-    "kernel": 1190715,
-    "overhead": 218999
+    "kernel": 1190495,
+    "overhead": 218939
    },
    "ReLU": {
-    "kernel": 268282,
-    "overhead": 219251
+    "kernel": 268168,
+    "overhead": 219735
    },
    "MaxPool": {
-    "kernel": 1677578,
-    "overhead": 141293
+    "kernel": 1673380,
+    "overhead": 142143
    },
    "GlobalAvgPool": {
-    "kernel": 1662,
-    "overhead": 927
+    "kernel": 1760,
+    "overhead": 776
    },
    "Gemm/FC": {
-    "kernel": 7317,
-    "overhead": 899
+    "kernel": 7357,
+    "overhead": 794
    },
    "Loss(SCE)": {
-    "kernel": 8795,
-    "overhead": 550
+    "kernel": 8679,
+    "overhead": 670
    }
   },
-  "total_kernel": 7230925,
-  "total_overhead": 1170670,
-  "total": 8401595
+  "total_kernel": 7445559,
+  "total_overhead": 1179393,
+  "total": 8624952
  }
 }

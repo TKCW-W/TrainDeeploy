@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: MIT
 """exp10a — single-step latency comparison: float ZO (exp6) vs QZO on the FULLY-FIXED stack
 (corrected per-layer RequantShift constants + parallel fp32 Quant/Dequant kernels), profiled
-fresh on the exp9_corr fixture.
+fresh on the exp9_corr fixture at the EXACT exp6 configuration (n_steps=1, n_accum=1:
+1 update step, 1 loss pair, 1 window) — no per-pair normalization involved.
 
-Normalization: exp6 ran n_accum=1 (one loss pair = 2 antithetic forwards + update); the QZO
-profile ran n_accum=4 -> divide by 4. Everything reported per ONE loss pair.
+(The earlier n_accum=4 profiled run is archived as logs/profiletiling_qzo_fixed.log.gz; its
+per-pair-normalized totals agree with the 1x1 run to ~3%, the residual being update
+amortization.)
 
 Outputs: results/comparison.json, results/overall_latency.png, results/per_operator.png
 Run in agitated_hugle from the exp10a directory.
@@ -20,8 +22,8 @@ sys.path.insert(0, str(HERE.parent))
 from analyze_profile import parse  # noqa: E402  (per-tile log parser + op classifier)
 
 FLOAT_LOG = HERE.parent.parent / "exp6_ZO_single_step_latency/logs/profiletiling.log"
-QZO_LOG = HERE / "logs/profiletiling_qzo_fixed.log"
-N_PAIRS = {"float ZO": 1, "QZO (fixed)": 4}
+QZO_LOG = HERE / "logs/profiletiling_qzo_1x1.log"   # 1 step x 1 accum = exp6-identical config
+N_PAIRS = {"float ZO": 1, "QZO (fixed)": 1}        # both 1x1 -> NO normalization needed
 
 
 def load(tag, path):
