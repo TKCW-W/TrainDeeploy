@@ -5,6 +5,10 @@
  */
 
 #include "CycleCounter.h"
+#ifndef OUTPUT_TOL  /* -- QW exp13: compile-time output compare tolerance; default == original literal 1e-4 -- QW */
+#define OUTPUT_TOL 1e-4f
+#endif
+#include <string.h>  /* -- QW exp13: memcpy for OUTPUT_BITS -- QW */
 #include "Network.h"
 #include "dory_mem.h"
 #include "pmsis.h"
@@ -43,8 +47,12 @@ void CompareFloatOnCluster(void *args) {
 
       printf("Logit[%u]: %10.6f\r\n", i, actual_val);
 
-      if ((diff < -1e-4) || (diff > 1e-4) || isnan(diff)) {
+      if ((diff < -OUTPUT_TOL) || (diff > OUTPUT_TOL) || isnan(diff)) {  // -- QW exp13: was the literal 1e-4
         local_err_count += 1;
+#ifdef OUTPUT_BITS  /* -- QW exp13: raw fp32 bits of mismatching outputs (bit-level probe evidence) -- QW */
+        { uint32_t eb, ab; memcpy(&eb, &expected_val, 4); memcpy(&ab, &actual_val, 4);
+          printf("BITS idx=%u exp=0x%08x act=0x%08x\r\n", i, (unsigned)eb, (unsigned)ab); }
+#endif
 
         printf("Expected: %10.6f  ", expected_val);
         printf("Actual: %10.6f  ", actual_val);

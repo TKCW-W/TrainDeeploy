@@ -91,6 +91,12 @@ else()  # QW: inference harness — allow frozen-stat BN for the ZO single pertu
     if(BN_DEBUG)  # QW: frozen-BN kernel value dump -- QW
         target_compile_definitions(${ProjectId} PRIVATE BN_DEBUG)  # QW
     endif()  # QW
+    if(DEFINED OUTPUT_TOL)  # QW exp13: output compare tolerance, e.g. -D OUTPUT_TOL=0.0f for bit-level probes -- QW
+        target_compile_definitions(${ProjectId} PRIVATE OUTPUT_TOL=${OUTPUT_TOL})  # QW
+    endif()  # QW
+    if(OUTPUT_BITS)  # QW exp13: print raw fp32 bits of mismatching outputs -- QW
+        target_compile_definitions(${ProjectId} PRIVATE OUTPUT_BITS)  # QW
+    endif()  # QW
 endif()
 
 add_gvsoc_emulation(${ProjectId} "siracusa")
