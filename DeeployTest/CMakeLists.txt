@@ -11,6 +11,12 @@ if(TRAINING OR MEZO_TRAINING)  # QW: build training/optimizer OBJECT libs for bo
   target_link_libraries(training_network PUBLIC deeploylib)
   # Optimizer network (SGD kernel, compiled separately to allow different prefix)
   add_library(optimizer_network OBJECT ${GENERATED_SOURCE}/OptimizerNetwork.c)
+  # -- QW exp13/14: strict fp32 for the generated training/optimizer graphs (inline Quant/Dequant/SCE) -- QW
+  if(DEEPLOY_STRICT_FP32)
+    target_compile_options(training_network PRIVATE -fno-fast-math -ffp-contract=off)
+    target_compile_options(optimizer_network PRIVATE -fno-fast-math -ffp-contract=off)
+    message(STATUS "[QW strict-fp32] TrainingNetwork.c / OptimizerNetwork.c: -fno-fast-math -ffp-contract=off")
+  endif()
   target_link_libraries(optimizer_network PUBLIC deeploylib)
 else()
   add_library(network OBJECT ${GENERATED_SOURCE}/Network.c)
