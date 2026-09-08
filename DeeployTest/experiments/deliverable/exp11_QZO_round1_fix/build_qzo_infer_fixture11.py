@@ -113,20 +113,24 @@ def main():
     adds = rqs_add_names_and_div(model)
     print(f"[fixture] RQS add initializers: {list(adds)[:2]}… ({len(adds)}), div={set(adds.values())}")
 
-    ref_path = out / "network_ref_offset.onnx"              # host-reference graph (offset IN)
-    onnx.save(model, str(ref_path))
-
+    # exp11 FIX (2026-09-08): generate the host reference on the EXACT graph the device
+    #   compiles (network.onnx, offset-stripped) — NOT the offset-included variant. The
+    #   assumed executor equivalence trunc(x+div/2)==round(x) between the two graphs is FALSE
+    #   (empirically they differ by up to 1.5 in logits); the device matches run_onnx_graph on
+    #   network.onnx to ~0.087. Keep the offset-included graph only as a debug artifact. -- QW
     import copy
     dev = copy.deepcopy(model)
     ns = strip_offsets(dev, adds)                           # device graph (offset OUT; merge re-adds)
-    onnx.save(dev, str(out / "network.onnx"))
+    dev_path = out / "network.onnx"
+    onnx.save(dev, str(dev_path))
+    onnx.save(model, str(out / "network_ref_offset.onnx"))  # debug-only (offset IN)
     print(f"[fixture] stripped div/2 from {ns} adds for the device graph")
 
     d = np.load(EVAL_CACHE)
     X, Y = d["evX1"].astype(np.float32), d["evY1"].astype(np.int64)
     if a.windows:
         X, Y = X[:a.windows], Y[:a.windows]
-    ref = reference_logits(str(ref_path), X)
+    ref = reference_logits(str(dev_path), X)               # reference on the DEVICE graph -- QW fix
     np.savez(out / "inputs.npz", input=X, label=Y)
     np.savez(out / "outputs.npz", output=ref)
     bal = float(np.mean([(ref.argmax(1) == Y)[Y == c].mean() for c in np.unique(Y)]))

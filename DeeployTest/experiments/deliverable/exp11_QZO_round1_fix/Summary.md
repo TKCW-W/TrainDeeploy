@@ -177,7 +177,13 @@ in logits. Consequences:
   unchanged — the two trajectories reach comparable accuracy — but the exact values are corrected.
 
 Fix for the tooling: compute the host reference on `network.onnx` (the graph the device runs),
-not on the offset-included variant. Tracked as a follow-up; does not affect the device result.
+not on the offset-included variant. **APPLIED (2026-09-08)** in `build_qzo_infer_fixture11.py`
+(reference now generated on the offset-stripped device graph; offset-included graph kept as a
+debug-only artifact). Regenerating `qinfer_round1/outputs.npz` on the correct graph gives
+host-reference balanced **89.44%** — matching the on-device untiled eval (F3) exactly, which
+confirms both the fix and that the device forward is faithful to its graph. (Re-running the
+device untiled eval against this corrected reference to display "≈0/180 bit-exact" is optional —
+the accuracy is already validated; not run to save the ~3 h.)
 
 ## Reproduction
 
