@@ -82,3 +82,39 @@ Refinement of the original framing (two parts):
   `compare.py` here).
 - Device instrumentation: `deeploymezotest.c` multi-step `[WDUMP]` window (`DUMP_STEP_LO/HI`,
   default-off) + `CMakeLists.txt` passthrough; host: `base_exporter.py` env-gated `QZO_TRACE_*`.
+
+## §Q — Quantitative comparison tables (device vs host)
+
+**(A) SCE node in isolation** (§1b probe, 180 real logit vectors fed identically):
+
+| quantity | device vs host |
+|---|---|
+| pre-SCE logits (input, fed identically) | diff = 0 (by construction) |
+| post-SCE log_prob (output) | 559/1620 differ, max 1.9e-6 (~1 ulp) |
+
+**(B) Trajectory step 884 — pristine seed fingerprint** (per-param, from WDUMP vs host P):
+
+| param group | #differ | max\|dev−host\| |
+|---|---|---|
+| fp32 (BN γ/β + fc) | 481/505 | 1.19e-7 (= 1 ulp of 1.0) |
+| int32 conv-bias | 0/104 | 0 |
+| int8 conv-wt | 0/14880 | 0 |
+
+**(C) Trajectory step 888 — tolerance-crossing (accumulated + round-amplified):**
+
+| quantity | device | host | diff |
+|---|---|---|---|
+| L⁺ (4 accum) | 1.4466 / 0.0300 / 0.1266 / 3.0862 | identical | 0 |
+| L⁻ (4 accum) | 0.6584 / 0.1070 / 0.3483 / 0.9691 | 0.7073 / 0.1070 / 0.3616 / 1.0516 | up to 0.083 |
+| coeff = −lr·Σ(L⁺−L⁻)/(2ε·n_accum) | −3.258e-4 | −3.077e-4 | ~6% |
+| weights-out fp32 | — | — | max 1.8e-5 (still 1000× < 1e-3 tol) |
+| weights-out int32 bias | — | — | 17/104 flipped ±1 LSB |
+| weights-out int8 wt | — | — | 0/14880 |
+| weights-IN int8 / int32 | — | — | 0 (bit-identical) |
+
+**Reading:** identical integer weights INTO step 888 → int32 biases OUT differ by whole ±1 LSB
+(the `round()` amplification, caught in the act) while int8 stays 0/14880 and the fp32 carrier is
+1000× sub-tolerance. HONEST CAVEAT: step 888's L⁻ (~0.08) and coeff (~6%) diffs are much larger
+than the ≤1.9e-6 per-eval SCE residual (A) — so 888 is the *accumulated* tolerance-crossing, not
+the pristine first event. Pristine single-event SCE evidence = (A) isolation probe + (B) the
+uniform 1-ulp fp32 fingerprint at 884. Numbers via `compare.py` on the dumps.
