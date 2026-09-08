@@ -35,6 +35,34 @@ exactly the amplification described in exp11 F1.
 **Conclusion:** SCE `expf`/`logf` is confirmed as the last — and only — op that breaks
 device↔host bit-identity. Nothing else remains. (Answers the primary question.)
 
+## §1b — DIRECT PROOF (isolation probe): identical SCE input → divergent SCE output
+
+This is the decisive test (your proposed logic: if the SCE *inputs* are identical device vs
+host but the *outputs* differ, the SCE node itself is the cause). Executed as a standalone
+`SoftmaxCrossEntropyLoss` graph (`probe/sce_probe180.onnx`) so the input is identical **by
+construction**:
+
+- **Input:** 180 real logit vectors (`probe/logits180.npy`, range [−8.37, 7.64]), the exact same
+  bytes fed to device and to the host executor.
+- **Graph:** one node, SoftmaxCrossEntropyLoss — i.e. `max → (logit−max) → expf → Σ → logf`.
+  The `max`, subtraction and sequential sum are exact fp32 (bit-exact, per §1a); the **only**
+  non-bit-matched operations are `expf`/`logf` (device newlib `sf_exp.c`/`sf_log.c` — confirmed
+  from the linker's own source references — vs the host executor's `np.exp`/`np.log` = glibc).
+- **Device run:** untiled Siracusa, strict-fp32, **OUTPUT_TOL = 0** (exact bit comparison).
+
+**Result:** of the 1,620 `log_prob` outputs, **559 (35%) differ device vs host**, every one by
+**≤ 1.9e-6** (last-few-bits / a few ulp; e.g. host −6.627211 vs device −6.627212). Same input,
+same graph, only `expf`/`logf` implementations differ → the divergence is **entirely** the SCE
+transcendentals. `log_prob` is label-independent, so this isolates softmax→`expf`/`logf` with no
+confound from the loss/label.
+
+**Therefore, conclusively:** (i) the SCE node computes differently on device vs host, (ii) by a
+tiny ≤~2e-6 amount, (iii) sourced solely to `expf`/`logf`. Combined with §1a (every op *before*
+SCE is bit-exact under strict-fp32), **SCE `expf`/`logf` is proven to be the last — and only —
+op that breaks device↔host bit-identity.** The full-round cascade (§1) is this ~1-ulp
+per-evaluation difference occasionally landing on a `round(coeff·z/s_w)` knife-edge.
+Artifacts: `probe/`, `logs/sce_probe_tol0.log`.
+
 ## §2 — Closing it to literal diff = 0: scope, and why it is gated
 
 The legitimate fix is **host-side**: make the host executor's SCE use `expf`/`logf` that
@@ -48,10 +76,11 @@ already stand without it. Its only benefit is driving the training-loss comparis
 
 **It is genuine embedded-libm engineering, not a one-liner**, so it is gated behind an isolation
 test to avoid a wasted 7 h re-export:
-- picolibc `expf`/`logf` source is not readily compilable in this environment; a bit-exact host
-  match requires transcribing the exact algorithm (ARM optimized-routines float `expf`/`logf`)
-  **and** matching its FMA/rounding behaviour — achievable but fiddly and not guaranteed on the
-  first pass.
+- **UPDATE:** the exact device source is on the system after all —
+  `/app/toolchain/picolibc/newlib/libm/math/sf_exp.c` and `sf_log.c` (revealed by the probe
+  build's linker source references). So a source-level match IS feasible: compile those two
+  files into a host shared lib (strict fp) and ctypes-call them from the SCE op, or transcribe
+  them. Still fiddly (must match the RISC-V compile's FMA/rounding), but no longer a guess.
 - **Isolation gate (prepared, `probe/`):** a standalone `SoftmaxCrossEntropyLoss` ONNX graph
   (`probe/sce_probe.onnx`) + 180 real logit vectors (`probe/logits180.npy`, range [−8.37, 7.64]).
   Run this on the device to get its exact SCE loss/log_prob per vector, then require the host
