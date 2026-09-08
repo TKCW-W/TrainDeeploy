@@ -35,12 +35,23 @@ Read it as the chain:
    can perturb every parameter at once like this — no per-op or per-channel bug produces a global
    scalar offset touching all params. Since `coeff` differs only when `L±` differs, and `L±`
    differs only at the SCE node (1), the fp32 drift **is** the SCE residual, integrated.
-4. **Why fp32 first, int8 last:** the fp32 params (BN/fc) integrate `coeff·z` with **no
-   rounding**, so the ~1-ulp difference accumulates from the start (1.19e-7 @ 884 → 1.8e-5 @ 888
-   as it feeds back through the forward). The int32 bias grid (fine) rounds-flips first at 888
-   (±1 LSB, few channels); the int8 conv grid (coarse) is still bit-identical even at 888 — its
-   `round()` suppresses the sub-½-LSB `coeff` difference longest. The full-round cascade
-   (conv int8 flips, >tol everywhere) follows at later steps.
+4. **Roles — seed vs carrier vs amplifier (corrected emphasis):**
+   - The fp32 params (BN/fc) are the **carrier**: they integrate `coeff·z` with **no rounding**,
+     so the ~1-ulp seed shows up on them first and cleanly (the fingerprint). But this drift is
+     **sub-tolerance** — 1.19e-7 @ 884, only ~1.8e-5 @ 888, still ~1000× below the 0.001 bar. It
+     is NOT what breaks tolerance.
+   - **Decisive control (float ZO, exp5):** the *entire* float-ZO model is fp32 and carries the
+     *same* ~1-ulp SCE drift, yet it was **0 / 21,600 through the whole round**. So fp32 drift,
+     alone, never exceeds tolerance — it is not the divergence driver.
+   - The **`round()` on the quantized params is the amplifier and the actual tolerance-breaker**
+     — the QZO-specific mechanism float ZO lacks. When the SCE-seeded ~1-ulp `coeff` lands near a
+     rounding boundary, the int32 bias (first, step 888, fine grid) or int8 weight (later, coarse
+     grid) jumps a full **±1 LSB** — a discrete change ≫ the ulp drift — and THAT pushes the loss
+     >tol and cascades. The first >tol errors coincide with the bias flips, not the fp32 drift.
+
+   Net: **SCE is the seed; `round()` amplification of that seed is what makes QZO diverge where
+   float ZO does not.** The fp32 drift is the earliest-visible fingerprint of the seed, not the
+   cause of the tolerance breach.
 
 ## Conclusion — meets the bar
 
@@ -53,11 +64,15 @@ trajectory*, three independent ways that agree:
 - **Elimination (here + layer-probe):** every op *before* SCE is bit-exact, and the conv int8
   weights stay bit-identical through the onset — the int datapath is not the origin.
 
-Refinement of the original framing: the "weights into SCE identical, out of SCE divergent" idea
-is correct for the *int path* (conv int8 stay locked), but the *first* thing to visibly diverge
-is the **fp32 parameter state**, because it integrates the SCE-seeded scalar `coeff` without the
-`round()` that suppresses it on the quantized weights. Same cause (SCE), earliest-visible via the
-un-rounded fp32 path.
+Refinement of the original framing (two parts):
+- "weights into SCE identical, out of SCE divergent" holds for the *int path* — conv int8 stay
+  locked well past the onset.
+- The *earliest-visible* divergence is the fp32 parameter state (uniform ~1-ulp), but that is the
+  **carrier/fingerprint** of the SCE seed, **not** the tolerance-breaker: it stays ~1000×
+  sub-tolerance, and float ZO (all-fp32, same seed) is bit-exact for a full round. The
+  tolerance breach is the **`round()` amplification** of the SCE-seeded `coeff` on the quantized
+  bias/weight grids (±1 LSB jumps) — the QZO-specific mechanism. SCE remains the root cause of
+  both the fp32 fingerprint and the round-amplified breach.
 
 ## Artifacts
 
