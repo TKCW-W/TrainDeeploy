@@ -66,6 +66,9 @@ if(MEZO_TRAINING)  # QW: MeZO (ZO) compile-time defines — parallel block along
     if(DUMP_WEIGHTS)  # QW: passthrough on-device weight dump -- QW
         target_compile_definitions(${ProjectId} PRIVATE DUMP_WEIGHTS)  # QW
     endif()  # QW
+    if(DEFINED DUMP_STEP_LO AND DEFINED DUMP_STEP_HI)  # QW exp11_bitexact_SCE_verif: per-step WDUMP window -- QW
+        target_compile_definitions(${ProjectId} PRIVATE DUMP_STEP_LO=${DUMP_STEP_LO} DUMP_STEP_HI=${DUMP_STEP_HI})  # QW
+    endif()  # QW
     if(BN_FROZEN_STATS)  # QW: passthrough frozen-stat BN training -- QW
         target_compile_definitions(${ProjectId} PRIVATE BN_FROZEN_STATS)  # QW
     endif()  # QW

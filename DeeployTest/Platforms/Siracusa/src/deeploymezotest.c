@@ -456,6 +456,16 @@ int main(void) {                 // -- QW
     g_opt_cycles_acc += getCycles();                            // -- QW
     perturb_eps_use_override = 0u;   // -- QW  restore neutral default
 
+#if defined(DUMP_WEIGHTS) && defined(DUMP_STEP_LO) && defined(DUMP_STEP_HI)
+    /* QW exp11_bitexact_SCE_verif: dump weights AFTER each update in the window
+     * [DUMP_STEP_LO, DUMP_STEP_HI] (weights[s]); the host trace dumps the same. Then
+     * increment[s] = weights[s]-weights[s-1], and weights-INTO-step-s = weights[s-1].
+     * Default-off (defines absent) => existing final-only dump behaviour unchanged. -- QW */
+    if (update_step >= (uint32_t)DUMP_STEP_LO && update_step <= (uint32_t)DUMP_STEP_HI) {
+      dump_zo_weights(update_step);
+    }
+#endif
+
   } /* end update_step loop -- QW */
 
 #ifdef DUMP_WEIGHTS
