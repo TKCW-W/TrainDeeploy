@@ -83,7 +83,7 @@ elseif(platform STREQUAL GAP9)
   if (NOT HEXLIST)
     # L2 mode: No flash/readfs files
     # Data lives in L2 memory only
-    if(TRAINING)
+    if(TRAINING OR MEZO_TRAINING)  # QW: NOFLASH for both BP and MeZO (ZO) training libs on GAP9 -- QW
       target_compile_options(training_network PUBLIC -DNOFLASH)
       target_compile_options(optimizer_network PUBLIC -DNOFLASH)
     else()
@@ -105,7 +105,7 @@ elseif(platform STREQUAL GAP9)
   endif()
 
   # Waive warnings in generated code
-  if(TRAINING)
+  if(TRAINING OR MEZO_TRAINING)  # QW: waive pointer-sign/sign-compare for both BP and MeZO (ZO) libs on GAP9 -- QW
     target_compile_options(training_network PRIVATE -Wno-pointer-sign -Wno-sign-compare)
     target_compile_options(optimizer_network PRIVATE -Wno-pointer-sign -Wno-sign-compare)
   else()

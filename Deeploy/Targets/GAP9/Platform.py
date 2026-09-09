@@ -44,6 +44,20 @@ from Deeploy.Targets.PULPOpen.Parsers import PULPConv1DParser, PULPConv2DParser,
     PULPDWConv2DParser, PULPFPConv2DParser, PULPFPDWConv2DParser, PULPGEMMParser, PULPMatrixVecParser, \
     PULPTallGEMMParser
 
+# -- QW: QZO / MeZO ops (BatchNormInternal, PerturbRademacher fp32, RQSPerturbRademacher int8).
+#        GAP9 has no GAP9-specific tiling bindings for these; the kernels are already compiled into
+#        GAP9's deeploylib (TargetLibraries/GAP9 globs ../PULPOpen/src/**), so we reuse the PULPOpen
+#        tiling-ready bindings directly — exactly as GAP9 already reuses BasicQuant/DequantBindings
+#        and PULPRQSConv1DBindings above.
+from Deeploy.Targets.Generic.Layers import BatchNormInternalLayer, GlobalAveragePoolLayer, \
+    PerturbRademacherLayer, RQSPerturbRademacherLayer  # -- QW
+from Deeploy.Targets.Generic.Parsers import BatchNormInternalParser, GlobalAveragePoolParser, \
+    PerturbRademacherParser, RQSPerturbRademacherParser  # -- QW
+from Deeploy.Targets.PULPOpen.Tiler import PULPBatchNormInternalTilingReadyBindings, \
+    PULPDequantTilingReadyBindings, PULPGlobalAveragePool2DTilingReadyBindings, \
+    PULPPerturbRademacherTilingReadyBindings, PULPQuantTilingReadyBindings, \
+    PULPRQSPerturbRademacherTilingReadyBindings  # -- QW
+
 # Create GAP9-specific NodeMappers
 GAP9_RQAddMapper = NodeMapper(RQAddParser(), GAP9RQAddTilingReadyBindings)
 GAP9_AddMapper = NodeMapper(AddParser(), GAP9AddTilingReadyBindings)
@@ -90,9 +104,20 @@ GAP9_SoftmaxCrossEntropyLossMapper = NodeMapper(SoftmaxCrossEntropyLossParser(),
 GAP9_SoftmaxCrossEntropyLossGradMapper = NodeMapper(SoftmaxCrossEntropyLossGradParser(),
                                                     GAP9SoftmaxCrossEntropyGradTilingReadyBindings)
 GAP9_SGDMapper = NodeMapper(SGDParser(), GAP9SGDTilingReadyBindings)
-GAP9_QuantMapper = NodeMapper(QuantParser(), BasicQuantBindings)
-GAP9_DequantMapper = NodeMapper(DequantParser(), BasicDequantBindings)
+# -- QW: tiled QZO graph needs tiling-ready Quant/Dequant (BasicQuant/DequantBindings are untiled →
+#        'PULPQuantTemplate' object has no attribute 'tileConstraint'). Use the PULPOpen tiling-ready
+#        bindings (UnaryTileConstraint), matching PULPMapping. Originals kept commented below.
+# GAP9_QuantMapper = NodeMapper(QuantParser(), BasicQuantBindings)
+# GAP9_DequantMapper = NodeMapper(DequantParser(), BasicDequantBindings)
+GAP9_QuantMapper = NodeMapper(QuantParser(), PULPQuantTilingReadyBindings)  # -- QW
+GAP9_DequantMapper = NodeMapper(DequantParser(), PULPDequantTilingReadyBindings)  # -- QW
 GAP9_GEMMDequantMapper = NodeMapper(PULPGEMMParser(), BasicGEMMBindings)
+
+# -- QW: QZO / MeZO mappers (reuse the PULPOpen tiling-ready bindings; kernels are in GAP9 deeploylib)
+GAP9_GlobalAveragePoolMapper = NodeMapper(GlobalAveragePoolParser(), PULPGlobalAveragePool2DTilingReadyBindings)  # -- QW (SpeechNet global_pool)
+GAP9_BatchNormInternalMapper = NodeMapper(BatchNormInternalParser(), PULPBatchNormInternalTilingReadyBindings)  # -- QW
+GAP9_PerturbRademacherMapper = NodeMapper(PerturbRademacherParser(), PULPPerturbRademacherTilingReadyBindings)  # -- QW (fp32 ZO op)
+GAP9_RQSPerturbRademacherMapper = NodeMapper(RQSPerturbRademacherParser(), PULPRQSPerturbRademacherTilingReadyBindings)  # -- QW (quantized ZO)
 
 # GAP9-specific mapping using ClDma
 GAP9Mapping = {
@@ -171,7 +196,16 @@ GAP9Mapping = {
     'SoftmaxCrossEntropyLossGrad':
         SoftmaxCrossEntropyLossGradLayer([GAP9_SoftmaxCrossEntropyLossGradMapper]),
     'SGD':
-        SGDLayer([GAP9_SGDMapper])
+        SGDLayer([GAP9_SGDMapper]),
+    # -- QW: QZO / MeZO ops (mirror PULPMapping so GAP9 can run the ZO train + update graphs)
+    'GlobalAveragePool':
+        GlobalAveragePoolLayer([GAP9_GlobalAveragePoolMapper]),  # -- QW (SpeechNet forward global_pool)
+    'BatchNormInternal':
+        BatchNormInternalLayer([GAP9_BatchNormInternalMapper]),  # -- QW (frozen-stat BN, flag-gated)
+    'PerturbRademacher':
+        PerturbRademacherLayer([GAP9_PerturbRademacherMapper]),  # -- QW (fp32 ZO perturb)
+    'RQSPerturbRademacher':
+        RQSPerturbRademacherLayer([GAP9_RQSPerturbRademacherMapper])  # -- QW (quantized ZO perturb)
 }
 
 

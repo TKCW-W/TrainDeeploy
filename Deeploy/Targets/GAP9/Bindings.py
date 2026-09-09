@@ -300,9 +300,20 @@ GAP9SoftmaxGradBindings = [
                 FloatSoftmaxTemplate.referenceGradientTemplate, GAP9Transformer)
 ]
 
+# -- QW: SoftmaxCrossEntropyLoss has TWO outputs (loss + log_prob); the forward binding must
+#        declare both float32 output types or the second output (log_prob) is never type-annotated
+#        (AttributeError: 'GAP9VariableBuffer' has no attribute '_type'). Matches PULPOpen's binding.
+#        Only surfaced by the two-output SCE in the MeZO/training graph. Original one-output line kept
+#        below (commented) per the comment-don't-delete convention.
+# GAP9SoftmaxCrossEntropyLossBindings = [
+#     NodeBinding(
+#         SoftmaxCrossEntropyLossChecker([PointerClass(float32_t), PointerClass(type)], [PointerClass(float32_t)]),
+#         SoftmaxCrossEntropyLossTemplate.referenceTemplate, GAP9Transformer) for type in IntegerDataTypes
+# ]
 GAP9SoftmaxCrossEntropyLossBindings = [
     NodeBinding(
-        SoftmaxCrossEntropyLossChecker([PointerClass(float32_t), PointerClass(type)], [PointerClass(float32_t)]),
+        SoftmaxCrossEntropyLossChecker([PointerClass(float32_t), PointerClass(type)],
+                                       [PointerClass(float32_t), PointerClass(float32_t)]),  # -- QW: loss + log_prob
         SoftmaxCrossEntropyLossTemplate.referenceTemplate, GAP9Transformer) for type in IntegerDataTypes
 ]
 
