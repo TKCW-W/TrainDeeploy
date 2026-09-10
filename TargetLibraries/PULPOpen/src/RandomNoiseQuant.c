@@ -6,6 +6,7 @@
 
 #include "DeeployPULPMath.h"
 #include "pmsis.h"
+#include <math.h>  // -- QW: lrintf (came in transitively on pulp-sdk; GAP9 toolchain needs it explicit)
 
 /* Work around LLVM assembler label collision bug at -O3 */
 #pragma clang optimize off

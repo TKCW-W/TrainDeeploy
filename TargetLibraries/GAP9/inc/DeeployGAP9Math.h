@@ -24,4 +24,11 @@
 
 #include "pmsis.h"
 
+// -- QW: the generated ZO training network references the perturb kernels + ZO runtime
+//    globals (perturbation_sign / perturb_seed_base / perturb_eps_*). DeeployPULPMath.h
+//    pulls these in for Siracusa; mirror it here so the GAP9-generated network compiles.
+//    PULPOpen/inc is PUBLIC on deeploygap9, so these resolve. -- QW
+#include "kernel/RandomNoise.h"
+#include "kernel/ZORuntime.h"
+
 #endif // __DEEPLOY_MATH_HEADER_

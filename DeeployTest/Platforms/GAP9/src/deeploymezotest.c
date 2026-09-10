@@ -69,6 +69,14 @@
 #include "testinputs.h"         // -- QW
 #include "testoutputs.h"        // -- QW
 
+// -- QW: GAP9 pi_cluster_task expects a void(void*) entry; the generated network Init/Run
+//    fns are void(uint32_t,uint32_t). Wrap them, supplying core_id / n_cores from pmsis
+//    (mirrors the stock GAP9 deeploytest.c InitNetworkWrapper pattern). -- QW
+static void InitTrainingNetworkWrapper(void *args)  { (void)args; InitTrainingNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
+static void RunTrainingNetworkWrapper(void *args)   { (void)args; RunTrainingNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
+static void InitOptimizerNetworkWrapper(void *args) { (void)args; InitOptimizerNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
+static void RunOptimizerNetworkWrapper(void *args)  { (void)args; RunOptimizerNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
+
 /* Helper: true when ptr is in L2 (CPU-accessible); false when in L3. -- QW */
 #define IS_L2(ptr) ((uint32_t)(ptr) >= 0x10000000u)  // -- QW
 
@@ -216,7 +224,9 @@ static void CompareLossesOnCluster(void *args) {  // -- QW
 
 /* QW: immediate-flush trace to locate on-device stalls (device stdout is
  * otherwise buffered until main() returns, so a killed run shows nothing) -- QW */
-#define ZTRACE(...) do { printf(__VA_ARGS__); fflush(stdout); } while (0)
+// -- QW: GAP9 links the lightweight pmsis printf (libpmsis_printf) — no newlib stdio, so
+//    fflush/stdout (_impure_ptr) are unavailable and not needed (pmsis printf flushes itself). -- QW
+#define ZTRACE(...) do { printf(__VA_ARGS__); } while (0)
 
 #ifdef DUMP_WEIGHTS
 /* QW: on-device ZO weight extraction (mirror of deeploytraintest.c dump_weights) - whole fn added by QW -- QW
@@ -276,8 +286,7 @@ int main(void) {                 // -- QW
    * ------------------------------------------------------------------ */
 
   ZTRACE("Initializing TrainingNetwork (zo_train)...\r\n");  // -- QW
-  pi_cluster_task(&cluster_task, InitTrainingNetwork, NULL);  // -- QW
-  cluster_task.stack_size = MAINSTACKSIZE;                    // -- QW
+  pi_cluster_task(&cluster_task, InitTrainingNetworkWrapper, NULL);  // -- QW
   cluster_task.slave_stack_size = SLAVESTACKSIZE;             // -- QW
   pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);    // -- QW
   ZTRACE("[PHASE] InitTrainingNetwork done\r\n");             // -- QW
@@ -289,8 +298,7 @@ int main(void) {                 // -- QW
    * ------------------------------------------------------------------ */
 
   ZTRACE("Initializing OptimizerNetwork (zo_update)...\r\n");  // -- QW
-  pi_cluster_task(&cluster_task, InitOptimizerNetwork, NULL);  // -- QW
-  cluster_task.stack_size = MAINSTACKSIZE;                     // -- QW
+  pi_cluster_task(&cluster_task, InitOptimizerNetworkWrapper, NULL);  // -- QW
   cluster_task.slave_stack_size = SLAVESTACKSIZE;              // -- QW
   pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);     // -- QW
   ZTRACE("[PHASE] InitOptimizerNetwork done\r\n");             // -- QW
@@ -368,8 +376,7 @@ int main(void) {                 // -- QW
       perturb_seed_base = seed_base;      // -- QW  per-step seed
       perturb_eps_use_override = 0u;      // -- QW  use baked ZO_EPS
       ZTRACE("[PHASE] +eps forward START\r\n");                  // -- QW
-      pi_cluster_task(&cluster_task, RunTrainingNetwork, NULL);  // -- QW
-      cluster_task.stack_size = MAINSTACKSIZE;                   // -- QW
+      pi_cluster_task(&cluster_task, RunTrainingNetworkWrapper, NULL);  // -- QW
       cluster_task.slave_stack_size = SLAVESTACKSIZE;            // -- QW
       ResetTimer();                                              // -- QW
       StartTimer();                                              // -- QW
@@ -393,8 +400,7 @@ int main(void) {                 // -- QW
       perturbation_sign = 0u;             // -- QW  -eps
       /* perturb_seed_base / perturb_eps_use_override unchanged -- QW */
       ZTRACE("[PHASE] -eps forward START\r\n");                  // -- QW
-      pi_cluster_task(&cluster_task, RunTrainingNetwork, NULL);  // -- QW
-      cluster_task.stack_size = MAINSTACKSIZE;                   // -- QW
+      pi_cluster_task(&cluster_task, RunTrainingNetworkWrapper, NULL);  // -- QW
       cluster_task.slave_stack_size = SLAVESTACKSIZE;            // -- QW
       ResetTimer();                                              // -- QW
       StartTimer();                                              // -- QW
@@ -417,7 +423,6 @@ int main(void) {                 // -- QW
       {                                                          // -- QW
         ZODiffArgs diff_args = {.lp_bits = lp_bits, .lm_bits = lm_bits, .acc_out = (float *)&acc_bits};  // -- QW
         pi_cluster_task(&cluster_task, AccumulateZODiffOnCluster, &diff_args);  // -- QW
-        cluster_task.stack_size = MAINSTACKSIZE;                 // -- QW
         cluster_task.slave_stack_size = SLAVESTACKSIZE;          // -- QW
         pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task); // -- QW
       }                                                          // -- QW
@@ -433,7 +438,6 @@ int main(void) {                 // -- QW
           .coeff_out = &perturb_eps_override,                    // -- QW  cluster writes the float global directly
       };                                                         // -- QW
       pi_cluster_task(&cluster_task, ComputeZOUpdateCoeffOnCluster, &coeff_args);  // -- QW
-      cluster_task.stack_size = MAINSTACKSIZE;                   // -- QW
       cluster_task.slave_stack_size = SLAVESTACKSIZE;            // -- QW
       pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);   // -- QW
     }                                                            // -- QW
@@ -445,8 +449,7 @@ int main(void) {                 // -- QW
     perturbation_sign = 1u;          // -- QW
     perturb_seed_base = seed_base;   // -- QW  same z as the train passes
     ZTRACE("[PHASE] update (zo_update) START\r\n");            // -- QW
-    pi_cluster_task(&cluster_task, RunOptimizerNetwork, NULL);  // -- QW
-    cluster_task.stack_size = MAINSTACKSIZE;                    // -- QW
+    pi_cluster_task(&cluster_task, RunOptimizerNetworkWrapper, NULL);  // -- QW
     cluster_task.slave_stack_size = SLAVESTACKSIZE;             // -- QW
     ResetTimer();                                               // -- QW
     StartTimer();                                               // -- QW
@@ -492,7 +495,6 @@ int main(void) {                 // -- QW
       .tag = "loss+",                     // -- QW
   };                                      // -- QW
   pi_cluster_task(&cluster_task, CompareLossesOnCluster, &cmp_plus);  // -- QW
-  cluster_task.stack_size = MAINSTACKSIZE;                            // -- QW
   cluster_task.slave_stack_size = SLAVESTACKSIZE;                     // -- QW
   pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);            // -- QW
 
@@ -504,7 +506,6 @@ int main(void) {                 // -- QW
       .tag = "loss-",                     // -- QW
   };                                      // -- QW
   pi_cluster_task(&cluster_task, CompareLossesOnCluster, &cmp_minus);  // -- QW
-  cluster_task.stack_size = MAINSTACKSIZE;                             // -- QW
   cluster_task.slave_stack_size = SLAVESTACKSIZE;                      // -- QW
   pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);             // -- QW
 

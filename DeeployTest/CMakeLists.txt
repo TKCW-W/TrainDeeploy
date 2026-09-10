@@ -105,9 +105,12 @@ elseif(platform STREQUAL GAP9)
   endif()
 
   # Waive warnings in generated code
-  if(TRAINING OR MEZO_TRAINING)  # QW: waive pointer-sign/sign-compare for both BP and MeZO (ZO) libs on GAP9 -- QW
-    target_compile_options(training_network PRIVATE -Wno-pointer-sign -Wno-sign-compare)
-    target_compile_options(optimizer_network PRIVATE -Wno-pointer-sign -Wno-sign-compare)
+  # QW: -Wno-error too — the generated ZO networks have benign incompatible-pointer-type /
+  #     implicit-decl warnings that the GAP9 toolchain escalates by default (Siracusa/pulp does
+  #     not); matches the training_network waiver in Platforms/GAP9/CMakeLists.txt. -- QW
+  if(TRAINING OR MEZO_TRAINING)  # QW: waive for both BP and MeZO (ZO) generated libs on GAP9 -- QW
+    target_compile_options(training_network PRIVATE -Wno-pointer-sign -Wno-sign-compare -Wno-error)
+    target_compile_options(optimizer_network PRIVATE -Wno-pointer-sign -Wno-sign-compare -Wno-error)
   else()
     target_compile_options(network PRIVATE -Wno-pointer-sign -Wno-sign-compare)
   endif()

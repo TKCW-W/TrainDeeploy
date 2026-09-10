@@ -16,9 +16,15 @@ Usage:
 import os
 from pathlib import Path
 
-# gapy (gvsoc launcher) uses `#!/usr/bin/env python3`.  Put /usr/bin first so it
-# resolves to /usr/bin/python3 which has all required packages. -- QW
-os.environ['PATH'] = '/usr/bin:' + os.environ.get('PATH', '')
+# gapy (gvsoc launcher) uses `#!/usr/bin/env python3`.  On Siracusa /usr/bin/python3 has the
+# required packages, so /usr/bin goes first. On GAP9 the SDK tools (kconfigtool / gapy_v2) need
+# the SDK venv python3 (kconfiglib + SDK python deps), so when a venv is ACTIVE keep its bin ahead
+# of /usr/bin — otherwise the shebang picks /usr/bin/python3 and CMake fails on `No module named
+# 'kconfiglib'`. No-op for Siracusa (no VIRTUAL_ENV). -- QW
+# os.environ['PATH'] = '/usr/bin:' + os.environ.get('PATH', '')   # -- QW original (Siracusa-only)
+_venv = os.environ.get('VIRTUAL_ENV')  # -- QW
+_venv_pfx = (_venv + '/bin:') if _venv else ''  # -- QW
+os.environ['PATH'] = _venv_pfx + '/usr/bin:' + os.environ.get('PATH', '')  # -- QW
 
 from .core import DeeployTestConfig, run_complete_test
 from .core.paths import get_test_paths
