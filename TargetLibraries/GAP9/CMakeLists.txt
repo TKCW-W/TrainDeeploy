@@ -80,5 +80,27 @@ endif()
 
 target_link_libraries(deeploygap9 PUBLIC pulp-nn-mixed)
 
+# QW: NE16 accelerator (via pulp-nnx) — GAP9_w_NE16 only. Modelled on upstream Deeploy PR #183's
+#     TargetLibraries/GAP9/CMakeLists.txt, MINUS its CNN_BasicKernels_NE16.c exclusion: that
+#     exclusion exists because the PR's GAP9 target compiles the GAP9-SDK NE16 AutoTiler kernels,
+#     whose hal_ne16.h redefines the NE16_REG_* macros that pulp-nnx's ne16_task_defs.h also
+#     defines (-Werror redefinition). Our GAP9 target never compiled those SDK kernels in, so
+#     there is nothing to exclude. Codegen emits the pulp-nnx HAL calls (ne16_nnx_init /
+#     ne16_nnx_dispatch), which live here. -- QW
+if(platform STREQUAL GAP9_w_NE16)  # -- QW
+  set(USE_NE16 ON CACHE BOOL "Use the NE16 accelerator." FORCE)  # -- QW
+  add_subdirectory(../third_party/pulp-nnx ${CMAKE_CURRENT_BINARY_DIR}/pulp-nnx)  # -- QW
+  target_link_libraries(pulp-nnx PUBLIC pmsis)  # -- QW
+  target_compile_options(pulp-nnx PRIVATE  # -- QW
+    -Wno-error
+    -Wno-implicit-int-conversion
+    -Wno-sign-conversion
+    -Wno-typedef-redefinition
+    -Wno-unused-parameter
+    -Wno-incompatible-pointer-types-discards-qualifiers
+  )
+  target_link_libraries(deeploygap9 PUBLIC pulp-nnx)  # -- QW
+endif()  # -- QW
+
 target_link_libraries(deeploygap9 PUBLIC m)
 

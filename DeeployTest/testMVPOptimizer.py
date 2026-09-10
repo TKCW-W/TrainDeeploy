@@ -47,6 +47,8 @@ from Deeploy.MemoryLevelExtension.OptimizationPasses.MemoryLevelAnnotationPasses
     AnnotateIOMemoryLevel, PromoteTensorsToL2
 from Deeploy.Targets.PULPOpen.Platform import PULPClusterEngine
 from Deeploy.TilingExtension.TilerExtension import TilerDeployerWrapper
+from Deeploy.EngineExtension.NetworkDeployers.EngineColoringDeployer import \
+    EngineColoringDeployerWrapper  # -- QW (GAP9_w_NE16)
 
 
 def generateTiledOptimizerNetwork(args) -> None:
@@ -98,6 +100,16 @@ def generateTiledOptimizerNetwork(args) -> None:
                            deeployStateDir = _DEEPLOYSTATEDIR,
                            inputOffsets = inputOffsets,
                            scheduler = _mockScheduler)
+
+    # QW: make the deployer engine-color-aware for composite platforms (GAP9 + NE16).
+    #     Mirrors testMVP.py:98-100. MUST sit between mapDeployer() and setupMemoryPlatform():
+    #     EngineColoringDeployer interleaves an EngineColoringPass between every pair of lowering
+    #     passes, and setupMemoryPlatform requires an UNWRAPPED platform. On a non-composite
+    #     platform this is a no-op, so it is gated by name rather than applied unconditionally.
+    #     NOTE: the ZO update graph is perturbation-ops only (no Conv), so NE16 colours nothing
+    #     here today; wired anyway so the two graphs stay symmetric. -- QW
+    if args.platform in ("Siracusa_w_neureka", "GAP9_w_NE16"):  # -- QW
+        deployer = EngineColoringDeployerWrapper(deployer)  # -- QW
 
     # 5. Set up memory hierarchy.
     #    Tiles execute in L1; optimizer I/O (weights, grads) live in L2 (or L3).
@@ -180,6 +192,7 @@ if __name__ == '__main__':
         default = 0.001,
         help = "Learning rate (informational only; embedded in optimizer ONNX attributes). Default: 0.001.",
     )
+
     parser.add_argument("--l1", type = int, default = 64_000, help = "L1 size in bytes. Default: 64000.")
     parser.add_argument("--l2", type = int, default = 1_024_000, help = "L2 size in bytes. Default: 1024000.")
     parser.add_argument("--defaultMemLevel",

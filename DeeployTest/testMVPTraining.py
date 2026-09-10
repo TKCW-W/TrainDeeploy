@@ -40,6 +40,8 @@ from Deeploy.MemoryLevelExtension.OptimizationPasses.MemoryLevelAnnotationPasses
     AnnotateIOMemoryLevel, PromoteTensorsToL2
 from Deeploy.Targets.PULPOpen.Platform import PULPClusterEngine
 from Deeploy.TilingExtension.TilerExtension import TilerDeployerWrapper
+from Deeploy.EngineExtension.NetworkDeployers.EngineColoringDeployer import \
+    EngineColoringDeployerWrapper  # -- QW (GAP9_w_NE16)
 
 
 def generateTiledTrainingNetwork(args) -> None:
@@ -135,6 +137,14 @@ def generateTiledTrainingNetwork(args) -> None:
                            deeployStateDir = _DEEPLOYSTATEDIR,
                            inputOffsets = inputOffsets,
                            scheduler = _mockScheduler)
+
+    # QW: make the deployer engine-color-aware for composite platforms (GAP9 + NE16).
+    #     Mirrors testMVP.py:98-100. MUST sit between mapDeployer() and setupMemoryPlatform():
+    #     EngineColoringDeployer interleaves an EngineColoringPass between every pair of lowering
+    #     passes, and setupMemoryPlatform requires an UNWRAPPED platform. On a non-composite
+    #     platform this is a no-op, so it is gated by name rather than applied unconditionally.
+    if args.platform in ("Siracusa_w_neureka", "GAP9_w_NE16"):  # -- QW
+        deployer = EngineColoringDeployerWrapper(deployer)  # -- QW
 
     # 7. Set up memory hierarchy.
     L3 = MemoryLevel(name = "L3", neighbourNames = ["L2"], size = 64_000_000)
