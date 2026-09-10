@@ -70,10 +70,17 @@ the training (block-0 ~88 KB) and optimizer arenas, which cleared the `zo_update
 
 ## Notes / follow-ups
 
-- **Latent:** the generated code calls `PULP_MaxPool2d_fp32_fp32_HWC` but GAP9's lib has
-  `MaxPool2d_fp32_fp32_NCHW` (an implicit decl currently demoted by `-Wno-error`). The test passes
-  0/8 (MaxPool output feeds the loss, so gross errors would show), but confirm the exact MaxPool
-  kernel resolution before trusting multi-step/eval numerics on GAP9.
+- **MaxPool kernel name — VERIFIED benign (resolved).** The `-Wno-error`-demoted warning
+  (`implicit declaration of 'PULP_MaxPool2d_fp32_fp32_HWC'; did you mean 'MaxPool2d_fp32_fp32_NCHW'`)
+  is NOT a wrong/missing kernel: `MaxPool.c:16` defines `PULP_MaxPool2d_fp32_fp32_HWC` (globbed into
+  `deeploygap9`), `nm` on the ELF shows it as a defined symbol (`T`), and the generated code calls
+  exactly that name. It's only an implicit declaration (the generated `.c` lacks the `kernel/MaxPool.h`
+  prototype in scope); clang's "did you mean …NCHW" is a nearest-match suggestion for a *different*
+  (channels-first) kernel — a red herring, since `_HWC`/NHWC is the PULP/GAP9 datapath layout. The
+  call is provably safe under an implicit decl because every arg is a pointer or `uint32_t` (no
+  by-value float/double → no promotion mismatch), and the 0/8 loss match independently confirms
+  correct MaxPool numerics. Cosmetic-only follow-up: emit `#include "kernel/MaxPool.h"` in codegen
+  to silence the warning.
 - Runs under qemu (amd64 image on the arm64 Mac), so cycle counts (train ~66.8 M, opt ~0.37 M) are
   functionally correct but not perf-calibrated; a native-arch or board run is the bar for latency.
 - **Next:** NE16 accelerator on GAP9 (the final HW platform).
