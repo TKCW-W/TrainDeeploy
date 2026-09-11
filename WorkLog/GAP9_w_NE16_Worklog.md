@@ -632,3 +632,56 @@ carrying exp16a's abandoned Slice/Add exploration) so exp16a and exp16b stay rep
 
 **Block 0 is genuinely blocked:** its activation range is `[-66, 127]` — actually signed, so
 BLOCKER 3 is real, not a conservative assertion. Phase 4 next.
+
+### 2026-09-11 — Session 4 (cont.): exp16c phase 4 — BLOCKER 3, **STEP 3 COMPLETE**
+
+| block | kernel | Cin→Cout | out | disp. | errors | NE16 | cluster | ratio |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 1×4 | 1→8 | 14×701 | 4 | **0 / 78512** ✓ | 5,517,302 | 732,178 | 7.54× |
+
+**All five SpeechNet convs now run bit-exactly on NE16**, each with the complete on-device QZO
+weight path. STEP 3 ("make it correct") is done.
+
+**The fix.** NE16 reads activations as unsigned and CONFIG0 bit 26 (PR #183's `input_signed`) is
+undecoded by the hardware, so there is no register to flip. Block 0's activation is genuinely
+signed (`[-66,127]`), so: feed `x_u = x + 128` as **uint8** (`NE16PWConv2DBindings` already admits
+a `uint8_t` `data_in` — no binding work), then remove the induced per-output-channel term, since
+`Σw·x = Σw·x_u − 128·Σw`.
+
+**Where it is applied is the subtle part.** RequantShift computes `(acc·mul + add) >> log2(div)`,
+so `add` lands *after* the multiply: correcting the accumulator by `−128·Σw` is equivalent to
+correcting `add` by `−128·Σw·mul`, not by `−128·Σw`.
+
+**Why on device:** `Σw` is not a host constant — the weight is a per-step `RQSPerturbRademacher`
+output. New kernel `NE16SignedInputBias_i32` (in `TargetLibraries/GAP9/src/NE16WeightEncode.c`)
+recomputes it from the same perturbed weight the encoder consumes, parallelised over `cout`; new op
+`NE16SignedInputBias` in `Deeploy/Targets/NE16/WeightEncode.py` with its own untiled constraint.
+Range checked against the real tensors *first*: `|128·Σw·mul| ≤ 128·508·454 ≈ 3.0e7`, well inside
+int32.
+
+**Pre-existing Deeploy bug surfaced and fixed.**
+`UniformRequantShiftParser.parseNode` (`Deeploy/Targets/Generic/Parsers.py:1478`) called
+`node.inputs[1:3].values` unconditionally. `.values` exists only on a `gs.Constant`, so a
+RequantShift with a runtime `add` raised `AttributeError: 'Variable' object has no attribute
+'values'` during parsing and **aborted the whole deployment** rather than declining the node. A
+`parseNode` must decline, never raise. Guarded with `isinstance(..., gs.Constant)`. **This would
+have bitten the real QZO graph too**, where `bias_rqsadd_pert` is a runtime tensor.
+Regression: block 1 re-run, `0/19712`, 1,608,939 cycles — unchanged.
+
+**Why block 0 is the slowest (7.5×):** `Cin = 1` uses one lane of `TP_IN = 16`, so 15/16 of the
+array is idle on each of its 4 dispatches, over the network's largest spatial extent (14×701).
+
+### Status after session 4
+
+| step | state |
+|---|---|
+| STEP 1 compile | ✅ |
+| STEP 2 work (block 1) | ✅ bit-exact, two decompositions |
+| blocker 1b (on-device perturb + encode) | ✅ closed, 2.7 % overhead |
+| BLOCKER 3 (signed activations) | ✅ closed |
+| **STEP 3 correct (all 5 convs)** | ✅ **all bit-exact** |
+| STEP 4 optimise | ❌ open — NE16 is 4.3×–7.5× SLOWER than `pulp_nn_conv` on every block |
+
+STEP 4 is now the only thing between this and a useful accelerator. exp16b named the lever
+(dispatch count, not MAC utilisation) and block 0 illustrates the other half (`Cin` packing:
+`Cin=1` wastes 15/16 of `TP_IN`).

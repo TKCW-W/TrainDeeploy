@@ -54,3 +54,41 @@ class NE16WeightEncodeTileConstraint(TileConstraint):
         # Nothing varies per tile -- there is only ever one tile.
         return VariableReplacementScheme({}, {}), \
             TilingSchedule(inputBaseOffsets, outputBaseOffsets, inputLoadSchedule, outputLoadSchedule)
+
+
+class NE16SignedInputBiasTileConstraint(TileConstraint):
+    """QW (exp16c phase 4): also untiled -- a per-output-channel reduction over the whole weight.
+
+    Output channel `co` sums the entire `(cin, H, W)` slab of the weight, so any tiling of the
+    weight would have to carry partial sums across tiles. The tensors are tiny (block 0's weight is
+    32 bytes, its bias 8 int32) and the consumer's constraint pins the bias whole anyway. -- QW
+    """
+
+    @staticmethod
+    def addGeometricalConstraint(tilerModel: TilerModel, parseDict: Dict, ctxt: NetworkContext) -> TilerModel:
+        for name in (parseDict['weight'], parseDict['mul'], parseDict['add'], parseDict['data_out']):
+            tilerModel.addTensorDimToModel(ctxt, name)
+            for dimIdx in range(len(ctxt.lookup(name).shape)):
+                var = tilerModel.getTensorDimVar(tensorName = name, dimIdx = dimIdx)
+                tilerModel.addConstraint(var == var.Max())
+        return tilerModel
+
+    @classmethod
+    def serializeTilingSolution(
+            cls, tilingSolution: NodeMemoryConstraint, absoluteOutputCubes: List[AbsoluteHyperRectangle],
+            targetMemLevel: str, ctxt: NetworkContext,
+            operatorRepresentation: OperatorRepresentation) -> Tuple[VariableReplacementScheme, TilingSchedule]:
+        outputCubes = [cube.rectangle for cube in absoluteOutputCubes]
+        inputBaseOffsets, outputBaseOffsets = cls.extractBaseAddr(tilingSolution, targetMemLevel,
+                                                                  operatorRepresentation,
+                                                                  ['weight', 'mul', 'add', 'data_out'])
+
+        def _whole(key: str) -> HyperRectangle:
+            shape = tuple(int(s) for s in ctxt.lookup(operatorRepresentation[key]).shape)
+            return HyperRectangle((0,) * len(shape), shape)
+
+        inputLoadSchedule = [{"weight": _whole('weight'), "mul": _whole('mul'), "add": _whole('add')}
+                             for _ in outputCubes]
+        outputLoadSchedule = [{"data_out": cube} for cube in outputCubes]
+        return VariableReplacementScheme({}, {}), \
+            TilingSchedule(inputBaseOffsets, outputBaseOffsets, inputLoadSchedule, outputLoadSchedule)

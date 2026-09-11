@@ -38,4 +38,11 @@ void NE16WeightEncode_i8_u8(const int8_t *__restrict__ src, uint8_t *__restrict_
                             const uint32_t cout, const uint32_t cin, const uint32_t taps,
                             const uint32_t row_start, const uint32_t row_count);
 
+/* -- QW (exp16c phase 4 / BLOCKER 3): per-output-channel bias correction for signed activations
+ * fed to NE16 as x+128. See TargetLibraries/GAP9/src/NE16WeightEncode.c for the derivation. */
+void NE16SignedInputBias_i32(const int8_t *__restrict__ weight, const int32_t *__restrict__ mul,
+                             const int32_t *__restrict__ add, int32_t *__restrict__ out,
+                             const uint32_t cout, const uint32_t cinTaps, const int32_t offset,
+                             const uint32_t co_start, const uint32_t co_count);
+
 #endif // __DEEPLOY_MATH_HEADER_

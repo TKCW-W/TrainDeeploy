@@ -93,3 +93,48 @@ void NE16WeightEncode_i8_u8(const int8_t *__restrict__ src, uint8_t *__restrict_
     }
   }
 }
+
+/* QW (exp16c phase 4 / BLOCKER 3): signed-activation bias correction.
+ *
+ * NE16 reads input activations as UNSIGNED. SpeechNet block 0's activation is genuinely signed
+ * (range [-66, 127]), and CONFIG0 bit 26 -- what PR #183 calls `input_signed` -- is undecoded by
+ * the hardware (ne16_regfile.cpp:200-231), so there is no register to flip.
+ *
+ * The standard fix: feed x_u = x + 128 and remove the induced term afterwards. Exactly,
+ *
+ *     sum_k w_k * x_k  =  sum_k w_k * (x_u,k - 128)  =  sum_k w_k * x_u,k  -  128 * sum_k w_k
+ *
+ * and `128 * sum_k w_k` is a per-OUTPUT-CHANNEL constant. It cannot be folded on the host, because
+ * in QZO the weight is produced on device by RQSPerturbRademacher and changes every ZO step -- so
+ * the correction is recomputed here, on device, from the same perturbed weight the encoder sees.
+ *
+ * Where it is applied matters. The RequantShift computes
+ *
+ *     out = (acc * mul + add) >> log2(div)
+ *
+ * so `add` is applied AFTER the multiply. Correcting `acc` by `-128*sum_w` is therefore equivalent
+ * to correcting `add` by `-128 * sum_w * mul`:
+ *
+ *     out = ((acc_meas - 128*sum_w) * mul + add) >> s  =  (acc_meas * mul + [add - 128*sum_w*mul]) >> s
+ *
+ * Range: |128 * sum_w * mul| <= 128 * 127 * cin*H*W * max(mul). For block 0 that is
+ * 128 * 508 * 454 ~= 3.0e7, comfortably inside int32 (checked against the real tensors before this
+ * was written). A layer with a large `mul` and a wide receptive field could overflow; the parser
+ * therefore records the shapes and this bound is documented rather than assumed.
+ *
+ * Parallelised over output channels, like the encoder. -- QW
+ */
+void NE16SignedInputBias_i32(const int8_t *__restrict__ weight, const int32_t *__restrict__ mul,
+                             const int32_t *__restrict__ add, int32_t *__restrict__ out,
+                             const uint32_t cout, const uint32_t cinTaps, const int32_t offset,
+                             const uint32_t co_start, const uint32_t co_count) {
+  (void)cout;
+  for (uint32_t co = co_start; co < co_start + co_count; co++) {
+    const int8_t *w = weight + (uint32_t)co * cinTaps;
+    int32_t acc = 0;
+    for (uint32_t i = 0; i < cinTaps; i++) {
+      acc += (int32_t)w[i];
+    }
+    out[co] = add[co] - offset * acc * mul[co];
+  }
+}

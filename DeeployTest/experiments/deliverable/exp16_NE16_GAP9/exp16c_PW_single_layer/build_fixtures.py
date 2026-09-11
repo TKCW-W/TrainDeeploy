@@ -143,7 +143,17 @@ def main() -> int:
     Wout = W + pads[1] + pads[3] - kw + 1
     print(f"[act  ] {act.shape} range [{act.min()},{act.max()}]   [wpert] {wpert.shape} range [{wpert.min()},{wpert.max()}]")
     print(f"[shape] in [{Nb},{Cin},{H},{W}] * [{Cout},{Cin},{kh},{kw}] -> out [{Nb},{Cout},{Hout},{Wout}]")
-    assert act.min() >= 0, f"block {N_} activations are SIGNED -- that is BLOCKER 3, not handled here"
+    # QW (exp16c phase 4 / BLOCKER 3): NE16 reads activations as UNSIGNED and CONFIG0 bit 26
+    #     (PR #183's `input_signed`) is undecoded by the hardware. Block 0's activation is genuinely
+    #     signed ([-66,127]), so it is fed as x+128 (uint8) and the induced per-output-channel term
+    #     `128 * sum_w` removed afterwards. Because `add` lands AFTER the multiply in
+    #     (acc*mul + add) >> log2(div), the correction to apply is `add - 128*sum_w*mul`, computed
+    #     ON DEVICE by NE16SignedInputBias -- sum_w is not a host constant when the weight is a
+    #     per-step RQSPerturbRademacher output. -- QW
+    signedAct = bool(act.min() < 0)
+    if signedAct:
+        print(f"[signd] block {N_} activation is SIGNED (min {act.min()}) -> +128 input, "
+              f"NE16SignedInputBias correction")
     # Every SpeechNet conv pads only along its TAP axis; the decomposition expresses padding as a
     # pre-pad of the fixture data (NE16's 1x1 mode cannot pad, and its guard in fsm.cpp:53 is
     # commented out -> silent wrong results).
@@ -191,7 +201,8 @@ def main() -> int:
     for k, v in (("ne16_weight_preencoded", 1), ("weight_offset", WEIGHT_OFFSET),
                  ("ne16_taps", K), ("channels_first", 0)):
         conv_n.attribute.append(helper.make_attribute(k, v))
-    rqs_n = _rqs_node(f"b{N_}_rqs", "conv_out", "rqs_mul", "rqs_add", "output", rqs_protos, rqs_domain)
+    rqsAddName = "rqs_add_corr" if signedAct else "rqs_add"
+    rqs_n = _rqs_node(f"b{N_}_rqs", "conv_out", "rqs_mul", rqsAddName, "output", rqs_protos, rqs_domain)
     rqs_n.attribute.append(helper.make_attribute("channels_first", 0))
 
     pert_n = helper.make_node("RQSPerturbRademacher", ["weight", "w_pmul"], ["weight_pert"],
@@ -200,6 +211,14 @@ def main() -> int:
     enc_n = helper.make_node("NE16WeightEncode", ["weight_pert"], ["weight_enc"], name = f"b{N_}_wenc")
     enc_n.attribute.append(helper.make_attribute("ne16_taps", K))
     enc_n.attribute.append(helper.make_attribute("ne16_bits", 8))
+    extraNodes, extraVinfo = [], []
+    if signedAct:
+        bias_n = helper.make_node("NE16SignedInputBias", ["weight_pert", "rqs_mul", "rqs_add"],
+                                  ["rqs_add_corr"], name = f"b{N_}_sbias")
+        bias_n.attribute.append(helper.make_attribute("ne16_input_offset", 128))
+        extraNodes.append(bias_n)
+        extraVinfo.append(helper.make_tensor_value_info("rqs_add_corr", onnx.TensorProto.INT32,
+                                                        list(add.shape)))
 
     # The device input is pre-padded along the tap axis; its extent there is exactly out + (K-1).
     actp = np.pad(act, ((0, 0), (0, 0), (pads[0], pads[2]), (pads[1], pads[3])),
@@ -208,12 +227,16 @@ def main() -> int:
     assert (Hp if tapAxisH else Wp) == (Hout if tapAxisH else Wout) + K - 1, \
         f"tap-axis extent {(Hp if tapAxisH else Wp)} != out+{K-1}"
     k_in = actp.transpose(0, 2, 3, 1).copy()           # NHWC-native: no layout Transposes at all
+    if signedAct:
+        k_in = (k_in.astype(np.int32) + 128).astype(np.uint8)   # x_u = x + 128, read as uint8
     k_out = ref_out.transpose(0, 2, 3, 1).copy()
 
     kg = helper.make_graph(
-        [pert_n, enc_n, conv_n, rqs_n],
+        [pert_n] + extraNodes + [enc_n, conv_n, rqs_n],
         f"b{N_}_ne16{args.suffix}",
-        [helper.make_tensor_value_info("input", onnx.TensorProto.INT8, [Nb, Hp, Wp, Cin]),
+        [helper.make_tensor_value_info("input",
+                                       onnx.TensorProto.UINT8 if signedAct else onnx.TensorProto.INT8,
+                                       [Nb, Hp, Wp, Cin]),
          helper.make_tensor_value_info("weight", onnx.TensorProto.INT8, list(w_raw.shape))],
         [helper.make_tensor_value_info("output", onnx.TensorProto.INT8, [Nb, Hout, Wout, Cout])],
         initializer = [numpy_helper.from_array(mul, "rqs_mul"), numpy_helper.from_array(add, "rqs_add"),
@@ -221,7 +244,7 @@ def main() -> int:
         value_info = [helper.make_tensor_value_info("weight_pert", onnx.TensorProto.INT8, list(wpert.shape)),
                       helper.make_tensor_value_info("weight_enc", onnx.TensorProto.UINT8, list(enc_taps.shape)),
                       helper.make_tensor_value_info("conv_out", onnx.TensorProto.INT32,
-                                                    [Nb, Hout, Wout, Cout])])
+                                                    [Nb, Hout, Wout, Cout])] + extraVinfo)
     mk = helper.make_model(kg, opset_imports = opset)
     mk.ir_version = model.ir_version
     onnx.save(mk, os.path.join(kdir, "network.onnx"))   # no shape inference: shapes are explicit

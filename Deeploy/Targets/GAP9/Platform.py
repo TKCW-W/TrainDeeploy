@@ -125,6 +125,9 @@ GAP9_RQSPerturbRademacherMapper = NodeMapper(RQSPerturbRademacherParser(), PULPR
 from Deeploy.Targets.NE16.WeightEncode import NE16WeightEncodeLayer, NE16WeightEncodeParser  # -- QW
 from Deeploy.Targets.NE16.Tiler import NE16WeightEncodeTilingReadyBindings  # -- QW
 GAP9_NE16WeightEncodeMapper = NodeMapper(NE16WeightEncodeParser(), NE16WeightEncodeTilingReadyBindings)  # -- QW
+from Deeploy.Targets.NE16.WeightEncode import NE16SignedInputBiasLayer, NE16SignedInputBiasParser  # -- QW
+from Deeploy.Targets.NE16.Tiler import NE16SignedInputBiasTilingReadyBindings  # -- QW
+GAP9_NE16SignedInputBiasMapper = NodeMapper(NE16SignedInputBiasParser(), NE16SignedInputBiasTilingReadyBindings)  # -- QW
 
 # GAP9-specific mapping using ClDma
 GAP9Mapping = {
@@ -214,7 +217,9 @@ GAP9Mapping = {
     'RQSPerturbRademacher':
         RQSPerturbRademacherLayer([GAP9_RQSPerturbRademacherMapper]),  # -- QW (quantized ZO perturb)
     'NE16WeightEncode':
-        NE16WeightEncodeLayer([GAP9_NE16WeightEncodeMapper])  # -- QW (exp16c: on-device NE16 weight encode)
+        NE16WeightEncodeLayer([GAP9_NE16WeightEncodeMapper]),  # -- QW (exp16c: on-device NE16 weight encode)
+    'NE16SignedInputBias':
+        NE16SignedInputBiasLayer([GAP9_NE16SignedInputBiasMapper])  # -- QW (exp16c: BLOCKER 3 correction)
 }
 
 

@@ -3,9 +3,13 @@
 Date: **2026-09-11** · Branch `feat/GAP9_w_NE16` · Plan: `./Plan.md`
 Predecessors: `../exp16a_PW_single_layer`, `../exp16b_Dense_single_layer`
 
-> **Phases 1 and 2 COMPLETE — blocker 1b is closed.** The whole QZO weight path now runs on
-> device: `RQSPerturbRademacher → NE16WeightEncode → NE16 Conv`, bit-exact at full extent for
-> **both** ZO passes, at a total overhead of **2.7 %**. Phases 3–4 (STEP 3) open.
+> **COMPLETE — blocker 1b closed and STEP 3 done.** All **five** SpeechNet convs run bit-exactly
+> on NE16, each with the whole QZO weight path on device:
+> `RQSPerturbRademacher → NE16WeightEncode → NE16 Conv → RequantShift`, both ZO passes, at a
+> weight-path overhead of **2.7 %**.
+>
+> NE16 is **4.3×–7.5× slower than `pulp_nn_conv`** on every block. Correctness is settled;
+> the performance gap is STEP 4.
 
 ---
 
@@ -222,3 +226,65 @@ they cannot disagree about the bit layout.
 Its activation range is **`[-66, 127]`** — actually signed, so BLOCKER 3 is real and not an
 artefact of a conservative assertion. NE16 reads activations as unsigned and CONFIG0 bit 26
 (PR #183's `input_signed`) is undecoded by the hardware. Phase 4 handles it.
+
+---
+
+## 7. Phase 4 (STEP 3b) — block 0 and BLOCKER 3: **STEP 3 is complete**
+
+| block | kernel | Cin→Cout | out | disp. | errors | NE16 cycles | cluster | ratio |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 1×4 | 1→8 | 14×701 | 4 | **0 / 78512** ✓ | 5,517,302 | 732,178 | 7.54× |
+
+**All five SpeechNet convs now run bit-exactly on NE16**, each with the complete on-device QZO
+weight path.
+
+### The fix
+
+NE16 reads activations as **unsigned**, and CONFIG0 bit 26 — what PR #183 calls `input_signed` —
+is **undecoded by the hardware** (`ne16_regfile.cpp:200-231`), so there is no register to flip.
+Block 0's activation really is signed (`[-66, 127]`), so:
+
+1. Feed `x_u = x + 128` as **uint8**. `NE16PWConv2DBindings` already admits a `uint8_t` `data_in`,
+   so no binding work was needed.
+2. Remove the induced term. Exactly:
+   `Σ w·x = Σ w·(x_u − 128) = Σ w·x_u − 128·Σw`, and `128·Σw` is a per-output-channel constant.
+
+**Where it is applied is the subtle part.** RequantShift computes `(acc·mul + add) >> log2(div)`,
+so `add` lands *after* the multiply. Correcting the accumulator by `−128·Σw` is therefore
+equivalent to correcting `add` by `−128·Σw·mul`:
+
+```
+((acc − 128·Σw)·mul + add) >> s   ==   (acc·mul + [add − 128·Σw·mul]) >> s
+```
+
+**Why it must run on device:** `Σw` is not a host-time constant — the weight is a per-step
+`RQSPerturbRademacher` output. The new `NE16SignedInputBias_i32` kernel recomputes it from the same
+perturbed weight the encoder consumes, parallelised over output channels.
+
+Range was checked against the real tensors *before* implementing:
+`|128·Σw·mul| ≤ 128 · 508 · 454 ≈ 3.0e7`, comfortably inside int32 (block 0's `mul` is 151–454 and
+`add` is a flat 32768 = `div/2`). Documented in the kernel, since a layer with a large `mul` and a
+wide receptive field could overflow.
+
+### A pre-existing Deeploy bug this surfaced
+
+`UniformRequantShiftParser.parseNode` (`Deeploy/Targets/Generic/Parsers.py:1478`) called
+`node.inputs[1].values` / `node.inputs[2].values` unconditionally. `.values` exists only on a
+`gs.Constant`, so a RequantShift whose `add` is produced at runtime raised
+
+```
+AttributeError: 'Variable' object has no attribute 'values'
+```
+
+during parsing and **aborted the whole deployment**, instead of declining the node and falling
+through to the general RequantShift binding. A `parseNode` must *decline*, never raise. Guarded
+with `isinstance(..., gs.Constant)`. This would have bitten the real QZO graph too, where
+`bias_rqsadd_pert` is a runtime tensor.
+
+Regression after the change: block 1 re-run, **`0/19712`, 1,608,939 cycles — unchanged**.
+
+### Why block 0 is the slowest of the five (7.5×)
+
+`Cin = 1` uses **one lane of `TP_IN = 16`**. NE16's array is sized for 16 input channels per pass,
+so block 0 wastes 15/16 of it on every one of its 4 dispatches, over the largest spatial extent in
+the network (14×701). It is the clearest illustration of why STEP 4's lever is channel packing.

@@ -42,3 +42,10 @@ from Deeploy.Targets.NE16.TileConstraints.NE16WeightEncodeConstraint import NE16
 from Deeploy.Targets.NE16.WeightEncode import NE16WeightEncodeBindings as _NE16WEB  # -- QW
 NE16WeightEncodeTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _NE16WEB,
                                                               tileConstraint = NE16WeightEncodeTileConstraint())  # -- QW
+
+# -- QW (exp16c phase 4 / BLOCKER 3): signed-activation bias correction. Untiled -- a per-cout
+#    reduction over the whole weight, and the tensors are tiny.
+from Deeploy.Targets.NE16.TileConstraints.NE16WeightEncodeConstraint import NE16SignedInputBiasTileConstraint  # -- QW
+from Deeploy.Targets.NE16.WeightEncode import NE16SignedInputBiasBindings as _NE16SIBB  # -- QW
+NE16SignedInputBiasTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _NE16SIBB,
+                                                                 tileConstraint = NE16SignedInputBiasTileConstraint())  # -- QW

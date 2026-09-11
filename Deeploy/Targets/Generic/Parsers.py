@@ -1475,6 +1475,15 @@ class UniformRequantShiftParser(RequantShiftParser):
     def parseNode(self, node: gs.Node) -> (bool):
         ret1 = super().parseNode(node)
 
+        # QW: `parseNode` must DECLINE an unsupported node, not raise on it. `.values` exists only
+        #     on a gs.Constant; a RequantShift whose mul/add is produced at runtime (exp16c feeds
+        #     `add` from NE16SignedInputBias, and the QZO graph perturbs biases at runtime) made
+        #     this throw `AttributeError: 'Variable' object has no attribute 'values'` during
+        #     parsing, aborting the whole deployment instead of falling through to the general
+        #     RequantShift binding. -- QW
+        if not all(isinstance(i, gs.Constant) for i in node.inputs[1:3]):
+            return False
+
         ret2 = all([
             np.prod(node.inputs[1].values.shape) == 1,
             np.prod(node.inputs[2].values.shape) == 1,

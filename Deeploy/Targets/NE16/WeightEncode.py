@@ -30,7 +30,7 @@ import numpy as np
 import onnx_graphsurgeon as gs
 
 from Deeploy.AbstractDataTypes import PointerClass
-from Deeploy.CommonExtensions.DataTypes import int8_t, uint8_t
+from Deeploy.CommonExtensions.DataTypes import int8_t, int32_t, uint8_t
 from Deeploy.DeeployTypes import NetworkContext, NodeBinding, NodeParser, NodeTemplate, ONNXLayer, \
     OperatorRepresentation
 from Deeploy.Targets.Generic.TypeCheckers import SignPropTypeChecker
@@ -143,3 +143,104 @@ class NE16WeightEncodeLayer(ONNXLayer):
     def computeOps(self):
         # one pass over the source weight, 8 bit-extractions per element
         return 8 * self.mapper.parser.operatorRepresentation['size']
+
+
+# ---------------------------------------------------------------------------------------------
+# QW (exp16c phase 4 / BLOCKER 3): NE16SignedInputBias
+#
+# NE16 reads activations as UNSIGNED, and CONFIG0 bit 26 (PR #183's `input_signed`) is undecoded
+# by the hardware. SpeechNet block 0's activation is genuinely signed ([-66, 127]), so it is fed
+# as x_u = x + 128 and the induced per-output-channel term removed afterwards:
+#
+#     sum w*x = sum w*x_u - 128 * sum w
+#
+# The RequantShift computes (acc*mul + add) >> log2(div), i.e. `add` lands AFTER the multiply, so
+# correcting the accumulator by -128*sum_w is the same as correcting `add` by -128*sum_w*mul.
+#
+# This has to run on device: in QZO the weight is an RQSPerturbRademacher output that changes
+# every ZO step, so `sum_w` is not a host-time constant.
+# ---------------------------------------------------------------------------------------------
+
+
+class NE16SignedInputBiasParser(NodeParser):
+
+    def parseNode(self, node: gs.Node) -> bool:
+        return all([
+            node.op == "NE16SignedInputBias",
+            len(node.inputs) == 3,
+            len(node.outputs) == 1,
+        ])
+
+    def parseNodeCtxt(self,
+                      ctxt: NetworkContext,
+                      node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        weight = ctxt.lookup(node.inputs[0].name)
+        mul = ctxt.lookup(node.inputs[1].name)
+        add = ctxt.lookup(node.inputs[2].name)
+        out = ctxt.lookup(node.outputs[0].name)
+
+        wShape = tuple(int(s) for s in weight.shape)
+        if len(wShape) != 4:
+            return ctxt, False
+        cout = wShape[0]
+        if tuple(int(s) for s in out.shape) != (cout,) or \
+           int(np.prod(mul.shape)) != cout or int(np.prod(add.shape)) != cout:
+            return ctxt, False
+
+        self.operatorRepresentation['weight'] = weight.name
+        self.operatorRepresentation['mul'] = mul.name
+        self.operatorRepresentation['add'] = add.name
+        self.operatorRepresentation['data_out'] = out.name
+        self.operatorRepresentation['ne16_cout'] = cout
+        self.operatorRepresentation['ne16_cin_taps'] = int(np.prod(wShape[1:]))
+        self.operatorRepresentation['ne16_input_offset'] = int(node.attrs.get('ne16_input_offset', 128))
+        self.operatorRepresentation['size'] = cout
+        return ctxt, True
+
+
+class NE16SignedInputBiasChecker(SignPropTypeChecker):
+
+    def _inferNumLevels(self, inputs, operatorRepresentation):
+        return [2**32]
+
+    def _inferSignedness(self, inputs, operatorRepresentation):
+        return [True]
+
+
+signedInputBiasTemplate = NodeTemplate("""
+// NE16SignedInputBias (Name: ${nodeName}, Op: ${nodeOp}) -- BLOCKER 3 correction -- QW
+{
+    uint32_t ${nodeName}_ncout = ${ne16_cout};
+    uint32_t ${nodeName}_chunk = (${nodeName}_ncout + NUM_CORES - 1) / NUM_CORES;
+    uint32_t ${nodeName}_start = MIN(${nodeName}_chunk * (uint32_t) pi_core_id(), ${nodeName}_ncout);
+    uint32_t ${nodeName}_stop  = MIN(${nodeName}_start + ${nodeName}_chunk, ${nodeName}_ncout);
+
+    NE16SignedInputBias_i32((const int8_t *) ${weight},
+                            (const int32_t *) ${mul},
+                            (const int32_t *) ${add},
+                            (int32_t *) ${data_out},
+                            ${ne16_cout},
+                            ${ne16_cin_taps},
+                            ${ne16_input_offset},
+                            ${nodeName}_start,
+                            ${nodeName}_stop - ${nodeName}_start);
+}
+""")
+
+NE16SignedInputBiasBindings = [
+    NodeBinding(
+        NE16SignedInputBiasChecker([PointerClass(int8_t), PointerClass(int32_t),
+                                    PointerClass(int32_t)], [PointerClass(int32_t)]),
+        signedInputBiasTemplate, ForkTransformer)
+]
+
+
+class NE16SignedInputBiasLayer(ONNXLayer):
+
+    def __init__(self, maps):
+        super().__init__(maps)
+
+    def computeOps(self):
+        return self.mapper.parser.operatorRepresentation['ne16_cout'] * \
+            self.mapper.parser.operatorRepresentation['ne16_cin_taps']
