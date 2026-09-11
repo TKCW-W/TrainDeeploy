@@ -3,9 +3,10 @@
 Date: **2026-09-11** · Branch `feat/GAP9_w_NE16` · Plan: `./Plan.md`
 Parent: `../Findings.md` (STEP 1 + 2a) · Worklog: `TrainDeeploy/WorkLog/GAP9_w_NE16_Worklog.md`
 
-> **Status: CORRECTNESS ACHIEVED.** The real block-1 `1×16` kernel runs on NE16 as 16 pointwise
-> dispatches with streamin accumulation and a runtime pre-encoded weight, bit-exact.
-> Performance is *not* yet there and was not the goal — see §5.
+> **Status: CORRECTNESS ACHIEVED AT FULL EXTENT.** Block 1's real `1×16` kernel runs on NE16 at
+> its true `14×87` size as 16 pointwise dispatches with streamin accumulation and a runtime
+> pre-encoded weight — **`0 / 19712` errors**, no spatial crop, no layout transposes.
+> Performance is *not* there and was not the goal — see §5.
 
 ---
 
@@ -119,26 +120,44 @@ tapj conf0 = 4243527   streamin[14]=1
 difference = 16384 = 0x4000  ->  exactly NE16_FLAG_STREAMIN
 ```
 
-**Spatial crop.** The activation is cropped to `4x24` (from `14x87`). `NE161xKConv2DTileConstraint`
-pins the layer to a SINGLE tile to sidestep the `1×K` **halo** (each output tile of `Wt` columns
-needs `Wt + K - 1` input columns, while the pointwise constraint it derives from asserts
-`Win == Wout`). At full extent the int32 output alone is `14*88*16*4 = 78,848 B` and, together with the two layout
-transposes (each needing input+output resident), overflows GAP9's ~110 KB L1 —
-`Allocation failed for allocator 2`, after which the DMA runs on a null pointer
-(`dma/trace: Got error during transfer (addr: 0x10101, size: 0x100)`). Every value is real; only
-the extent is reduced. Lifting this needs real tiling with a K-1 halo **and** streamin residency
-modelled — recorded as the top item in §7.
+**Full extent reached 2026-09-11** — the earlier `4×24` crop is gone. Three things were needed:
+
+1. **Halo in the tile constraint** — `Wout = Win - (K-1)` on the tapped axis, input cubes carrying
+   the `K-1` overlap, per-tile strides and subtile counters. Conv now tiles (`numTiles = 4`).
+2. **NHWC-native fixture** (`--nhwc`) — with the RequantShift un-merged, the int32 conv output was
+   being materialised in BOTH layouts (`2 × 78,848 B`) purely to satisfy an NCHW graph boundary.
+   Emitting the fixture channels-last removes **both** layout transposes: arena `108,416 → 98,688 B`,
+   `transpose_cluster_fork` count `2 → 0`.
+   This needed one Deeploy fix: `RequantShiftLayer.computeShapes` hardcoded
+   `channel_dim = inputShapes[0][1]` while its signature already took `channels_first`, so a
+   channels-last standalone RequantShift always died with
+   `Could not broadcast rqs_mul_tensor from (16,) to [1, 14]`.
+3. **A realistic `--l1`** — `110000` is **MeZO-harness-only**: it depends on
+   `pi_cluster_task_stacks()` relocating the cluster slave stacks to L2 in `deeploymezotest.c`.
+   The *inference* harness `deeploytest.c` has no such relocation, so ~30 KB of L1 is still stacks
+   and only **98,256 B** is usable. At `--l1 92000` the tiler also splits the RequantShift
+   (`numTiles = 2`) and everything fits.
+
+| fixture | engine | extent | dispatches | transposes | conv tiles | errors | cycles |
+|---|---|---|---|---|---|---|---|
+| **`b1_1x16_ne16_nhwc`** | **NE16** | **FULL 14×87** | **16** | **0** | **4** | **0 / 19712** | 1,567,096 |
+| `b1_ref_1x16` | cluster | FULL 14×87 | 0 | — | — | 0 / 19712 | 337,657 |
+| `b1_1x16_ne16_s` | NE16 | 4×24 (halo) | 16 | 2 | 4 | 0 / 1600 | 241,790 |
 
 ## 5. Performance — not yet, and not the goal
 
-**NE16 is 4.31x SLOWER than the cluster here** (154,110 vs 35,715 cycles). That is expected on
-this fixture and should not be read as a verdict on the approach:
+**NE16 is 4.64x SLOWER than the cluster at full extent** (1,567,096 vs 337,657 cycles). Expected,
+and not a verdict on the approach:
 
-* the extent is tiny (`4x24`), so per-dispatch setup (`Ne16PerfModel`'s `k_out_rem`) dominates;
 * `Cin = 8` half-fills `TP_IN = 16`, so the array is at most 50 % utilised before anything else;
-* 16 dispatches each pay that setup, and 15 of them additionally round-trip the int32 partial
-  sums through L1;
-* the graph still carries two layout transposes plus a separate cluster `RequantShift`.
+* **16 dispatches x 4 tiles = 64 NE16 jobs**, each paying `Ne16PerfModel`'s fixed `k_out_rem`
+  setup — against ONE `pulp_nn_conv` call on the cluster;
+* 15 of every 16 taps round-trip the int32 partial sums through L1 (streamin reads `outfeat_addr`);
+* the int32 intermediate is 4x the int8 one, so every tile costs 4x the DMA.
+
+The structural fix is to raise work-per-dispatch, which is exactly what **channel folding**
+(im2col to a single `Cin = 128` pointwise conv: 1 dispatch, `TP_IN` fully packed, no streamin)
+would do. That is STEP 4 and remains unmeasured.
 
 Performance is STEP 4. What this experiment set out to establish — that the decomposition is
 *correct* and that NE16 can consume a *runtime* weight — is established.

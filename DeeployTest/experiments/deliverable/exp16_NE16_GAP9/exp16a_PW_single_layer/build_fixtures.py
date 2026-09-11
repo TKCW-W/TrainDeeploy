@@ -110,6 +110,12 @@ def main() -> int:
                            "while making the single-tile policy fit.")
     ap.add_argument("--crop-w", type = int, default = 0, dest = "crop_w",
                     help = "crop the activation to this many columns (0 = full 87)")
+    ap.add_argument("--nhwc", action = "store_true", default = False,
+                    help = "emit the 1xK fixture NHWC-native (input, output and golden already "
+                           "channels-last, conv+RQS tagged channels_first=0). Removes BOTH layout "
+                           "Transposes: without it the int32 conv output is materialised in two "
+                           "layouts (2 x 78,848 B at full extent) and the L1 arena request hits "
+                           "108,416 B against ~98 KB usable -> 'Allocation failed for allocator 2'.")
     args = ap.parse_args()
 
     src = os.path.join(args.train, "network.onnx")
@@ -203,6 +209,8 @@ def main() -> int:
     kconv.attribute.append(helper.make_attribute("ne16_weight_preencoded", 1))
     kconv.attribute.append(helper.make_attribute("weight_offset", WEIGHT_OFFSET))
     kconv.attribute.append(helper.make_attribute("ne16_taps", K))
+    if args.nhwc:  # -- QW: NHWC-native, no layout Transposes at all (see --nhwc help)
+        kconv.attribute.append(helper.make_attribute("channels_first", 0))
     krqs = _rqs_node("b1_rqs", "conv_out", "rqs_mul", "rqs_add", "output", rqs_protos, rqs_domain)
     # QW: state channels_first=1 EXPLICITLY. Because the 1xK conv is NOT merged with its
     #     RequantShift (streamin needs int32 out), the RQS ends up OUTSIDE the NHWC region the
@@ -213,25 +221,36 @@ def main() -> int:
     #     "Rectangle offset should be zero ... HyperRectangle(offset=(0,16), dims=(1,16))
     #     and reference shape (1,16)". DeeployTypes.py:1198 lets a node attribute override the
     #     default, and NCHW is simply the truth for this node. -- QW
-    krqs.attribute.append(helper.make_attribute("channels_first", 1))
+    #     With --nhwc the RQS stays channels-last, which is the deployer default anyway, so the
+    #     attribute below is only needed in the NCHW-native variant.
+    krqs.attribute.append(helper.make_attribute("channels_first", 0 if args.nhwc else 1))
     kg = helper.make_graph(
         [kconv, krqs],
         f"b1_1x{K}_ne16{args.suffix}",
-        [helper.make_tensor_value_info("input", onnx.TensorProto.INT8, [N, Cin, H, W + pads[1] + pads[3]]),
+        [helper.make_tensor_value_info("input", onnx.TensorProto.INT8,
+                                       [N, H, W + pads[1] + pads[3], Cin] if args.nhwc
+                                       else [N, Cin, H, W + pads[1] + pads[3]]),
          helper.make_tensor_value_info("weight_enc", onnx.TensorProto.UINT8, list(enc_taps.shape))],
-        [helper.make_tensor_value_info("output", onnx.TensorProto.INT8, [N, Cout, H, Wout])],
+        [helper.make_tensor_value_info("output", onnx.TensorProto.INT8,
+                                       [N, H, Wout, Cout] if args.nhwc else [N, Cout, H, Wout])],
         initializer = [numpy_helper.from_array(mul, "rqs_mul"), numpy_helper.from_array(add, "rqs_add")],
         value_info = [helper.make_tensor_value_info("conv_out", onnx.TensorProto.INT32,
-                                                    [N, Cout, H, Wout])])
+                                                    [N, H, Wout, Cout] if args.nhwc
+                                                    else [N, Cout, H, Wout])])
     mk = helper.make_model(kg, opset_imports = opset)
     mk.ir_version = model.ir_version
     onnx.save(mk, os.path.join(kdir, "network.onnx"))     # no shape inference: shapes are explicit
     act_pad_k = np.pad(act, ((0, 0), (0, 0), (0, 0), (pads[1], pads[3])),
                        mode = "constant", constant_values = 0).astype(np.int8)
-    np.savez(os.path.join(kdir, "inputs.npz"), input = act_pad_k, weight_enc = enc_taps)
-    np.savez(os.path.join(kdir, "outputs.npz"), output = ref_out.astype(np.int8))   # SAME golden
+    k_in = act_pad_k.transpose(0, 2, 3, 1).copy() if args.nhwc else act_pad_k
+    # The golden always comes from the NCHW reference graph (ONNX Conv is NCHW-by-definition, so
+    # run_onnx_graph must see NCHW); it is simply permuted for the NHWC-native device fixture.
+    k_out = ref_out.transpose(0, 2, 3, 1).copy() if args.nhwc else ref_out
+    np.savez(os.path.join(kdir, "inputs.npz"), input = k_in, weight_enc = enc_taps)
+    np.savez(os.path.join(kdir, "outputs.npz"), output = k_out.astype(np.int8))
     print(f"[b1_1x{K}_ne16] ONE Conv(1x{K}) node, weight_enc {enc_taps.shape} uint8 "
-          f"({enc_taps.nbytes} B), input {list(act_pad_k.shape)} -> {kdir}")
+          f"({enc_taps.nbytes} B), input {list(k_in.shape)} "
+          f"{'NHWC-native' if args.nhwc else 'NCHW'} -> {kdir}")
 
     # ---- 3. decomposed fixtures: 16 pointwise taps ---------------------------------------------
     # conv_{1xK}(W,X)[w] = sum_j conv_{1x1}(W[:,:,0,j], Xpad)[w+j]  -> tap j slices Xpad[j : j+Wout]

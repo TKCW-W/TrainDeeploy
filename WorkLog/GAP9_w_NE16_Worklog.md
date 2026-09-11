@@ -365,3 +365,38 @@ A long Deeploy codegen is a **symptom to shrink, not a cost to wait out**. The f
 attempt "hung" for 30+ minutes; it was exponential backtracking over an *infeasible* binding
 problem. At `K=2` the same failure surfaced in **3 seconds** — and nine further bugs after it,
 each with an exact diagnosis. Ten bugs total, listed in `exp16a/Findings.md §7`.
+
+
+---
+
+## 2026-09-11 — Session 2 (cont.): full extent reached, crop removed
+
+Block 1's real `1×16` conv now runs on NE16 at its **true `14×87` extent** — `0 / 19712` errors,
+no spatial crop, **zero layout transposes**.
+
+| fixture | engine | extent | dispatches | transposes | conv tiles | errors | cycles |
+|---|---|---|---|---|---|---|---|
+| **`b1_1x16_ne16_nhwc`** | **NE16** | **FULL 14×87** | **16** | **0** | **4** | **0 / 19712** | 1,567,096 |
+| `b1_ref_1x16` | cluster | FULL 14×87 | 0 | — | — | 0 / 19712 | 337,657 |
+
+Three fixes, in order:
+
+1. **Halo tile constraint** — `Wout = Win − (K−1)`, input cubes with the `K−1` overlap, per-tile
+   strides + subtile counters. (Also corrected a wrong claim that streamin forbids tiling: all K
+   dispatches run inside ONE `TILING_I` iteration, so residency is automatic.)
+2. **NHWC-native fixture** (`--nhwc`) — un-merging the RequantShift had left the int32 conv output
+   materialised in **both** layouts (`2 × 78,848 B`) just to meet an NCHW graph boundary. Going
+   channels-last removes both transposes: arena `108,416 → 98,688 B`. Required one Deeploy fix:
+   `RequantShiftLayer.computeShapes` hardcoded `channel_dim = inputShapes[0][1]` while already
+   receiving `channels_first`, so a channels-last standalone RequantShift always failed with
+   `Could not broadcast rqs_mul_tensor from (16,) to [1, 14]`.
+3. **`--l1 92000`, not 110000.** `110000` is **MeZO-harness-only** — it relies on
+   `pi_cluster_task_stacks()` moving the cluster slave stacks to L2 in `deeploymezotest.c`. The
+   **inference** harness `deeploytest.c` has no such relocation, so ~30 KB of L1 is still stacks
+   and only **98,256 B** is usable. Worth remembering: the WorkLog's `--l1 110000` applies to the
+   ZO/training runners, *not* to `deeployRunner_tiled_gap9*`.
+
+**Performance: NE16 is 4.64× slower than the cluster** (1,567,096 vs 337,657). Cause is
+work-per-dispatch: `Cin = 8` half-fills `TP_IN = 16`, and 16 taps × 4 tiles = **64 NE16 jobs**
+each paying fixed setup, against one `pulp_nn_conv` call. Channel folding (single `Cin = 128`
+dispatch) is the structural answer — STEP 4, unmeasured.
