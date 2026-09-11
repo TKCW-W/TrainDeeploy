@@ -221,4 +221,29 @@ class NE161xKConv2DParser(NE16Conv2DBaseParser):
         if 'ne16_taps' not in node.attrs:
             return False
         self.operatorRepresentation['ne16_taps'] = int(node.attrs['ne16_taps'])
+        # halo: tap j reads input offset j, so the widest window is taps-1 past the output
+        self.operatorRepresentation['ne16_halo'] = int(node.attrs['ne16_taps']) - 1  # -- QW
+        return True
+
+
+class NE163x3ChunkConv2DParser(NE16Conv2DBaseParser):
+    """QW (exp16b): a 1xK dense conv executed as ceil(K/3) DENSE 3x3 NE16 dispatches.
+
+    Same admission as NE161xKConv2DParser but keyed on `ne16_chunks`, and the weight is
+    pre-encoded per CHUNK as 3x3 (rank 4: chunks*cout, cinMajor, bits, HW*cinMinorBytes). -- QW
+    """
+
+    def parseNode(self, node: gs.Node) -> bool:
+        if not super().parseNode(node):
+            return False
+        ks = self.operatorRepresentation['kernel_shape']
+        if not (len(ks) == 2 and self.operatorRepresentation['group'] == 1 and
+                ((ks[0] == 1 and ks[1] > 1) or (ks[1] == 1 and ks[0] > 1))):
+            return False
+        if 'ne16_chunks' not in node.attrs:
+            return False
+        self.operatorRepresentation['ne16_chunks'] = int(node.attrs['ne16_chunks'])
+        self.operatorRepresentation['ne16_taps'] = int(node.attrs.get('ne16_taps', 0))
+        # halo: chunk c starts at input offset 3c and a 3x3 kernel reads 2 past its output
+        self.operatorRepresentation['ne16_halo'] = 3 * (self.operatorRepresentation['ne16_chunks'] - 1) + 2
         return True

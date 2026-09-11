@@ -8,10 +8,11 @@ import onnx_graphsurgeon as gs
 
 from Deeploy.DeeployTypes import DeploymentEngine, NodeMapper
 from Deeploy.Targets.Generic.Layers import ConvLayer
-from Deeploy.Targets.NE16.Parsers import NE161xKConv2DParser  # -- QW
+from Deeploy.Targets.NE16.Parsers import NE161xKConv2DParser, NE163x3ChunkConv2DParser  # -- QW
 from Deeploy.Targets.NE16.Parsers import NE16DenseConv2DParser, NE16DWConv2DParser, NE16PWConv2DParser, \
     NE16RQSDenseConv2DParser, NE16RQSDWConv2DParser, NE16RQSPWConv2DParser
-from Deeploy.Targets.NE16.Tiler import NE161xKConv2DTilingReadyBindings  # -- QW
+from Deeploy.Targets.NE16.Tiler import NE161xKConv2DTilingReadyBindings, \
+    NE163x3ChunkConv2DTilingReadyBindings  # -- QW
 from Deeploy.Targets.NE16.Tiler import NE16DenseConv2DTilingReadyBindings, NE16DWConv2DTilingReadyBindings, \
     NE16PWConv2DTilingReadyBindings, NE16RQSDenseConv2DTilingReadyBindings, NE16RQSDWConv2DTilingReadyBindings, \
     NE16RQSPWConv2DTilingReadyBindings
@@ -27,10 +28,13 @@ NE16RqntDenseConv2DMapper = NodeMapper(NE16RQSDenseConv2DParser(), NE16RQSDenseC
 NE16DenseConv2DMapper = NodeMapper(NE16DenseConv2DParser(), NE16DenseConv2DTilingReadyBindings)
 
 NE161xKConv2DMapper = NodeMapper(NE161xKConv2DParser(), NE161xKConv2DTilingReadyBindings)  # -- QW
+NE163x3ChunkConv2DMapper = NodeMapper(NE163x3ChunkConv2DParser(),  # -- QW (exp16b)
+                                      NE163x3ChunkConv2DTilingReadyBindings)  # -- QW
 
 NE16Mapping = {
     'RequantizedConv': PULPRQSConvLayer([NE16RqntPWConv2DMapper, NE16RqntDWConv2DMapper, NE16RqntDenseConv2DMapper]),
-    'Conv': ConvLayer([NE161xKConv2DMapper, NE16PWConv2DMapper, NE16DWConv2DMapper,  # -- QW
+    'Conv': ConvLayer([NE163x3ChunkConv2DMapper, NE161xKConv2DMapper,  # -- QW
+                       NE16PWConv2DMapper, NE16DWConv2DMapper,
                        NE16DenseConv2DMapper]),
 }
 

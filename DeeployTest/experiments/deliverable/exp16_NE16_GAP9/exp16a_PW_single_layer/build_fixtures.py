@@ -110,6 +110,10 @@ def main() -> int:
                            "while making the single-tile policy fit.")
     ap.add_argument("--crop-w", type = int, default = 0, dest = "crop_w",
                     help = "crop the activation to this many columns (0 = full 87)")
+    ap.add_argument("--dense3x3", action = "store_true", default = False,
+                    help = "exp16b: emit the 1xK conv for the DENSE 3x3 chunk decomposition "
+                           "(ceil(K/3) dispatches, each a 3x3 kernel with only the middle row "
+                           "populated) instead of the all-pointwise one. Implies --nhwc.")
     ap.add_argument("--nhwc", action = "store_true", default = False,
                     help = "emit the 1xK fixture NHWC-native (input, output and golden already "
                            "channels-last, conv+RQS tagged channels_first=0). Removes BOTH layout "
@@ -194,21 +198,53 @@ def main() -> int:
     #     Weight layout: per-tap NE16 encoding stacked as (K, cout, cinMajor, bits*cinMinorBytes),
     #     so tap j's block is CONTIGUOUS at offset j*cout*cinMajor*16 and is byte-identical to
     #     what a standalone 1x1 conv of that tap would use. weight_offset = -128 fixed. -- QW
-    kdir = os.path.join(args.out, f"b1_1x{K}_ne16{args.suffix}")
+    if args.dense3x3:
+        args.nhwc = True                       # -- QW: exp16b always runs NHWC-native
+    kdir = os.path.join(args.out, (f"b1_1x{K}_dense3x3{args.suffix}" if args.dense3x3
+                                   else f"b1_1x{K}_ne16{args.suffix}"))
     os.makedirs(kdir, exist_ok = True)
     # QW: RANK 3, taps stacked along dim0 -> (K*cout, cinMajor, encBytes).
     #     A rank-4 weight is TRANSPOSED by PULPNCHWtoNHWCPass (it treats any 4-D conv input as an
     #     activation: [2,16,1,16] -> [2,1,16,16]), which destroys the bit-serial encoding. The
     #     existing PW path is rank 3 for exactly this reason and is left untouched. Tap j's block
     #     stays contiguous at byte offset j*cout*cinMajor*encBytes. -- QW
-    enc_taps = np.concatenate([_weightEncode((wpert[:, :, :, j:j + 1].astype(np.int32) - WEIGHT_OFFSET).astype(np.uint8),
-                                             bits = 8) for j in range(K)], axis = 0)   # (K*cout, cinMajor, 16)
+    if args.dense3x3:
+        # exp16b: chunk c holds taps 3c,3c+1,3c+2 in the MIDDLE ROW of a 3x3 kernel; rows 0 and 2
+        # are zero, which is what makes the native H padding 1/1 harmless. Taps >= K are zero.
+        CHUNK, = (3,)
+        n_chunks = (K + CHUNK - 1) // CHUNK
+        blocks = []
+        for c in range(n_chunks):
+            k33 = np.zeros((Cout, Cin, 3, 3), dtype = np.int32)
+            for d in range(CHUNK):
+                j = c * CHUNK + d
+                if j < K:
+                    k33[:, :, 1, d] = wpert[:, :, 0, j]
+            blocks.append(_weightEncode((k33 - WEIGHT_OFFSET).astype(np.uint8), bits = 8))
+        enc_taps = np.concatenate(blocks, axis = 0)   # (chunks*cout, cinMajor, bits, 9*cinMinorBytes)
+        # QW: the input must be EXACTLY Wout + halo wide, where halo = 3*(chunks-1)+2 (chunk c
+        #     starts at offset 3c and its 3x3 window reads 2 past its own output). Deriving it
+        #     from the halo rather than hardcoding +2 keeps the fixture consistent with
+        #     NE161xKConv2DTileConstraint for every K, not just K=16.
+        halo33 = 3 * (n_chunks - 1) + 2
+        extra_w = (Wout + halo33) - (W + pads[1] + pads[3])
+        assert extra_w >= 0, f"negative extra_w={extra_w}: Wout={Wout} halo={halo33}"
+
+        node_pads = [1, 0, 1, 0]                      # H 1/1 native (legal in 3x3 mode), W 0/0
+        print(f"[dense3x3] {n_chunks} chunks of 3 taps; weight {enc_taps.shape} "
+              f"({enc_taps.nbytes} B) vs pointwise {K * Cout * 1 * 16} B")
+    else:
+        n_chunks, extra_w, node_pads = 0, 0, [0, 0, 0, 0]
+        enc_taps = np.concatenate([_weightEncode((wpert[:, :, :, j:j + 1].astype(np.int32) - WEIGHT_OFFSET).astype(np.uint8),
+                                                 bits = 8) for j in range(K)], axis = 0)   # (K*cout, cinMajor, 16)
     kconv = helper.make_node("Conv", ["input", "weight_enc"], ["conv_out"], name = "b1_conv1xk",
-                             kernel_shape = ksh, pads = [0, 0, 0, 0], strides = [1, 1],
+                             kernel_shape = ksh, pads = node_pads, strides = [1, 1],
                              dilations = [1, 1], group = 1)
     kconv.attribute.append(helper.make_attribute("ne16_weight_preencoded", 1))
     kconv.attribute.append(helper.make_attribute("weight_offset", WEIGHT_OFFSET))
     kconv.attribute.append(helper.make_attribute("ne16_taps", K))
+    if args.dense3x3:
+        kconv.attribute.append(helper.make_attribute("ne16_chunks", n_chunks))  # -- QW (exp16b)
     if args.nhwc:  # -- QW: NHWC-native, no layout Transposes at all (see --nhwc help)
         kconv.attribute.append(helper.make_attribute("channels_first", 0))
     krqs = _rqs_node("b1_rqs", "conv_out", "rqs_mul", "rqs_add", "output", rqs_protos, rqs_domain)
@@ -228,8 +264,8 @@ def main() -> int:
         [kconv, krqs],
         f"b1_1x{K}_ne16{args.suffix}",
         [helper.make_tensor_value_info("input", onnx.TensorProto.INT8,
-                                       [N, H, W + pads[1] + pads[3], Cin] if args.nhwc
-                                       else [N, Cin, H, W + pads[1] + pads[3]]),
+                                       [N, H, W + pads[1] + pads[3] + extra_w, Cin] if args.nhwc
+                                       else [N, Cin, H, W + pads[1] + pads[3] + extra_w]),
          helper.make_tensor_value_info("weight_enc", onnx.TensorProto.UINT8, list(enc_taps.shape))],
         [helper.make_tensor_value_info("output", onnx.TensorProto.INT8,
                                        [N, H, Wout, Cout] if args.nhwc else [N, Cout, H, Wout])],
@@ -240,7 +276,7 @@ def main() -> int:
     mk = helper.make_model(kg, opset_imports = opset)
     mk.ir_version = model.ir_version
     onnx.save(mk, os.path.join(kdir, "network.onnx"))     # no shape inference: shapes are explicit
-    act_pad_k = np.pad(act, ((0, 0), (0, 0), (0, 0), (pads[1], pads[3])),
+    act_pad_k = np.pad(act, ((0, 0), (0, 0), (0, 0), (pads[1], pads[3] + extra_w)),
                        mode = "constant", constant_values = 0).astype(np.int8)
     k_in = act_pad_k.transpose(0, 2, 3, 1).copy() if args.nhwc else act_pad_k
     # The golden always comes from the NCHW reference graph (ONNX Conv is NCHW-by-definition, so

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from Deeploy.Targets.NE16.Bindings import NE161xKConv2DBindings  # -- QW
+from Deeploy.Targets.NE16.Bindings import NE161xKConv2DBindings, NE163x3ChunkConv2DBindings  # -- QW
 from Deeploy.Targets.NE16.Bindings import NE16DenseConv2DBindings, NE16DWConv2DBindings, NE16PWConv2DBindings, \
     NE16RQSDenseConv2DBindings, NE16RQSDWConv2DBindings, NE16RQSPWConv2DBindings
 from Deeploy.Targets.NE16.TileConstraints.NE16DenseConstraint import NE16DenseConv2DTileConstraint, \
@@ -32,3 +32,6 @@ NE16DenseConv2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = NE16
 
 NE161xKConv2DTilingReadyBindings = TilingReadyNodeBindings(  # -- QW
     nodeBindings = NE161xKConv2DBindings, tileConstraint = NE161xKConv2DTileConstraint())
+
+NE163x3ChunkConv2DTilingReadyBindings = TilingReadyNodeBindings(  # -- QW (exp16b)
+    nodeBindings = NE163x3ChunkConv2DBindings, tileConstraint = NE161xKConv2DTileConstraint())

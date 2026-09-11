@@ -1,0 +1,17 @@
+{
+  "experiment": "exp16b_Dense_single_layer",
+  "date": "2026-09-11",
+  "goal": "measure the 3x3-DENSE-chunk decomposition against exp16a's all-pointwise one, on identical block-1 data",
+  "status": "PERFORMANCE MEASURED; CORRECTNESS NOT ACHIEVED",
+  "mechanism": "1xK -> ceil(K/3) dense 3x3 dispatches, each a 3x3 kernel with only the middle row populated; infeat_addr += 3*c*ch_im_in; H padding 1/1 native (legal in 3x3 mode); streamin for chunks 1..N-1; int32 out",
+  "runs": [
+    {"name":"b1_1x16_dense3x3_d33","engine":"NE16","mode":"dense 3x3 chunks","dispatches":6,"extent":"FULL 14x87","errors":"14328/19712","cycles":1362823},
+    {"name":"b1_1x16_ne16_nhwc (exp16a)","engine":"NE16","mode":"pointwise","dispatches":16,"extent":"FULL 14x87","errors":"0/19712","cycles":1567096},
+    {"name":"b1_ref_1x16 (cluster)","engine":"cluster","extent":"FULL 14x87","errors":"0/19712","cycles":337657},
+    {"name":"b1_1x3_dense3x3_k3","engine":"NE16","mode":"dense 3x3, SINGLE chunk, no streamin","extent":"4x24","errors":"431/1536","cycles":93445},
+    {"name":"b1_1x3_dense3x3_k3 + filter_mask","engine":"NE16","mode":"same, rows 0/2 masked","extent":"4x24","errors":"557/1536","cycles":93506,"note":"masking made it WORSE; reverted"}
+  ],
+  "performance_finding": "dense 3x3 chunks are 1.15x FASTER than all-pointwise (1,362,823 vs 1,567,096) despite the MAC-cycle model predicting ~3x SLOWER. The model assumed the array is the bottleneck; at this size it is not -- 6 dispatches instead of 16 means 6 instead of 16 job setups and 5 instead of 15 int32 streamin round-trips through L1. The workload is DMA/setup-bound, not MAC-bound.",
+  "correctness_status": "single chunk (no streamin) already wrong: 431/1536, ALL diffs +-1 LSB on outputs in range [-2,3]. conf0 differs from the working pointwise variant ONLY in filter mode (0x40), so the configuration is right and the datapath differs. Zero-weight rows should cancel exactly (w_u=128, Wmin=-128 -> w_u+Wmin=0); why they do not is unresolved.",
+  "weight_cost": {"dense3x3_bytes": 13824, "pointwise_bytes": 4096, "note": "3.4x more weight memory: 6 of every 9 tap slots are zeros"}
+}

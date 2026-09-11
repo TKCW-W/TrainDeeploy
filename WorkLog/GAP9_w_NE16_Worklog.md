@@ -27,7 +27,7 @@ at `TrainDeeploy@28ff5fa` / `Onnx4Deeploy@2be5137`, both of which are pushed to 
 | 2a | **Make it work (plumbing)** — a real SpeechNet conv dispatches to NE16, bit-exact | ✅ **DONE** 2026-09-10 |
 | 2b | **Make it work (real shape)** — block 1 at its true `1×16` via the 1×k decomposition | ✅ **DONE** 2026-09-11 (cropped extent; see exp16a) |
 | 3 | **Make it correct** — full SpeechNet, inference then training | ⬜ |
-| 4 | **Optimise** | ⬜ |
+| 4 | **Optimise** | 🔶 exp16b measured one lever (dispatch count) — see 2026-09-11 session 3 |
 
 ---
 
@@ -400,3 +400,61 @@ Three fixes, in order:
 work-per-dispatch: `Cin = 8` half-fills `TP_IN = 16`, and 16 taps × 4 tiles = **64 NE16 jobs**
 each paying fixed setup, against one `pulp_nn_conv` call. Channel folding (single `Cin = 128`
 dispatch) is the structural answer — STEP 4, unmeasured.
+
+
+---
+
+## 2026-09-11 — Session 3: exp16b, 3×3-dense chunks — the cycle model was wrong
+
+**Experiment:** `DeeployTest/experiments/deliverable/exp16_NE16_GAP9/exp16b_Dense_single_layer/`
+(`Plan.md`, `Findings.md`, `results/results.json`, `fixture/`, `logs/step1..5*.log`)
+
+Ran block 1's `1×16` as **6 dense 3×3 dispatches** (each a 3×3 kernel with only the middle row
+populated, `infeat_addr += 3c·ch_im_in`, native H padding 1/1, streamin) instead of exp16a's 16
+pointwise ones, on identical data.
+
+| decomposition | dispatches | errors | cycles |
+|---|---|---|---|
+| **dense 3×3 chunks** | **6** | 14328 / 19712 ✗ | **1,362,823** |
+| all-pointwise (exp16a) | 16 | **0 / 19712** ✓ | 1,567,096 |
+| cluster | — | 0 / 19712 ✓ | 337,657 |
+
+### The finding: dispatch count dominates, not MAC utilisation
+
+**Dense 3×3 is 1.15× FASTER than pointwise — the cycle model predicted ~3× SLOWER.**
+
+`03-qzo-ne16-plan.md §7` rejected masked-3×3 on the argument that 3×3 mode spends its 9 row-slots
+on spatial taps and therefore needs 8 bitplane passes (`mv_qw_lim = qw`), where 1×1 mode spends
+them on bitplanes and finishes in one — `6 × 8 = 48` cycle-units against `16 × 1 = 16`.
+
+That argument assumed **the MAC array is the bottleneck. At this problem size it is not.** Six
+dispatches instead of 16 removes 10 job setups and 10 of the 15 int32 `streamin` round-trips
+through L1. With `Cin = 8` (half of `TP_IN`) and an int32 intermediate 4× the int8 one, the layer
+is **DMA/setup-bound**.
+
+**Consequence for STEP 4:** the lever is *fewer, larger dispatches*, not tap-packing. That points
+at **channel folding** (im2col to a single `Cin = 128` pointwise conv: one dispatch, `TP_IN` fully
+packed, no streamin) rather than at 3×3 tricks.
+
+### Correctness: NOT achieved — exp16c is gated on this
+
+K=3 (one chunk, no streamin, no offsets) already fails: **431/1536**, and **every diff is ±1** on
+outputs ranging only `[-2,3]` — an LSB effect, not a structurally wrong convolution. `conf0`
+differs from the working pointwise task **only** in filter mode (`0x40`). Zero-weight taps should
+cancel exactly (`w_u = 128`, `Wmin = -128`). Filter masking was tried and made it *worse*
+(431 → 557); reverted.
+
+Unexplored: drop the H padding and compare against an `Hout = Hin−2` golden, to separate padding
+from the zero-row trick; or dump one output pixel's int32 accumulator from GVSoC.
+
+### exp16a regression
+
+Re-verified after all exp16b changes: **still `0 / 19712`, 1,567,096 cycles**. Unaffected.
+
+### Files
+
+`Targets/NE16/Templates/Conv3x3ChunkTemplate.py` (new), `NE163x3ChunkConv2DParser`, its binding /
+tiling-ready binding / mapper, `ne16_halo` generalised in the tile constraint (`taps-1` pointwise,
+`3*(chunks-1)+2` for chunks) plus **pinning the non-tapped axis when `ne16_chunks` is set** (a 3×3
+kernel has a vertical receptive field the constraint does not model per-tile), and `--dense3x3` in
+`exp16a/build_fixtures.py`. All gated on NE16-only attributes.

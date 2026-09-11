@@ -62,21 +62,32 @@ class NE161xKConv2DTileConstraint(TileConstraint):
         for name in (inName, wName, outName):
             tilerModel.addTensorDimToModel(ctxt, name)
 
-        taps = int(parseDict['ne16_taps'])
+        # QW: the halo is variant-specific -- taps-1 for the all-pointwise decomposition
+        #     (exp16a), 3*(chunks-1)+2 for the 3x3-chunk one (exp16b). The parser computes it.
+        halo = int(parseDict['ne16_halo'])  # -- QW
         axis = _tapAxis(parseDict)
 
         inBatch = tilerModel.getTensorDimVar(tensorName = inName, dimIdx = 0)
         outBatch = tilerModel.getTensorDimVar(tensorName = outName, dimIdx = 0)
         tilerModel.addConstraint(outBatch == inBatch)
 
-        # The tapped axis shrinks by K-1 (the halo); the other spatial axis maps 1:1.
+        # QW (exp16b): the DENSE 3x3 chunk variant has a VERTICAL receptive field too -- a 3x3
+        #     kernel needs one extra input row above and below each output row. Tiling the
+        #     non-tapped axis would therefore need a per-tile 1-row halo AND per-tile padding
+        #     (padding only applies at the true boundary), which this constraint does not model:
+        #     leaving it unmodelled silently produced 14,491/19,712 wrong outputs. Pin that axis
+        #     instead -- SpeechNet's non-tapped extent is 14 rows, so not tiling it is cheap.
+        #     The all-pointwise variant (exp16a) has no vertical extent and is unaffected.
+        pinOther = 'ne16_chunks' in parseDict  # -- QW
         for dimIdx in (1, 2):
             inVar = tilerModel.getTensorDimVar(tensorName = inName, dimIdx = dimIdx)
             outVar = tilerModel.getTensorDimVar(tensorName = outName, dimIdx = dimIdx)
             if dimIdx == axis:
-                tilerModel.addConstraint(outVar == inVar - (taps - 1))
+                tilerModel.addConstraint(outVar == inVar - halo)
             else:
                 tilerModel.addConstraint(outVar == inVar)
+                if pinOther:  # -- QW
+                    tilerModel.addConstraint(outVar == outVar.Max())  # -- QW
 
         # Full input channels: NE16 would otherwise produce partial sums over cin that our
         # streamin chain (already carrying the K taps) has no room to also accumulate.
@@ -122,7 +133,7 @@ class NE161xKConv2DTileConstraint(TileConstraint):
                                                                   operatorRepresentation,
                                                                   ['data_in', 'weight', 'data_out'])
 
-        taps = int(operatorRepresentation['ne16_taps'])
+        halo = int(operatorRepresentation['ne16_halo'])  # -- QW
         axis = _tapAxis(operatorRepresentation)
         wBuf: VariableBuffer = ctxt.lookup(operatorRepresentation['weight'])
 
@@ -139,9 +150,9 @@ class NE161xKConv2DTileConstraint(TileConstraint):
             bOff, hOff, wOff, _ = cube.offset
             bSz, hSz, wSz, cSz = cube.dims
 
-            # THE HALO: the tapped axis needs K-1 extra input elements.
+            # THE HALO: the tapped axis needs `halo` extra input elements.
             inDims = [bSz, hSz, wSz, operatorRepresentation['ch_im_in']]
-            inDims[axis] += taps - 1
+            inDims[axis] += halo
             inCube = HyperRectangle((bOff, hOff, wOff, 0), tuple(inDims))
             inputLoadSchedule.append({
                 "data_in": inCube,
