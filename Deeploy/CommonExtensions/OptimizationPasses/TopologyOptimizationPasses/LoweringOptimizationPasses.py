@@ -253,7 +253,18 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
         tensorOut = node.outputs[0]
 
         if node.op in ["RequantizedConv", "Conv"]:
-            spatialDims = len(node.inputs[1].shape) - 2
+            # QW (exp16a): this infers the SPATIAL rank from the WEIGHT's rank, which assumes the
+            #     weight is still the logical NCHW [cout, cin, *spatial] tensor. That holds for
+            #     every ordinary conv, and for NE16 convs whose weight is encoded LATER by
+            #     NE16AdjustWeightMemoryLayoutPass. It does NOT hold when the weight arrives
+            #     ALREADY bit-serial-encoded (rank 3) as a runtime graph input: spatialDims then
+            #     comes out as 1 and this pass builds a 1-D permutation [0,1,3,2] for a 4-D
+            #     activation, silently swapping H and W. Take the spatial rank from kernel_shape
+            #     in that case -- for any ordinary conv the two agree, so nothing else changes.
+            if "ne16_weight_preencoded" in node.attrs and "kernel_shape" in node.attrs:  # -- QW
+                spatialDims = len(node.attrs["kernel_shape"])  # -- QW
+            else:
+                spatialDims = len(node.inputs[1].shape) - 2
         elif node.op in [
                 "MaxPool", "MaxPoolGrad", "MaxPoolArgmax", "MaxPoolGradMask", "AveragePool", "AveragePoolGrad"
         ]:  # QW: +MaxPoolArgmax/MaxPoolGradMask (Part-4) -- QW
@@ -277,8 +288,14 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
         graph.nodes.append(_prependTranspose(tensorOut, node, permuteOut))
 
         if node.op in ["Conv", "RequantizedConv"]:
+            # QW (exp16a): a PRE-ENCODED NE16 weight is already in the accelerator's bit-serial
+            #     layout -- it is NOT a logical [cout, cin, *spatial] tensor and must never be
+            #     layout-permuted. Skip input[1] for such nodes; mul/add/shift still get handled.
+            _skipWeight = "ne16_weight_preencoded" in node.attrs  # -- QW
             # In the case of Conv: [weights, opt. bias], RequantizedConv: [weights, mul, add, opt. shift]
-            for tensor in node.inputs[1:]:
+            for _tIdx, tensor in enumerate(node.inputs[1:]):
+                if _skipWeight and _tIdx == 0:  # -- QW
+                    continue  # -- QW
                 if isinstance(tensor, gs.Constant):
                     # Inference graph: weight is a fixed constant — permute its data in-place.
                     _transformLayoutConst(tensor, spatialDims, default_channels_first)

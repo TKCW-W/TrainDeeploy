@@ -8,8 +8,10 @@ import onnx_graphsurgeon as gs
 
 from Deeploy.DeeployTypes import DeploymentEngine, NodeMapper
 from Deeploy.Targets.Generic.Layers import ConvLayer
+from Deeploy.Targets.NE16.Parsers import NE161xKConv2DParser  # -- QW
 from Deeploy.Targets.NE16.Parsers import NE16DenseConv2DParser, NE16DWConv2DParser, NE16PWConv2DParser, \
     NE16RQSDenseConv2DParser, NE16RQSDWConv2DParser, NE16RQSPWConv2DParser
+from Deeploy.Targets.NE16.Tiler import NE161xKConv2DTilingReadyBindings  # -- QW
 from Deeploy.Targets.NE16.Tiler import NE16DenseConv2DTilingReadyBindings, NE16DWConv2DTilingReadyBindings, \
     NE16PWConv2DTilingReadyBindings, NE16RQSDenseConv2DTilingReadyBindings, NE16RQSDWConv2DTilingReadyBindings, \
     NE16RQSPWConv2DTilingReadyBindings
@@ -24,9 +26,12 @@ NE16DWConv2DMapper = NodeMapper(NE16DWConv2DParser(), NE16DWConv2DTilingReadyBin
 NE16RqntDenseConv2DMapper = NodeMapper(NE16RQSDenseConv2DParser(), NE16RQSDenseConv2DTilingReadyBindings)
 NE16DenseConv2DMapper = NodeMapper(NE16DenseConv2DParser(), NE16DenseConv2DTilingReadyBindings)
 
+NE161xKConv2DMapper = NodeMapper(NE161xKConv2DParser(), NE161xKConv2DTilingReadyBindings)  # -- QW
+
 NE16Mapping = {
     'RequantizedConv': PULPRQSConvLayer([NE16RqntPWConv2DMapper, NE16RqntDWConv2DMapper, NE16RqntDenseConv2DMapper]),
-    'Conv': ConvLayer([NE16PWConv2DMapper, NE16DWConv2DMapper, NE16DenseConv2DMapper]),
+    'Conv': ConvLayer([NE161xKConv2DMapper, NE16PWConv2DMapper, NE16DWConv2DMapper,  # -- QW
+                       NE16DenseConv2DMapper]),
 }
 
 _includeList = ["pulp_nnx_ne16.h", "pulp_nnx_util.h", "ne16_pulp_bsp.h", "ne16.h", "ne16_task.h"]
@@ -45,15 +50,30 @@ class NE16Engine(DeploymentEngine):
                  initCode: str = _ne16InitCode,
                  includeList: List[str] = _includeList,
                  enable3x3: bool = False,
-                 enableStrides: bool = False) -> None:
+                 enableStrides: bool = False,
+                 enable1xK: bool = False) -> None:  # -- QW
         super().__init__(name, Mapping, initCode, includeList)
 
         self.enable3x3 = enable3x3
         self.enableStrides = enableStrides
+        self.enable1xK = enable1xK  # -- QW: 1xK -> K pointwise dispatches (STEP 2b)
+
+    # QW (exp16a): NE16 must also accept a conv whose weight is a RUNTIME tensor -- our QZO
+    #     training graphs feed weights as graph inputs / RQSPerturbRademacher outputs, never as
+    #     gs.Constant. Such a node opts in with `ne16_weight_preencoded=1`, which asserts that
+    #     the weight ALREADY carries NE16's bit-serial layout (produced host-side by the same
+    #     `_weightEncode`) and that the node supplies its own static `weight_offset`.
+    #     `_ne16_adjust_weight_memory_layout_fun` already returns early for non-constant weights
+    #     (Passes.py:84), so nothing tries to re-encode them at compile time.
+    #     This changes only WHICH nodes are offered to NE16 -- no register, no ISA change. -- QW
+    @staticmethod
+    def _weightAcceptable(node) -> bool:  # -- QW
+        return isinstance(node.inputs[1], gs.Constant) or \
+            int(node.attrs.get("ne16_weight_preencoded", 0)) == 1
 
     def isDenseConv(self, node) -> bool:
         return node.op in ["Conv", "RequantizedConv"] and \
-            isinstance(node.inputs[1], gs.Constant) and \
+            self._weightAcceptable(node) and \
             node.attrs['kernel_shape'] == [3, 3] and \
             node.attrs['dilations'] == [1, 1] and \
             node.attrs['group'] == 1 and \
@@ -61,20 +81,46 @@ class NE16Engine(DeploymentEngine):
 
     def isPWConv(self, node) -> bool:
         return node.op in ["Conv", "RequantizedConv"] and \
-            isinstance(node.inputs[1], gs.Constant) and \
+            self._weightAcceptable(node) and \
             node.attrs['kernel_shape'] == [1, 1] and \
             node.attrs['dilations'] == [1, 1] and \
             (node.attrs['strides'] == [1, 1] or self.enableStrides)
 
     def isDWConv(self, node) -> bool:
         return node.op in ["Conv", "RequantizedConv"] and \
-            isinstance(node.inputs[1], gs.Constant) and \
+            self._weightAcceptable(node) and \
             node.attrs['kernel_shape'] == [3, 3] and \
             node.attrs['dilations'] == [1, 1] and \
             node.attrs['group'] != 1 and \
             (node.attrs['strides'] == [1, 1] or self.enableStrides)
 
+    # QW (exp16a / STEP 2b): a 1xK (or Kx1) DENSE convolution is not an NE16 filter mode --
+    #     CONFIG0[6:5] offers only 3x3, 3x3-depthwise and 1x1. But a 1xK conv is exactly K
+    #     pointwise convolutions over K input windows shifted along W:
+    #         conv_{1xK}(W,X)[co,h,w] = sum_j conv_{1x1}(W[:,:,0,j], X)[co,h,w+j]
+    #     and the shift is an ADDRESS offset (ne16_task_t.infeat_addr), not a Slice node. The
+    #     K partial sums accumulate inside NE16 via CONFIG0[14] streamin, which forces
+    #     32-bit output (gvsoc fsm.cpp:50) -- so the node must be a plain `Conv` emitting
+    #     int32, with its RequantShift left on the cluster. Claiming the ORIGINAL 1xK node here
+    #     (rather than a pre-decomposed graph) is deliberate: engine coloring runs BEFORE the
+    #     NE16 passes, so intent has to be expressed in canExecute or the rewrite never sees
+    #     the node. Off by default so PR #183's own behaviour is untouched. -- QW
+    def is1xKConv(self, node) -> bool:  # -- QW
+        if node.op not in ["Conv", "RequantizedConv"]:
+            return False
+        ks = node.attrs.get("kernel_shape", None)
+        if ks is None or len(ks) != 2:
+            return False
+        kh, kw = int(ks[0]), int(ks[1])
+        return self._weightAcceptable(node) and \
+            node.attrs.get("dilations", [1, 1]) == [1, 1] and \
+            int(node.attrs.get("group", 1)) == 1 and \
+            (node.attrs.get("strides", [1, 1]) == [1, 1] or self.enableStrides) and \
+            ((kh == 1 and kw > 1) or (kw == 1 and kh > 1))
+
     def canExecute(self, node: gs.Node) -> bool:
+        if self.enable1xK and self.is1xKConv(node):  # -- QW
+            return True
         if self.enable3x3:
             return self.isPWConv(node) or self.isDWConv(node) or self.isDenseConv(node)
         else:

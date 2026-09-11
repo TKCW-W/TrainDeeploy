@@ -232,6 +232,10 @@ def create_config_from_args(args: argparse.Namespace,
     # Prepare generation args
     gen_args_list = []
 
+    if getattr(args, 'enable_1xk', False):  # -- QW (exp16a): forward to generateNetwork/testMVP
+        gen_args_list.append('--enable-1xk')
+
+
     if args.input_type_map:
         gen_args_list.append("--input-type-map")
         gen_args_list.extend(args.input_type_map)

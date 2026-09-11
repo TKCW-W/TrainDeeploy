@@ -201,3 +201,24 @@ class NE16RQSDenseConv2DParser(NE16DenseConv2DParser, RQSParserInterface):
             self.operatorRepresentation[inputs[idx]] = ctxt.lookup(inputNode.name).name
 
         return newCtxt, True
+
+
+class NE161xKConv2DParser(NE16Conv2DBaseParser):
+    """QW (exp16a / STEP 2b): a 1xK / Kx1 dense conv executed as K pointwise NE16 dispatches.
+
+    Differs from NE16PWConv2DParser only in the accepted kernel_shape and in recording the tap
+    count. The weight is PRE-ENCODED per tap and stacked (taps, cout, cinMajor, encBytes), so
+    the base parser's rank-3-or-4 check already passes. -- QW
+    """
+
+    def parseNode(self, node: gs.Node) -> bool:
+        if not super().parseNode(node):
+            return False
+        ks = self.operatorRepresentation['kernel_shape']
+        if not (len(ks) == 2 and self.operatorRepresentation['group'] == 1 and
+                ((ks[0] == 1 and ks[1] > 1) or (ks[1] == 1 and ks[0] > 1))):
+            return False
+        if 'ne16_taps' not in node.attrs:
+            return False
+        self.operatorRepresentation['ne16_taps'] = int(node.attrs['ne16_taps'])
+        return True

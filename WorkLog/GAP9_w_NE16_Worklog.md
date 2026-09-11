@@ -25,7 +25,7 @@ at `TrainDeeploy@28ff5fa` / `Onnx4Deeploy@2be5137`, both of which are pushed to 
 |---|---|---|
 | 1 | **Make it compile** — `GAP9_w_NE16` exists, QZO builds+runs on it with NE16 claiming nothing | ✅ **DONE** 2026-09-10 |
 | 2a | **Make it work (plumbing)** — a real SpeechNet conv dispatches to NE16, bit-exact | ✅ **DONE** 2026-09-10 |
-| 2b | **Make it work (real shape)** — block 1 at its true `1×16` via the 1×k decomposition | ⬜ next |
+| 2b | **Make it work (real shape)** — block 1 at its true `1×16` via the 1×k decomposition | ✅ **DONE** 2026-09-11 (cropped extent; see exp16a) |
 | 3 | **Make it correct** — full SpeechNet, inference then training | ⬜ |
 | 4 | **Optimise** | ⬜ |
 
@@ -173,8 +173,17 @@ asserts this rather than assuming it.
 | `GAP9` (8-core cluster, `pulp_nn_conv_i8_i8_i8`) | cluster | **148,436** | 0 / 19,488 |
 | `GAP9_w_NE16` | **NE16** | **44,607** | 0 / 19,488 |
 
-**3.33× on the layer, bit-exact.** Generated `Network.c` shows `1 × ne16_nnx_dispatch(` and
-**0 × `pulp_nn_conv`** — a real dispatch, not a silent fallback.
+**3.33×, bit-exact.** Generated `Network.c` shows `1 × ne16_nnx_dispatch(` and **0 ×
+`pulp_nn_conv`** — a real dispatch, not a silent fallback.
+
+> **Do not read 3.33× as "block 1 is 3.33× faster".** This fixture is the `1×1` stand-in:
+> 155,904 MAC vs block 1's real 2,523,136 — **6.2 % of the layer**, one tap of a 16-tap filter,
+> with padding dropped and output width 87 instead of 88. NE16 reaches only 3.50 MAC/cycle here
+> (~2 % of its 162 peak) because `Cin=8` fills half of `TP_IN=16`, `Cout=16` fills half of
+> `TP_OUT=32`, and 156 k MAC is too little to amortise job setup. The real `1×16` changes both
+> terms in opposite directions — 16× the MACs (better amortisation) but 16 dispatches each
+> paying setup again, plus an int32 intermediate and a cluster requant pass. **Which wins is an
+> open measurement, not an extrapolation.**
 
 The emitted `conf0 = 43032663 = 0x0290a057`, decoded against `ne16_regfile.cpp`:
 
@@ -256,3 +265,100 @@ Ordering trap to respect: engine coloring calls `canExecute` *before* the rewrit
 claim the original `1×k` node (an `isDecomposable1xK` predicate) and let `NE16OptimizationPass`
 do the rewrite — and that rewrite must run **before** `NE16AdjustWeightMemoryLayoutPass`, or the
 bit-serial encoder packs the `1×16` weight instead of the `k` per-tap `1×1` slices.
+
+
+---
+
+## 2026-09-11 — Session 2: STEP 2b — block-1 `1×16` on NE16, bit-exact
+
+**Experiment:** `DeeployTest/experiments/deliverable/exp16_NE16_GAP9/exp16a_PW_single_layer/`
+(`Plan.md`, `Findings.md`, `results/results.json`, `fixture/`, `logs/step1..17*.log`)
+
+### Result
+
+SpeechNet **block 1's real `1×16` convolution**, from the **training** graph (weight is a runtime
+tensor, not a constant), running on NE16 as **16 pointwise dispatches accumulating via
+`streamin`** — **bit-exact**.
+
+| fixture | engine | taps | NE16 dispatches | streamin | errors | cycles |
+|---|---|---|---|---|---|---|
+| `b1_1x2_ne16_s` | NE16 | 2 | 2 | 1 | **0 / 1600** | 100,704 |
+| **`b1_1x16_ne16_s`** | **NE16** | **16** | **16** | **15** | **0 / 1600** | 154,110 |
+| `b1_ref_1x2_s` | cluster | 2 | 0 | — | 0 / 1600 | 17,657 |
+| `b1_ref_1x16_s` | cluster | 16 | 0 | — | 0 / 1600 | 35,715 |
+
+`conf0` tap0 `4227143` vs tap_j `4243527` — difference **exactly `0x4000` = `NE16_FLAG_STREAMIN`**;
+filter mode `[6:5]=2` (1×1), quant bits 32, outquant 0. 0 cluster convs.
+
+**Performance is NOT there yet — NE16 is 4.31× slower than the cluster here** (154,110 vs 35,715).
+Expected on a `4×24` cropped extent where per-dispatch setup dominates and `Cin=8` half-fills
+`TP_IN=16`. Performance is STEP 4; correctness was the goal.
+
+### Two design decisions that differ from the written plan
+
+1. **Template-level, not graph-level.** The plan said "topology pass `Conv(1×k)` → `k × Conv(1×1)`".
+   That route needs `Pad` and `Slice` bindings GAP9 lacks for integer data, and inflates the graph
+   to 49 nodes. Instead the graph keeps **one** `Conv(1×K)` node and the K dispatches are emitted
+   by the template, with tap `j` as an `infeat_addr` offset — which is what "per-tap input slice
+   offsets" meant.
+2. **`streamin` immediately, not an `Add` chain.** `Plan.md §4.1` wanted `Add` first for debug
+   separation; it was abandoned once it proved to introduce *more* new blockers than it avoided.
+   The arithmetic was still validated on the host first (bit-exact, 19,712 elems).
+
+### The enabler for variable weights: `weight_offset = -128`, fixed
+
+PR #183 computes `weight_offset = values.min()` at compile time — impossible for a weight that
+changes every step. Every int8 weight satisfies `w ∈ [-128,127] ⟹ w+128 ∈ [0,255]`, so `-128` is
+valid for **any** weight and never needs recomputing. The host encodes `w+128` with Deeploy's own
+`_weightEncode` and ships it as a graph input. Arithmetically free (`Wmin` costs one shift cycle
+regardless of value).
+
+### Files changed — all Python, **no NE16 ISA change** (board-safe)
+
+| file | change |
+|---|---|
+| `Deeploy/Targets/NE16/Engine.py` | `_weightAcceptable` (runtime weight via `ne16_weight_preencoded`); `is1xKConv` + `enable1xK` flag (**off by default**); `NE161xKConv2DMapper` first in `NE16Mapping['Conv']` |
+| `Deeploy/Targets/NE16/Parsers.py` | `NE161xKConv2DParser` |
+| `Deeploy/Targets/NE16/Templates/Conv1xKTemplate.py` | **new** — K dispatches, per-tap pointer offsets, `streamin` for j>0 |
+| `Deeploy/Targets/NE16/TileConstraints/NE161xKConstraint.py` | **new** — single-tile policy (streamin residency) |
+| `Deeploy/Targets/NE16/Bindings.py`, `Tiler.py` | 2-input / int32-output binding + tiling-ready binding |
+| `Deeploy/Targets/PULPOpen/TopologyOptimizationPasses/Passes.py` | `_merge_conv_rq_fun`: do **not** fuse a conv carrying `ne16_taps` |
+| `Deeploy/CommonExtensions/.../LoweringOptimizationPasses.py` | `_NCHWtoNHWC_fun`: `spatialDims` from `kernel_shape`, and **skip permuting** a pre-encoded weight |
+| `DeeployTest/testMVP.py`, `testUtils/deeployRunner.py`, `deeployRunner_tiled_gap9_w_ne16.py` | `--enable-1xk` threaded end to end |
+
+Every change is gated on an NE16-only attribute or an off-by-default flag.
+
+### Reproduce
+
+```bash
+# fixture (agitated_hugle)
+docker exec agitated_hugle bash -lc 'cd /app && PYTHONPATH=/app/Onnx4Deeploy python3 \
+  TrainDeeploy/DeeployTest/experiments/deliverable/exp16_NE16_GAP9/exp16a_PW_single_layer/build_fixtures.py \
+  --taps 16 --crop-h 4 --crop-w 24 --suffix _s'
+
+# device (deeploy_gap9)
+docker exec deeploy_gap9 bash -lc '
+  source /app/install/gap9-sdk/.gap9-venv/bin/activate
+  source /app/install/gap9-sdk/configs/gap9_evk_audio.sh
+  export GVSOC_INSTALL_DIR=/app/install/gap9-sdk/install/workstation
+  pgrep -f "[g]vsoc_launcher" | xargs -r kill -9 ; rm -rf /app/Deeploy/DeeployTest/TEST_GAP9_W_NE16
+  cd /app/Deeploy/DeeployTest
+  python3 deeployRunner_tiled_gap9_w_ne16.py -t Tests/Models/NE16/b1_1x16_ne16_s --enable-1xk \
+    --l1 110000 --l2 1500000 --defaultMemLevel L2 --cores 8'
+```
+
+### Known limitations (both recorded in `exp16a/Findings.md §4, §9`)
+
+* **Spatial crop `4×24`.** The single-tile constraint keeps the output resident across the K
+  streamin dispatches; at full `14×88` the int32 output is 78,848 B and, with the two layout
+  transposes, overflows GAP9's ~110 KB L1 (`Allocation failed for allocator 2`). Lifting this
+  needs real tiling with a `K-1` halo **and** streamin residency modelled — **blocker for STEP 3**.
+* **Blocker 1b** still open: the host supplies the already-perturbed weight; the QZO loop computes
+  it on device. Next = the linearity decomposition or a device-side encode kernel.
+
+### Lesson worth keeping
+
+A long Deeploy codegen is a **symptom to shrink, not a cost to wait out**. The first `K=16`
+attempt "hung" for 30+ minutes; it was exponential backtracking over an *infeasible* binding
+problem. At `K=2` the same failure surfaced in **3 seconds** — and nine further bugs after it,
+each with an exact diagnosis. Ten bugs total, listed in `exp16a/Findings.md §7`.

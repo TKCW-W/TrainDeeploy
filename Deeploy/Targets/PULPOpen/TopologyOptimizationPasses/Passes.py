@@ -168,6 +168,15 @@ def _merge_conv_rq_fun(graph: gs.Graph, match: Match, name: str):
     conv = matched_nodes[0]
     rqs = matched_nodes[1]
 
+    # QW (exp16a / STEP 2b): do NOT fuse a conv that NE16 will run as K pointwise dispatches.
+    #     Those taps accumulate via CONFIG0[14] streamin, and gvsoc fsm.cpp:50 asserts
+    #     `!(streamin && quantization_bits != 32)` -- so every dispatch in the chain must emit
+    #     INT32 and none of them may requantise. The RequantShift therefore has to stay a
+    #     separate (cluster) node. Gated on an NE16-only attribute, so no other target, and no
+    #     ordinary conv, is affected. -- QW
+    if 'ne16_taps' in conv.attrs:  # -- QW
+        return graph  # -- QW
+
     totalShift = int(np.log2(rqs.attrs['div'].values))
 
     # Artifically add half the shift division value to implement rounding

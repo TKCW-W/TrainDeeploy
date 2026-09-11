@@ -15,6 +15,12 @@ if __name__ == "__main__":
 
     def setup_parser(parser):  # -- QW
         parser.add_argument('--cores', type = int, default = 8, help = 'Number of cores (default: 8)\n')
+        parser.add_argument('--enable-1xk',
+                            dest = 'enable_1xk',
+                            action = 'store_true',
+                            default = False,
+                            help = 'Let NE16 claim 1xK / Kx1 dense convs and run them as K '
+                            'pointwise dispatches accumulating via streamin (exp16a / STEP 2b)\n')
         parser.add_argument('--enable-3x3',
                             dest = 'enable_3x3',
                             action = 'store_true',

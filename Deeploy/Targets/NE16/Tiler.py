@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from Deeploy.Targets.NE16.Bindings import NE161xKConv2DBindings  # -- QW
 from Deeploy.Targets.NE16.Bindings import NE16DenseConv2DBindings, NE16DWConv2DBindings, NE16PWConv2DBindings, \
     NE16RQSDenseConv2DBindings, NE16RQSDWConv2DBindings, NE16RQSPWConv2DBindings
 from Deeploy.Targets.NE16.TileConstraints.NE16DenseConstraint import NE16DenseConv2DTileConstraint, \
@@ -11,6 +12,7 @@ from Deeploy.Targets.NE16.TileConstraints.NE16DepthwiseConstraint import NE16DWC
     NE16RQSDWConv2DTileConstraint
 from Deeploy.Targets.NE16.TileConstraints.NE16PointwiseConstraint import NE16PWConv2DTileConstraint, \
     NE16RQSPWConv2DTileConstraint
+from Deeploy.Targets.NE16.TileConstraints.NE161xKConstraint import NE161xKConv2DTileConstraint  # -- QW
 from Deeploy.TilingExtension.TilerExtension import TilingReadyNodeBindings
 
 NE16RQSPWConv2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = NE16RQSPWConv2DBindings,
@@ -27,3 +29,6 @@ NE16RQSDenseConv2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = N
                                                                 tileConstraint = NE16RQSDenseConv2DTileConstraint())
 NE16DenseConv2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = NE16DenseConv2DBindings,
                                                              tileConstraint = NE16DenseConv2DTileConstraint())
+
+NE161xKConv2DTilingReadyBindings = TilingReadyNodeBindings(  # -- QW
+    nodeBindings = NE161xKConv2DBindings, tileConstraint = NE161xKConv2DTileConstraint())

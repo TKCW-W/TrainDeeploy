@@ -7,6 +7,7 @@ from Deeploy.CommonExtensions.DataTypes import int8_t, int32_t, uint8_t
 from Deeploy.DeeployTypes import NodeBinding
 from Deeploy.Targets.GAP9.Bindings import GAP9ClusterTransformer as ClusterTransformer
 from Deeploy.Targets.Generic.TypeCheckers import ConvChecker
+from Deeploy.Targets.NE16.Templates.Conv1xKTemplate import NE161xKConv2D_Template  # -- QW
 from Deeploy.Targets.NE16.Templates.ConvTemplate import NE16DenseConv2D_Template, NE16DWConv2D_Template, \
     NE16PWConv2D_Template, NE16RqntDenseConv2D_Template, NE16RqntDWConv2D_Template, NE16RqntPWConv2D_Template
 from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker
@@ -69,4 +70,14 @@ NE16DenseConv2DBindings = [
              PointerClass(int32_t)], [PointerClass(int32_t)]), NE16DenseConv2D_Template, ClusterTransformer)
     for data_in_type in [uint8_t, int8_t]
     for weight_type in [uint8_t, int8_t]
+]
+
+
+# QW (exp16a / STEP 2b): 1xK dense conv -> K pointwise dispatches. TWO inputs (data, pre-encoded
+# weight) and an INT32 output: streamin requires quantization_bits==32, so the RequantShift is a
+# separate cluster node and NE16 never requantises here. -- QW
+NE161xKConv2DBindings = [
+    NodeBinding(ConvChecker([PointerClass(data_in_type), PointerClass(uint8_t)], [PointerClass(int32_t)]),
+                NE161xKConv2D_Template, ClusterTransformer)
+    for data_in_type in [uint8_t, int8_t]
 ]
