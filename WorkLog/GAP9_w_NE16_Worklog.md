@@ -404,10 +404,10 @@ dispatch) is the structural answer — STEP 4, unmeasured.
 
 ---
 
-## 2026-09-11 — Session 3: exp16b, 3×3-dense chunks — the cycle model was wrong
+## 2026-09-11 — Session 3: exp16b, 3×3-dense chunks — bit-exact, and the cycle model was wrong
 
 **Experiment:** `DeeployTest/experiments/deliverable/exp16_NE16_GAP9/exp16b_Dense_single_layer/`
-(`Plan.md`, `Findings.md`, `results/results.json`, `fixture/`, `logs/step1..5*.log`)
+(`Plan.md`, `Findings.md`, `results/results.json`, `fixture/`, `logs/step1..step9*.log`)
 
 Ran block 1's `1×16` as **6 dense 3×3 dispatches** (each a 3×3 kernel with only the middle row
 populated, `infeat_addr += 3c·ch_im_in`, native H padding 1/1, streamin) instead of exp16a's 16
@@ -415,17 +415,20 @@ pointwise ones, on identical data.
 
 | decomposition | dispatches | errors | cycles |
 |---|---|---|---|
-| **dense 3×3 chunks** | **6** | 14328 / 19712 ✗ | **1,362,823** |
+| **dense 3×3 chunks** | **6** | **0 / 19712** ✓ | **1,364,975** |
 | all-pointwise (exp16a) | 16 | **0 / 19712** ✓ | 1,567,096 |
-| cluster | — | 0 / 19712 ✓ | 337,657 |
+| cluster `pulp_nn_conv` | — | 0 / 19712 ✓ | 337,657 |
+
+Both NE16 decompositions of the block-1 layer are now **bit-exact at full 14×87 extent**.
 
 ### The finding: dispatch count dominates, not MAC utilisation
 
 **Dense 3×3 is 1.15× FASTER than pointwise — the cycle model predicted ~3× SLOWER.**
 
-`03-qzo-ne16-plan.md §7` rejected masked-3×3 on the argument that 3×3 mode spends its 9 row-slots
-on spatial taps and therefore needs 8 bitplane passes (`mv_qw_lim = qw`), where 1×1 mode spends
-them on bitplanes and finishes in one — `6 × 8 = 48` cycle-units against `16 × 1 = 16`.
+`docs/TRAIN_GAP9_NE16/03-qzo-ne16-plan.md §7` rejected masked-3×3 on the argument that 3×3 mode
+spends its 9 row-slots on spatial taps and therefore needs 8 bitplane passes (`mv_qw_lim = qw`),
+where 1×1 mode spends them on bitplanes and finishes in one — `6 × 8 = 48` cycle-units against
+`16 × 1 = 16`.
 
 That argument assumed **the MAC array is the bottleneck. At this problem size it is not.** Six
 dispatches instead of 16 removes 10 job setups and 10 of the 15 int32 `streamin` round-trips
@@ -434,18 +437,45 @@ is **DMA/setup-bound**.
 
 **Consequence for STEP 4:** the lever is *fewer, larger dispatches*, not tap-packing. That points
 at **channel folding** (im2col to a single `Cin = 128` pointwise conv: one dispatch, `TP_IN` fully
-packed, no streamin) rather than at 3×3 tricks.
+packed, no streamin) rather than at 3×3 tricks. Price of the halfway version: **13,824 B of
+weights vs 4,096 B** (3.4×), since 6 of every 9 tap slots are zeros.
 
-### Correctness: NOT achieved — exp16c is gated on this
+### Correctness: achieved — the bug was geometry, not the datapath
 
-K=3 (one chunk, no streamin, no offsets) already fails: **431/1536**, and **every diff is ±1** on
-outputs ranging only `[-2,3]` — an LSB effect, not a structurally wrong convolution. `conf0`
-differs from the working pointwise task **only** in filter mode (`0x40`). Zero-weight taps should
-cancel exactly (`w_u = 128`, `Wmin = -128`). Filter masking was tried and made it *worse*
-(431 → 557); reverted.
+Earlier in this session the dense variant failed (`14328/19712` full extent; `431/1536` on a
+single-chunk K=3 isolation fixture, every diff **±1 LSB** on outputs ranging only `[-2,3]`).
 
-Unexplored: drop the H padding and compare against an `Hout = Hin−2` golden, to separate padding
-from the zero-row trick; or dump one output pixel's int32 accumulator from GVSoC.
+**Root cause** — `Deeploy/Targets/NE16/TileConstraints/NE161xKConstraint.py`,
+`serializeTilingSolution`: it unconditionally emitted the **pointwise** subtile counters with zero
+padding for *both* variants:
+
+```python
+replacements["input_addr_offset"].append(0)
+counters = NE162DPWConvTemplate.getCounters(inCSz, hSz, wSz, cSz, 0, 0, operatorRepresentation)
+```
+
+NE16 retires output in 3×3 subtiles and needs the **border** subtile's *input* extent declared in
+`bHi`/`bWi`. For a 1×1 job that equals the output border; for a 3×3 job it is
+`bHi = height_out_border + 2 − padding_bottom` (`NE162DDenseConvTemplate.getCounters`), the `+2`
+being the receptive field. With the pointwise formula the border subtile read a window two pixels
+short in each direction, dropping edge taps — small int32 deficits that requantise to ±1 LSB.
+
+**Fix:** branch on `isDense3x3 = 'ne16_chunks' in operatorRepresentation`, using
+`NE162DDenseConvTemplate.getCounters` with the real `padding_y_bottom` / `padding_x_right` and a
+non-zero `input_addr_offset` from `getInputAddrOffset(...)` for the dense path.
+
+`b1_1x3_dense3x3_k3` → **0/1536** (93,534 cycles); `b1_1x16_dense3x3_d33` → **0/19712**
+(1,364,975 cycles, 6 dispatches, 0 transposes, 0 cluster convs).
+
+**Wrong hypotheses, recorded so they are not retried:** zero-weight rows failing to cancel (they
+cancel exactly — `w_u = 128`, `Wmin = −128`); and `filter_mask = (1<<24)|(1<<8)` to skip them,
+which made it *worse* (431 → 557) and was reverted (`ne16_filter_mask` stays 0). The tell that it
+was geometry, not arithmetic, was that the errors were **position-dependent** — clustered at
+subtile borders — which no datapath explanation accounts for.
+
+The pinning of the non-tapped axis when `ne16_chunks` is set is **still required** and kept: the
+constraint models neither a per-tile vertical halo nor per-tile padding. SpeechNet's non-tapped
+extent is 14 rows, so not tiling it is cheap.
 
 ### exp16a regression
 
@@ -455,6 +485,12 @@ Re-verified after all exp16b changes: **still `0 / 19712`, 1,567,096 cycles**. U
 
 `Targets/NE16/Templates/Conv3x3ChunkTemplate.py` (new), `NE163x3ChunkConv2DParser`, its binding /
 tiling-ready binding / mapper, `ne16_halo` generalised in the tile constraint (`taps-1` pointwise,
-`3*(chunks-1)+2` for chunks) plus **pinning the non-tapped axis when `ne16_chunks` is set** (a 3×3
-kernel has a vertical receptive field the constraint does not model per-tile), and `--dense3x3` in
-`exp16a/build_fixtures.py`. All gated on NE16-only attributes.
+`3*(chunks-1)+2` for chunks), the non-tapped-axis pin, the variant-specific counters/padding fix
+above, and `--dense3x3` in `exp16a/build_fixtures.py`. All Python; **no NE16 ISA change** — the
+templates use only fields `ne16_task_t` already has, so this runs on real GAP9 silicon.
+
+### Next: exp16c — blocker 1b and STEP 3
+
+exp16b's gate is satisfied. `exp16c_PW_single_layer` takes on **blocker 1b** (on-device
+perturbation — the host still supplies a pre-perturbed, pre-encoded weight) and **STEP 3** (the
+remaining four SpeechNet convs; block 0 additionally needs the signed-activation fix).

@@ -37,7 +37,8 @@ from typing import Dict, List, Tuple
 from Deeploy.AbstractDataTypes import PointerClass
 from Deeploy.CommonExtensions.DataTypes import uint16_t, uint32_t
 from Deeploy.DeeployTypes import NetworkContext, OperatorRepresentation, VariableBuffer
-from Deeploy.Targets.NE16.Templates.ConvTemplate import NE162DPWConvTemplate, ioStridesFromDimensions
+from Deeploy.Targets.NE16.Templates.ConvTemplate import NE162DDenseConvTemplate, NE162DPWConvTemplate, \
+    getInputAddrOffset, ioStridesFromDimensions
 from Deeploy.TilingExtension.MemoryConstraints import NodeMemoryConstraint
 from Deeploy.TilingExtension.TileConstraint import TileConstraint
 from Deeploy.TilingExtension.TilerModel import PerformanceHint, TilerModel
@@ -134,6 +135,7 @@ class NE161xKConv2DTileConstraint(TileConstraint):
                                                                   ['data_in', 'weight', 'data_out'])
 
         halo = int(operatorRepresentation['ne16_halo'])  # -- QW
+        isDense3x3 = 'ne16_chunks' in operatorRepresentation  # -- QW
         axis = _tapAxis(operatorRepresentation)
         wBuf: VariableBuffer = ctxt.lookup(operatorRepresentation['weight'])
 
@@ -169,10 +171,26 @@ class NE161xKConv2DTileConstraint(TileConstraint):
             replacements["dim_im_in_y_stride"].append(yStrideIn)
             replacements["dim_im_out_x_stride"].append(xStrideOut)
             replacements["dim_im_out_y_stride"].append(yStrideOut)
-            replacements["input_addr_offset"].append(0)  # input is pre-padded; no NE16 padding
-
-            # Counters describe ONE tap's pointwise job over this OUTPUT tile.
-            counters = NE162DPWConvTemplate.getCounters(inCSz, hSz, wSz, cSz, 0, 0, operatorRepresentation)
+            # QW: the counter formula and the padding are VARIANT-SPECIFIC.
+            #     - all-pointwise (exp16a): 1x1 jobs, input pre-padded, so no NE16 padding and
+            #       NE162DPWConvTemplate.getCounters (bHi = border - pad).
+            #     - 3x3 chunks (exp16b): each job is a real 3x3 conv with NATIVE H padding, so it
+            #       needs NE162DDenseConvTemplate.getCounters (bHi = border + 2 - pad, the +2
+            #       being the 3x3 receptive field) AND the actual padding values.
+            #     Using the pointwise pair for the 3x3 variant gives a border subtile that reads
+            #     the wrong input extent -- which is what produced the +-1 errors concentrated at
+            #     subtile borders.
+            if isDense3x3:  # -- QW
+                padB = int(operatorRepresentation['padding_y_bottom'])
+                padR = int(operatorRepresentation['padding_x_right'])
+                replacements["input_addr_offset"].append(
+                    getInputAddrOffset(inWSz, yStrideIn, int(operatorRepresentation['padding_y_top']),
+                                       int(operatorRepresentation['padding_x_left'])))
+                counters = NE162DDenseConvTemplate.getCounters(inCSz, hSz, wSz, cSz, padB, padR,
+                                                               operatorRepresentation)
+            else:
+                replacements["input_addr_offset"].append(0)  # input is pre-padded; no NE16 padding
+                counters = NE162DPWConvTemplate.getCounters(inCSz, hSz, wSz, cSz, 0, 0, operatorRepresentation)
             for name, value in zip(["nKo", "nKi", "nHo", "nWo", "bKo", "bKi", "bHo", "bWo", "bHi", "bWi"],
                                    counters):
                 replacements[name].append(value)
