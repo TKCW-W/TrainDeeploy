@@ -114,6 +114,12 @@ def main() -> int:
                     help = "exp16b: emit the 1xK conv for the DENSE 3x3 chunk decomposition "
                            "(ceil(K/3) dispatches, each a 3x3 kernel with only the middle row "
                            "populated) instead of the all-pointwise one. Implies --nhwc.")
+    ap.add_argument("--device-encode", action = "store_true", default = False, dest = "device_encode",
+                    help = "exp16c / blocker 1b: deliver the weight UNENCODED as an int8 graph "
+                           "input and insert an NE16WeightEncode node, so the bit-serial encoding "
+                           "happens ON DEVICE. This is what the QZO loop needs -- there the weight "
+                           "is an RQSPerturbRademacher output, not a gs.Constant, so the host "
+                           "cannot pre-encode it. Implies --nhwc.")
     ap.add_argument("--nhwc", action = "store_true", default = False,
                     help = "emit the 1xK fixture NHWC-native (input, output and golden already "
                            "channels-last, conv+RQS tagged channels_first=0). Removes BOTH layout "
@@ -198,9 +204,10 @@ def main() -> int:
     #     Weight layout: per-tap NE16 encoding stacked as (K, cout, cinMajor, bits*cinMinorBytes),
     #     so tap j's block is CONTIGUOUS at offset j*cout*cinMajor*16 and is byte-identical to
     #     what a standalone 1x1 conv of that tap would use. weight_offset = -128 fixed. -- QW
-    if args.dense3x3:
-        args.nhwc = True                       # -- QW: exp16b always runs NHWC-native
+    if args.dense3x3 or args.device_encode:
+        args.nhwc = True                       # -- QW: exp16b/exp16c always run NHWC-native
     kdir = os.path.join(args.out, (f"b1_1x{K}_dense3x3{args.suffix}" if args.dense3x3
+                                   else f"b1_1x{K}_devenc{args.suffix}" if args.device_encode
                                    else f"b1_1x{K}_ne16{args.suffix}"))
     os.makedirs(kdir, exist_ok = True)
     # QW: RANK 3, taps stacked along dim0 -> (K*cout, cinMajor, encBytes).
@@ -260,19 +267,38 @@ def main() -> int:
     #     With --nhwc the RQS stays channels-last, which is the deployer default anyway, so the
     #     attribute below is only needed in the NCHW-native variant.
     krqs.attribute.append(helper.make_attribute("channels_first", 0 if args.nhwc else 1))
+    # QW (exp16c / blocker 1b): with --device-encode the conv's weight input is produced by an
+    #     NE16WeightEncode NODE fed the raw int8 weight, instead of arriving pre-encoded. That is
+    #     the only structural difference from exp16a -- the conv, its attributes and the golden are
+    #     untouched, so a pass here isolates "the device encoder reproduces _weightEncode exactly".
+    #     In the real QZO graph the int8 weight comes from RQSPerturbRademacher rather than from a
+    #     graph input; phase 2 swaps that producer in. -- QW
+    kNodes = [kconv, krqs]
+    kIns = [helper.make_tensor_value_info("input", onnx.TensorProto.INT8,
+                                          [N, H, W + pads[1] + pads[3] + extra_w, Cin] if args.nhwc
+                                          else [N, Cin, H, W + pads[1] + pads[3] + extra_w])]
+    kVinfo = [helper.make_tensor_value_info("conv_out", onnx.TensorProto.INT32,
+                                            [N, H, Wout, Cout] if args.nhwc else [N, Cout, H, Wout])]
+    if args.device_encode:  # -- QW
+        enc_node = helper.make_node("NE16WeightEncode", ["weight"], ["weight_enc"],
+                                    name = "b1_wenc")
+        enc_node.attribute.append(helper.make_attribute("ne16_taps", K))
+        enc_node.attribute.append(helper.make_attribute("ne16_bits", 8))
+        kNodes = [enc_node] + kNodes
+        kIns.append(helper.make_tensor_value_info("weight", onnx.TensorProto.INT8, list(wpert.shape)))
+        kVinfo.append(helper.make_tensor_value_info("weight_enc", onnx.TensorProto.UINT8,
+                                                    list(enc_taps.shape)))
+    else:
+        kIns.append(helper.make_tensor_value_info("weight_enc", onnx.TensorProto.UINT8,
+                                                  list(enc_taps.shape)))
     kg = helper.make_graph(
-        [kconv, krqs],
+        kNodes,
         f"b1_1x{K}_ne16{args.suffix}",
-        [helper.make_tensor_value_info("input", onnx.TensorProto.INT8,
-                                       [N, H, W + pads[1] + pads[3] + extra_w, Cin] if args.nhwc
-                                       else [N, Cin, H, W + pads[1] + pads[3] + extra_w]),
-         helper.make_tensor_value_info("weight_enc", onnx.TensorProto.UINT8, list(enc_taps.shape))],
+        kIns,
         [helper.make_tensor_value_info("output", onnx.TensorProto.INT8,
                                        [N, H, Wout, Cout] if args.nhwc else [N, Cout, H, Wout])],
         initializer = [numpy_helper.from_array(mul, "rqs_mul"), numpy_helper.from_array(add, "rqs_add")],
-        value_info = [helper.make_tensor_value_info("conv_out", onnx.TensorProto.INT32,
-                                                    [N, H, Wout, Cout] if args.nhwc
-                                                    else [N, Cout, H, Wout])])
+        value_info = kVinfo)
     mk = helper.make_model(kg, opset_imports = opset)
     mk.ir_version = model.ir_version
     onnx.save(mk, os.path.join(kdir, "network.onnx"))     # no shape inference: shapes are explicit
@@ -282,10 +308,18 @@ def main() -> int:
     # The golden always comes from the NCHW reference graph (ONNX Conv is NCHW-by-definition, so
     # run_onnx_graph must see NCHW); it is simply permuted for the NHWC-native device fixture.
     k_out = ref_out.transpose(0, 2, 3, 1).copy() if args.nhwc else ref_out
-    np.savez(os.path.join(kdir, "inputs.npz"), input = k_in, weight_enc = enc_taps)
+    if args.device_encode:  # -- QW (exp16c): the device gets the RAW int8 weight
+        np.savez(os.path.join(kdir, "inputs.npz"), input = k_in, weight = wpert.astype(np.int8))
+    else:
+        np.savez(os.path.join(kdir, "inputs.npz"), input = k_in, weight_enc = enc_taps)
     np.savez(os.path.join(kdir, "outputs.npz"), output = k_out.astype(np.int8))
+    # QW (exp16c): keep the host-encoded bytes next to the fixture as the golden the DEVICE
+    #     encoder must reproduce, so a mismatch can be localised to the encoder rather than the conv.
+    if args.device_encode:
+        np.savez(os.path.join(kdir, "weight_enc_golden.npz"), weight_enc = enc_taps)
     print(f"[b1_1x{K}_ne16] ONE Conv(1x{K}) node, weight_enc {enc_taps.shape} uint8 "
-          f"({enc_taps.nbytes} B), input {list(k_in.shape)} "
+          f"({enc_taps.nbytes} B){' ENCODED ON DEVICE' if args.device_encode else ''}, "
+          f"input {list(k_in.shape)} "
           f"{'NHWC-native' if args.nhwc else 'NCHW'} -> {kdir}")
 
     # ---- 3. decomposed fixtures: 16 pointwise taps ---------------------------------------------

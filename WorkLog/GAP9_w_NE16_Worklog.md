@@ -494,3 +494,68 @@ templates use only fields `ne16_task_t` already has, so this runs on real GAP9 s
 exp16b's gate is satisfied. `exp16c_PW_single_layer` takes on **blocker 1b** (on-device
 perturbation — the host still supplies a pre-perturbed, pre-encoded weight) and **STEP 3** (the
 remaining four SpeechNet convs; block 0 additionally needs the signed-activation fix).
+
+---
+
+## 2026-09-11 — Session 4: exp16c phase 1 — blocker 1b's hard half closed
+
+**Experiment:** `DeeployTest/experiments/deliverable/exp16_NE16_GAP9/exp16c_PW_single_layer/`
+(`Plan.md`, `Findings.md`, `results/results.json`, `fixture/`, `logs/`)
+
+exp16a and exp16b both let the **host** bit-serial encode the conv weight, which only works while
+it is a `gs.Constant`. In QZO the weight is an `RQSPerturbRademacher` output, recomputed on device
+twice per ZO step. exp16c phase 1 moves the encoding onto the device.
+
+| fixture | weight encoded by | dispatches | errors | cycles |
+|---|---|---|---|---|
+| `b1_1x16_devenc_dev` | **device** | 16 | **0 / 19712** ✓ | 1,593,285 |
+| `b1_1x16_ne16_nhwc` (exp16a) | host | 16 | 0 / 19712 ✓ | 1,567,096 |
+
+### Encode cost: 26,189 cycles = 1.64 % — and it settles a design question
+
+That 1.64 % covers the L2→L1 DMA of the 2,048 B raw int8 weight **and** the bit-serial encode of
+4,096 B across 8 cores.
+
+`docs/TRAIN_GAP9_NE16/03-qzo-ne16-plan.md §3.2` recommended the **linearity decomposition**
+(`conv(w+δz,x) = conv(w,x) + δ·conv(z,x)`, sign conv at `qw=1`) whose entire purpose is to avoid an
+on-device 8-bit re-encode. It would pay for that 1.64 % by **doubling the dispatch count**
+(16 → 32) — the metric exp16b showed dominates this layer — plus a new per-channel int32
+scale-and-accumulate kernel, two perturbation constants (`δ⁺ ≠ δ⁻`), and per-step sign packing
+anyway. **Withdrawn on the measurement**, not merely deprioritised.
+
+### Why the encoder is only a bit transpose
+
+`_weightEncode` (`Deeploy/Targets/NE16/TopologyOptimizationPasses/Passes.py:24`) does two things.
+Fixing `weight_offset = −128` (exp16a's choice) removes the first: `values.min()` would change
+every step and would have to be recomputed, cross-core reduced, and pushed into the conv's
+`weight_offset_factor`. At −128 the offset step is exactly `w_u = w ^ 0x80`. What remains is a
+**data-independent permutation** — output byte `b*2 + k` of each `(row, cinMajor)` pair collects
+bit `b` of input lanes `8k..8k+7`, LSB-first. Rows (`taps*cout`) are independent → chunked across
+the 8 cluster cores.
+
+### Method note — the reason this went green on the FIRST device run
+
+The kernel was compiled **natively on the host** and compared against Deeploy's own `_weightEncode`
+via `ctypes`, for all five SpeechNet conv shapes plus an odd `cin=20` case, single-core and
+8-core-chunked: **MATCH everywhere**. The bug class that cost two sessions in exp16a/exp16b was
+priced out in a 3-second test. Two results fall out that de-risk later phases:
+
+* `cinMajor > 1` and non-multiple-of-16 `cin` already work → block 4 (`cin=32`) needs no new code;
+* `K×1` needs no new code → in NCHW the tap is the last index for both `1×K` (H=1,W=K) and `K×1`
+  (H=K,W=1), so `src[(co*cin+ci)*taps + j]` covers both. Blocks 3 and 4 reuse the encoder.
+
+### Files — all plain C / Python, **no NE16 ISA change**
+
+`TargetLibraries/GAP9/src/NE16WeightEncode.c` (new kernel), its prototype in
+`TargetLibraries/GAP9/inc/DeeployGAP9Math.h` (deliberately NOT in a pulp-nnx header — that tree
+stays pristine), `Deeploy/Targets/NE16/WeightEncode.py` (new: parser / checker / template /
+binding / layer), `Deeploy/Targets/NE16/TileConstraints/NE16WeightEncodeConstraint.py` (new:
+pins both tensors full — the op is deliberately untiled, the largest encoded weight is 7 KB),
+`Deeploy/Targets/NE16/Tiler.py`, `Deeploy/Targets/GAP9/Platform.py` (the op runs on the CLUSTER
+cores, so it is registered in `GAP9Mapping`, not claimed by NE16), and `--device-encode` in
+`exp16a/build_fixtures.py`.
+
+### Next
+
+Phase 2: replace the graph-input weight with a real `RQSPerturbRademacher` producer and run L⁺/L⁻.
+Then STEP 3 — blocks 2/3/4, then block 0 with the signed-activation fix.

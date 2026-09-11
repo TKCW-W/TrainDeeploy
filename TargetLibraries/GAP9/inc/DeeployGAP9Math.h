@@ -31,4 +31,11 @@
 #include "kernel/RandomNoise.h"
 #include "kernel/ZORuntime.h"
 
+/* -- QW (exp16c / blocker 1b): device-side NE16 bit-serial weight encoder. Declared here (rather
+ * than in a pulp-nnx header) so TargetLibraries/third_party/pulp-nnx stays pristine -- this is a
+ * plain C kernel, not an ISA change. Implementation: TargetLibraries/GAP9/src/NE16WeightEncode.c */
+void NE16WeightEncode_i8_u8(const int8_t *__restrict__ src, uint8_t *__restrict__ dst,
+                            const uint32_t cout, const uint32_t cin, const uint32_t taps,
+                            const uint32_t row_start, const uint32_t row_count);
+
 #endif // __DEEPLOY_MATH_HEADER_

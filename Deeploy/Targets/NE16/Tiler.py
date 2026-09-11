@@ -35,3 +35,10 @@ NE161xKConv2DTilingReadyBindings = TilingReadyNodeBindings(  # -- QW
 
 NE163x3ChunkConv2DTilingReadyBindings = TilingReadyNodeBindings(  # -- QW (exp16b)
     nodeBindings = NE163x3ChunkConv2DBindings, tileConstraint = NE161xKConv2DTileConstraint())
+
+
+# -- QW (exp16c / blocker 1b): device-side weight encoder. Untiled -- see the constraint's docstring.
+from Deeploy.Targets.NE16.TileConstraints.NE16WeightEncodeConstraint import NE16WeightEncodeTileConstraint  # -- QW
+from Deeploy.Targets.NE16.WeightEncode import NE16WeightEncodeBindings as _NE16WEB  # -- QW
+NE16WeightEncodeTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _NE16WEB,
+                                                              tileConstraint = NE16WeightEncodeTileConstraint())  # -- QW

@@ -119,6 +119,13 @@ GAP9_BatchNormInternalMapper = NodeMapper(BatchNormInternalParser(), PULPBatchNo
 GAP9_PerturbRademacherMapper = NodeMapper(PerturbRademacherParser(), PULPPerturbRademacherTilingReadyBindings)  # -- QW (fp32 ZO op)
 GAP9_RQSPerturbRademacherMapper = NodeMapper(RQSPerturbRademacherParser(), PULPRQSPerturbRademacherTilingReadyBindings)  # -- QW (quantized ZO)
 
+# -- QW (exp16c / blocker 1b): NE16WeightEncode runs on the CLUSTER cores (plain data movement),
+#     not on NE16 -- NE16Engine.canExecute only ever claims Conv. Registering it in GAP9Mapping is
+#     what lets a runtime-produced conv weight be bit-serial encoded on device.
+from Deeploy.Targets.NE16.WeightEncode import NE16WeightEncodeLayer, NE16WeightEncodeParser  # -- QW
+from Deeploy.Targets.NE16.Tiler import NE16WeightEncodeTilingReadyBindings  # -- QW
+GAP9_NE16WeightEncodeMapper = NodeMapper(NE16WeightEncodeParser(), NE16WeightEncodeTilingReadyBindings)  # -- QW
+
 # GAP9-specific mapping using ClDma
 GAP9Mapping = {
     'Conv':
@@ -205,7 +212,9 @@ GAP9Mapping = {
     'PerturbRademacher':
         PerturbRademacherLayer([GAP9_PerturbRademacherMapper]),  # -- QW (fp32 ZO perturb)
     'RQSPerturbRademacher':
-        RQSPerturbRademacherLayer([GAP9_RQSPerturbRademacherMapper])  # -- QW (quantized ZO perturb)
+        RQSPerturbRademacherLayer([GAP9_RQSPerturbRademacherMapper]),  # -- QW (quantized ZO perturb)
+    'NE16WeightEncode':
+        NE16WeightEncodeLayer([GAP9_NE16WeightEncodeMapper])  # -- QW (exp16c: on-device NE16 weight encode)
 }
 
 
