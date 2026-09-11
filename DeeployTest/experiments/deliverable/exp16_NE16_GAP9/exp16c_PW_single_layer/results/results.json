@@ -2,7 +2,7 @@
   "experiment": "exp16c_PW_single_layer",
   "date": "2026-09-11",
   "goal": "close blocker 1b (on-device weight encoding) and then STEP 3 (the other four SpeechNet convs)",
-  "status": "PHASES 1-2 COMPLETE (perturb + encode + conv bit-exact on device, both ZO signs); phases 3-4 open",
+  "status": "PHASES 1-3 COMPLETE (blocks 1-4 bit-exact end to end on device); phase 4 (block 0, BLOCKER 3) open",
   "phases": {
     "1": {
       "what": "NE16WeightEncode kernel + op; weight arrives unencoded as an int8 graph input and is bit-serial encoded on the cluster",
@@ -14,7 +14,7 @@
     },
     "3": {
       "what": "STEP 3a -- blocks 2, 3, 4 on NE16",
-      "status": "open"
+      "status": "PASSED"
     },
     "4": {
       "what": "STEP 3b -- block 0, needs the signed-activation fix",
@@ -97,5 +97,70 @@
     "total_overhead_fraction": 0.0267,
     "note": "full on-device QZO weight path (perturb + bit-serial encode) costs 2.7% of the layer"
   },
-  "L_minus_method": "negating the per-channel multiplier is exactly equivalent to negating the Rademacher sign (RandomNoiseQuant.c:31), so L- is testable under the plain inference runner with the neutral perturbation_sign=+1 default. All 2048 weight elements differ between L+ and L-, and the output range moves [-85,60] -> [-82,57], so it is a real second test rather than a relabelling."
+  "L_minus_method": "negating the per-channel multiplier is exactly equivalent to negating the Rademacher sign (RandomNoiseQuant.c:31), so L- is testable under the plain inference runner with the neutral perturbation_sign=+1 default. All 2048 weight elements differ between L+ and L-, and the output range moves [-85,60] -> [-82,57], so it is a real second test rather than a relabelling.",
+  "step3_blocks": [
+    {
+      "block": 1,
+      "kernel": "1x16",
+      "tap_axis": "W",
+      "cin": 8,
+      "cout": 16,
+      "out": "14x88",
+      "dispatches": 16,
+      "ne16_cycles": 1608939,
+      "cluster_cycles": 337999,
+      "errors": "0/19712",
+      "ratio_vs_cluster": 4.76
+    },
+    {
+      "block": 2,
+      "kernel": "1x8",
+      "tap_axis": "W",
+      "cin": 16,
+      "cout": 16,
+      "out": "14x23",
+      "dispatches": 8,
+      "ne16_cycles": 420743,
+      "cluster_cycles": 98723,
+      "errors": "0/5152",
+      "ratio_vs_cluster": 4.26
+    },
+    {
+      "block": 3,
+      "kernel": "7x1",
+      "tap_axis": "H",
+      "cin": 16,
+      "cout": 32,
+      "out": "8x5",
+      "dispatches": 7,
+      "ne16_cycles": 183651,
+      "cluster_cycles": 26835,
+      "errors": "0/1280",
+      "ratio_vs_cluster": 6.84
+    },
+    {
+      "block": 4,
+      "kernel": "7x1",
+      "tap_axis": "H",
+      "cin": 32,
+      "cout": 32,
+      "out": "2x5",
+      "dispatches": 7,
+      "ne16_cycles": 145990,
+      "cluster_cycles": 30329,
+      "errors": "0/320",
+      "ratio_vs_cluster": 4.81
+    },
+    {
+      "block": 0,
+      "kernel": "1x4",
+      "tap_axis": "W",
+      "cin": 1,
+      "cout": 8,
+      "out": "14x701",
+      "status": "BLOCKED on BLOCKER 3 -- activation range [-66,127] is genuinely signed"
+    }
+  ],
+  "kx1_fix": "Conv1xKTemplate stepped infeat_addr by one PIXEL (ch_im_in bytes), which is only right for 1xK. For Kx1 a tap is one ROW, so the step is the input row stride -- a PER-TILE value (dim_im_in_x_stride), so the template references the substituted variable rather than a constant. Verified in the generated C: block 3 emits `+ 1 * *..._dim_im_in_x_stride_ref` where block 1 emits `+ 1 * 8`.",
+  "performance_note": "NE16 is 4.3x-6.8x SLOWER than pulp_nn_conv on every block. Correctness of the NE16 path is established; closing the performance gap is STEP 4. The NE16 figures include the on-device perturb+encode (2.7% on block 1) which the cluster reference does not perform."
 }

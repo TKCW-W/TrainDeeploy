@@ -64,6 +64,16 @@ class NE162D1xKConvTemplate(NE162DPWConvTemplate):
         operatorRepresentation['conf0_streamin'] = int(operatorRepresentation['conf0']) | NE16_FLAG_STREAMIN
         operatorRepresentation['ne16_streamin_flag'] = NE16_FLAG_STREAMIN
 
+        # QW (exp16c / STEP 3): SpeechNet blocks 3 and 4 are 7x1, i.e. the taps run along H, not W.
+        #     Stepping one tap is then stepping one ROW, not one pixel. The row stride is
+        #     `dim_im_in_x_stride` (`ioStridesFromDimensions` returns (height_stride, width_stride)
+        #     and the constraint assigns them to x_stride, y_stride in that order -- the names are
+        #     the transposed ones). It is a per-TILE value, so the template has to reference the
+        #     substituted variable rather than a constant computed here. -- QW
+        kh, kw = (int(v) for v in operatorRepresentation['kernel_shape'])
+        assert 1 in (kh, kw), f"1xK / Kx1 decomposition only; got kernel_shape {(kh, kw)}"
+        operatorRepresentation['ne16_tap_axis'] = 2 if kh == 1 else 1  # 2 = W, 1 = H
+
         assert operatorRepresentation['mul'] == 'NULL', \
             "1xK decomposition needs int32 output (streamin requires quantization_bits==32); " \
             "the RequantShift must stay a separate cluster node"
@@ -79,7 +89,13 @@ NE161xKTaskTemplateStr = """
     ne16_task_t task = {
         .data = (ne16_task_data_t) {
             .weights_addr = (uint32_t)${weight} + ${_tap} * ${weight_tap_bytes},
+% if ne16_tap_axis == 1:
+            // Kx1: one tap is one ROW along H -> step by the input row stride
+            .infeat_addr = (uint32_t)${data_in} + ${_tap} * ${dim_im_in_x_stride} - ${input_addr_offset},
+% else:
+            // 1xK: one tap is one PIXEL along W -> step by ch_im_in elements
             .infeat_addr = (uint32_t)${data_in} + ${_tap} * ${input_tap_bytes} - ${input_addr_offset},
+% endif
             .outfeat_addr = (uint32_t)${data_out},
             .scale_addr = (uint32_t)${mul},
             .scale_shift_addr = (uint32_t)${shift},

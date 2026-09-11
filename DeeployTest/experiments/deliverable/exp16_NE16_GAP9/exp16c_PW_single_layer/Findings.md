@@ -159,3 +159,66 @@ logs/step3_pertenc_Lminus.log     phase 2, L-
 Fixture data lives at `DeeployTest/Tests/Models/NE16/b1_1x16_devenc_dev/`
 (`inputs.npz` carries the **raw int8** weight; `weight_enc_golden.npz` keeps the host-encoded bytes
 alongside, so a future mismatch can be localised to the encoder rather than the conv).
+
+---
+
+## 6. Phase 3 (STEP 3a) — blocks 1, 2, 3, 4 all bit-exact
+
+Every non-block-0 SpeechNet conv now runs the **complete** on-device path
+`RQSPerturbRademacher → NE16WeightEncode → NE16 Conv → RequantShift`.
+
+| block | kernel | taps | Cin→Cout | out | disp. | errors | NE16 cycles | cluster | ratio |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 1×16 | W | 8→16 | 14×88 | 16 | **0 / 19712** ✓ | 1,608,939 | 337,999 | 4.76× |
+| 2 | 1×8 | W | 16→16 | 14×23 | 8 | **0 / 5152** ✓ | 420,743 | 98,723 | 4.26× |
+| 3 | 7×1 | **H** | 16→32 | 8×5 | 7 | **0 / 1280** ✓ | 183,651 | 26,835 | 6.84× |
+| 4 | 7×1 | **H** | 32→32 | 2×5 | 7 | **0 / 320** ✓ | 145,990 | 30,329 | 4.81× |
+| 0 | 1×4 | W | 1→8 | 14×701 | — | **blocked** | — | — | — |
+
+All four passed on their **first** device run.
+
+### The one real code change phase 3 needed: the `K×1` tap stride
+
+`Conv1xKTemplate` stepped `infeat_addr` by `ch_im_in * bytes` — one **pixel** along W. That is
+correct for `1×K`, but blocks 3 and 4 are `7×1`, where one tap is one **row**.
+
+The row stride is `dim_im_in_x_stride`. (The names are transposed: `ioStridesFromDimensions`
+returns `(height_stride, width_stride)` and `NE161xKConstraint` assigns them to `x_stride, y_stride`
+in that order.) It is a **per-tile** value, because it depends on the tile's own width — so the
+template must reference the substituted variable, not a constant computed in `alignToContext`:
+
+```mako
+% if ne16_tap_axis == 1:
+            .infeat_addr = (uint32_t)${data_in} + ${_tap} * ${dim_im_in_x_stride} - ${input_addr_offset},
+% else:
+            .infeat_addr = (uint32_t)${data_in} + ${_tap} * ${input_tap_bytes} - ${input_addr_offset},
+% endif
+```
+
+Confirmed in the generated C — block 3 emits `+ 1 * *..._dim_im_in_x_stride_ref`, block 1 emits
+the compile-time `+ 1 * 8`.
+
+Everything else came for free: `NE161xKConstraint._tapAxis` already returned 1 for `kh != 1`, the
+parser already admitted `K×1`, and the device encoder already handled both (the tap is the last
+NCHW index either way) and `cinMajor = 2`.
+
+### Performance: NE16 loses to the cluster on every block
+
+**4.3× – 6.8× slower than `pulp_nn_conv`.** Correctness of the NE16 path is established; closing
+this gap is STEP 4, and exp16b already points at the lever (fewer, larger dispatches → channel
+folding). Note the NE16 figures include the on-device perturb+encode that the cluster reference
+does not perform — 2.7 % on block 1, so it is not the explanation.
+
+### A new, generalised builder
+
+`./build_fixtures.py` (new, exp16c-owned) emits both fixtures for **any** block and both tap axes.
+`../exp16a_PW_single_layer/build_fixtures.py` stays as it is: it is hardwired to block 1 and `1×K`
+and still carries exp16a's abandoned Slice/Add exploration, so generalising it in place would have
+destabilised exp16a's and exp16b's reproducibility. Both import Deeploy's own `_weightEncode`, so
+they cannot disagree about the bit layout.
+
+### Block 0 is genuinely blocked
+
+Its activation range is **`[-66, 127]`** — actually signed, so BLOCKER 3 is real and not an
+artefact of a conservative assertion. NE16 reads activations as unsigned and CONFIG0 bit 26
+(PR #183's `input_signed`) is undecoded by the hardware. Phase 4 handles it.

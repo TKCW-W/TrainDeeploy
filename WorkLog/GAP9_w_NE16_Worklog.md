@@ -593,3 +593,42 @@ weight's shape, so the per-core chunking — and hence the stream — matches th
 
 **Status:** blocker 1b is closed for the pointwise route. Remaining: STEP 3 (blocks 2/3/4, then
 block 0 with the signed-activation fix) and STEP 4 (NE16 is still ~4× slower than `pulp_nn_conv`).
+
+### 2026-09-11 — Session 4 (cont.): exp16c phase 3 — STEP 3a, blocks 1–4 all bit-exact
+
+Every non-block-0 SpeechNet conv now runs the complete on-device path
+`RQSPerturbRademacher → NE16WeightEncode → NE16 Conv → RequantShift`.
+
+| block | kernel | taps | Cin→Cout | out | disp. | errors | NE16 | cluster | ratio |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 1×16 | W | 8→16 | 14×88 | 16 | **0 / 19712** ✓ | 1,608,939 | 337,999 | 4.76× |
+| 2 | 1×8 | W | 16→16 | 14×23 | 8 | **0 / 5152** ✓ | 420,743 | 98,723 | 4.26× |
+| 3 | 7×1 | **H** | 16→32 | 8×5 | 7 | **0 / 1280** ✓ | 183,651 | 26,835 | 6.84× |
+| 4 | 7×1 | **H** | 32→32 | 2×5 | 7 | **0 / 320** ✓ | 145,990 | 30,329 | 4.81× |
+| 0 | 1×4 | W | 1→8 | 14×701 | — | **blocked (BLOCKER 3)** | — | — | — |
+
+All four passed on their **first** device run.
+
+**The one code change it needed — the `K×1` tap stride.** `Conv1xKTemplate` stepped `infeat_addr`
+by `ch_im_in * bytes`, i.e. one **pixel** along W. Blocks 3/4 are `7×1`, where one tap is one
+**row**. The row stride is `dim_im_in_x_stride` (names are transposed: `ioStridesFromDimensions`
+returns `(height_stride, width_stride)` and `NE161xKConstraint` assigns them to `x_stride,
+y_stride` in that order) and it is a **per-tile** value, so the template references the substituted
+variable rather than a constant from `alignToContext`. Verified in the generated C: block 3 emits
+`+ 1 * *..._dim_im_in_x_stride_ref`, block 1 the compile-time `+ 1 * 8`.
+
+Everything else came free: `_tapAxis` already returned 1 for `kh != 1`, the parser already admitted
+`K×1`, and the device encoder already handled both axes and `cinMajor = 2` — all three validated in
+the native ctypes test before any device run, which is why phase 3 cost four runs and no debugging.
+
+**Performance: NE16 is 4.3×–6.8× SLOWER than `pulp_nn_conv` on every block.** Correctness of the
+NE16 path is established; the gap is STEP 4, and exp16b already names the lever (fewer, larger
+dispatches → channel folding). The NE16 figures include the on-device perturb+encode the cluster
+reference does not do — 2.7 % on block 1, so that is not the explanation.
+
+**New file:** `exp16c_PW_single_layer/build_fixtures.py`, generalised over blocks and both tap
+axes. `exp16a/build_fixtures.py` deliberately left as-is (hardwired to block 1 / `1×K`, still
+carrying exp16a's abandoned Slice/Add exploration) so exp16a and exp16b stay reproducible.
+
+**Block 0 is genuinely blocked:** its activation range is `[-66, 127]` — actually signed, so
+BLOCKER 3 is real, not a conservative assertion. Phase 4 next.
