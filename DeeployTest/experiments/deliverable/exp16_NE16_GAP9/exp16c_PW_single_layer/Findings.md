@@ -3,9 +3,9 @@
 Date: **2026-09-11** · Branch `feat/GAP9_w_NE16` · Plan: `./Plan.md`
 Predecessors: `../exp16a_PW_single_layer`, `../exp16b_Dense_single_layer`
 
-> **Phase 1 COMPLETE.** The NE16 bit-serial weight encoding now happens **on device**, and the
-> block-1 layer stays bit-exact at full extent. Blocker 1b's hard half is closed.
-> Phases 2–4 open.
+> **Phases 1 and 2 COMPLETE — blocker 1b is closed.** The whole QZO weight path now runs on
+> device: `RQSPerturbRademacher → NE16WeightEncode → NE16 Conv`, bit-exact at full extent for
+> **both** ZO passes, at a total overhead of **2.7 %**. Phases 3–4 (STEP 3) open.
 
 ---
 
@@ -95,21 +95,65 @@ Two things fall out of this, both load-bearing for later phases:
 That is why phase 1 went green on its **first** device run — the two-hour class of bug that
 dominated exp16a and exp16b was priced out in a 3-second native test instead.
 
-## 3. What is still open
+## 3. Phase 2 result — the full QZO weight path
+
+The weight now arrives **unperturbed**; the device does both steps.
+
+| fixture | weight path | errors | cycles |
+|---|---|---|---|
+| `b1_1x16_pertenc_lp` | perturb (L⁺) → encode → conv | **0 / 19712** ✓ | 1,608,939 |
+| `b1_1x16_pertenc_ln` | perturb (L⁻) → encode → conv | **0 / 19712** ✓ | 1,608,945 |
+
+Generated C (`fixture/Network_1x16_pertenc.c`): `perturb=1`, `encode=1`, `dispatches=16`,
+`transposes=0`, `cluster convs=0`.
+
+### Cost of the complete on-device weight path
+
+| stage | cycles | Δ |
+|---|---|---|
+| host-encoded, host-perturbed (exp16a) | 1,567,096 | — |
+| + device encode (phase 1) | 1,593,285 | +26,189 |
+| + device perturb (phase 2) | 1,608,939 | +15,654 |
+| **total overhead** | | **+41,843 = 2.7 %** |
+
+Doing on device what the host used to do costs **2.7 %** of the layer. This is the number the
+linearity decomposition (Option B) would have been trading a doubled dispatch count to avoid.
+
+### How both ZO passes were tested without driving the ZO runtime
+
+`RandomNoiseQuant.c:31` notes that negating the Rademacher sign is *exactly* equivalent to negating
+the per-channel multiplier `M`. So `--neg-pmul` produces the L⁻ golden while the device runs with
+the neutral `perturbation_sign = +1` default — both passes are testable under the plain inference
+runner, with no ZO-runtime globals to set.
+
+It is a real second test, not a relabelling: **all 2048** weight elements differ between L⁺ and L⁻,
+and the output range moves `[-85,60] → [-82,57]`.
+
+### Why the RNG streams agree
+
+The device seed is
+`(seed + perturb_seed_base) + NUM_CORES*node_id + core_id`, with `node_id = attrs['idx']`. The
+fixture copies the source node's `AttributeProto`s **verbatim**, so `idx=2` and `seed=42` match the
+training graph, and the weight tensor keeps its shape — so the per-core chunking, and therefore the
+RNG stream, is identical to the host reference's.
+
+## 4. What is still open
 
 | | |
 |---|---|
-| **Phase 2** | the weight is still a *graph input*. In QZO it is an `RQSPerturbRademacher` output — wire that producer in and run L⁺/L⁻ |
 | **Phase 3** | STEP 3a: blocks 2, 3, 4 (`1×8`, `7×1`, `7×1`) |
 | **Phase 4** | STEP 3b: block 0, which additionally needs the signed-activation fix (BLOCKER 3) |
 | STEP 4 | NE16 is still ~4× slower than `pulp_nn_conv`; not this experiment's problem |
 
-## 4. Artefacts
+## 5. Artefacts
 
 ```
 Plan.md  Findings.md  results/results.json
-fixture/Network_1x16_devenc.c     generated C (1 encode call, 16 dispatches, 0 transposes)
-logs/step1_devenc_FULL.log        the passing device run
+fixture/Network_1x16_devenc.c     generated C, phase 1 (1 encode call, 16 dispatches, 0 transposes)
+fixture/Network_1x16_pertenc.c    generated C, phase 2 (+1 perturb call)
+logs/step1_devenc_FULL.log        phase 1
+logs/step2_pertenc_Lplus.log      phase 2, L+
+logs/step3_pertenc_Lminus.log     phase 2, L-
 ```
 
 Fixture data lives at `DeeployTest/Tests/Models/NE16/b1_1x16_devenc_dev/`

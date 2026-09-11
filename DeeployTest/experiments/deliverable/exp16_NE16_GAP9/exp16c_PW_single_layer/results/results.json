@@ -2,16 +2,71 @@
   "experiment": "exp16c_PW_single_layer",
   "date": "2026-09-11",
   "goal": "close blocker 1b (on-device weight encoding) and then STEP 3 (the other four SpeechNet convs)",
-  "status": "PHASE 1 COMPLETE (device-side encode bit-exact); phases 2-4 open",
+  "status": "PHASES 1-2 COMPLETE (perturb + encode + conv bit-exact on device, both ZO signs); phases 3-4 open",
   "phases": {
-    "1": {"what": "NE16WeightEncode kernel + op; weight arrives unencoded as an int8 graph input and is bit-serial encoded on the cluster", "status": "PASSED"},
-    "2": {"what": "RQSPerturbRademacher -> NE16WeightEncode -> Conv, L+ and L-", "status": "open"},
-    "3": {"what": "STEP 3a -- blocks 2, 3, 4 on NE16", "status": "open"},
-    "4": {"what": "STEP 3b -- block 0, needs the signed-activation fix", "status": "open"}
+    "1": {
+      "what": "NE16WeightEncode kernel + op; weight arrives unencoded as an int8 graph input and is bit-serial encoded on the cluster",
+      "status": "PASSED"
+    },
+    "2": {
+      "what": "RQSPerturbRademacher -> NE16WeightEncode -> Conv, L+ and L-",
+      "status": "PASSED"
+    },
+    "3": {
+      "what": "STEP 3a -- blocks 2, 3, 4 on NE16",
+      "status": "open"
+    },
+    "4": {
+      "what": "STEP 3b -- block 0, needs the signed-activation fix",
+      "status": "open"
+    }
   },
   "runs": [
-    {"name":"b1_1x16_devenc_dev","engine":"NE16","mode":"pointwise, weight encoded ON DEVICE","dispatches":16,"encode_calls":1,"extent":"FULL 14x88","errors":"0/19712","cycles":1593285,"status":"PASSED"},
-    {"name":"b1_1x16_ne16_nhwc (exp16a)","engine":"NE16","mode":"pointwise, weight encoded on HOST","dispatches":16,"extent":"FULL 14x88","errors":"0/19712","cycles":1567096,"status":"PASSED"}
+    {
+      "name": "b1_1x16_devenc_dev",
+      "engine": "NE16",
+      "mode": "pointwise, weight encoded ON DEVICE",
+      "dispatches": 16,
+      "encode_calls": 1,
+      "extent": "FULL 14x88",
+      "errors": "0/19712",
+      "cycles": 1593285,
+      "status": "PASSED"
+    },
+    {
+      "name": "b1_1x16_ne16_nhwc (exp16a)",
+      "engine": "NE16",
+      "mode": "pointwise, weight encoded on HOST",
+      "dispatches": 16,
+      "extent": "FULL 14x88",
+      "errors": "0/19712",
+      "cycles": 1567096,
+      "status": "PASSED"
+    },
+    {
+      "name": "b1_1x16_pertenc_lp",
+      "engine": "NE16",
+      "mode": "RQSPerturbRademacher -> NE16WeightEncode -> Conv (L+)",
+      "perturb_calls": 1,
+      "encode_calls": 1,
+      "dispatches": 16,
+      "extent": "FULL 14x88",
+      "errors": "0/19712",
+      "cycles": 1608939,
+      "status": "PASSED"
+    },
+    {
+      "name": "b1_1x16_pertenc_ln",
+      "engine": "NE16",
+      "mode": "same, L- (negated pmul)",
+      "perturb_calls": 1,
+      "encode_calls": 1,
+      "dispatches": 16,
+      "extent": "FULL 14x88",
+      "errors": "0/19712",
+      "cycles": 1608945,
+      "status": "PASSED"
+    }
   ],
   "encode_cost": {
     "cycles": 26189,
@@ -21,8 +76,26 @@
   },
   "kernel_validation": {
     "method": "compiled TargetLibraries/GAP9/src/NE16WeightEncode.c natively and compared against Deeploy's own _weightEncode via ctypes",
-    "shapes_checked": ["b1 1x16 cout16 cin8", "b0 1x4 cout8 cin1", "b2 1x8 cout16 cin16", "b3 7x1 cout32 cin16", "b4 7x1 cout32 cin32 (cinMajor=2)", "odd cin=20"],
+    "shapes_checked": [
+      "b1 1x16 cout16 cin8",
+      "b0 1x4 cout8 cin1",
+      "b2 1x8 cout16 cin16",
+      "b3 7x1 cout32 cin16",
+      "b4 7x1 cout32 cin32 (cinMajor=2)",
+      "odd cin=20"
+    ],
     "chunked_8core_path": "checked, identical",
     "result": "MATCH on every case -- so phases 3-4 need no new encoder"
-  }
+  },
+  "qzo_weight_path_cost": {
+    "host_encoded_baseline_cycles": 1567096,
+    "device_encode_cycles": 1593285,
+    "encode_delta": 26189,
+    "perturb_plus_encode_cycles": 1608939,
+    "perturb_delta": 15654,
+    "total_overhead_cycles": 41843,
+    "total_overhead_fraction": 0.0267,
+    "note": "full on-device QZO weight path (perturb + bit-serial encode) costs 2.7% of the layer"
+  },
+  "L_minus_method": "negating the per-channel multiplier is exactly equivalent to negating the Rademacher sign (RandomNoiseQuant.c:31), so L- is testable under the plain inference runner with the neutral perturbation_sign=+1 default. All 2048 weight elements differ between L+ and L-, and the output range moves [-85,60] -> [-82,57], so it is a real second test rather than a relabelling."
 }

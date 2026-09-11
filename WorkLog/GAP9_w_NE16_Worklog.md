@@ -559,3 +559,37 @@ cores, so it is registered in `GAP9Mapping`, not claimed by NE16), and `--device
 
 Phase 2: replace the graph-input weight with a real `RQSPerturbRademacher` producer and run L⁺/L⁻.
 Then STEP 3 — blocks 2/3/4, then block 0 with the signed-activation fix.
+
+### 2026-09-11 — Session 4 (cont.): exp16c phase 2 — BLOCKER 1b CLOSED
+
+The weight now arrives **unperturbed**; the device does perturbation *and* encoding.
+
+| fixture | weight path | errors | cycles |
+|---|---|---|---|
+| `b1_1x16_pertenc_lp` | RQSPerturbRademacher (L⁺) → NE16WeightEncode → NE16 Conv | **0 / 19712** ✓ | 1,608,939 |
+| `b1_1x16_pertenc_ln` | same, L⁻ | **0 / 19712** ✓ | 1,608,945 |
+
+Generated C: `perturb=1`, `encode=1`, `dispatches=16`, `transposes=0`, `cluster convs=0`.
+
+**Cost of the complete on-device QZO weight path:**
+
+| stage | cycles | Δ |
+|---|---|---|
+| host-perturbed, host-encoded (exp16a) | 1,567,096 | — |
+| + device encode | 1,593,285 | +26,189 |
+| + device perturb | 1,608,939 | +15,654 |
+| **total** | | **+41,843 = 2.7 %** |
+
+**Testing L⁻ without driving the ZO runtime:** `RandomNoiseQuant.c:31` — negating the Rademacher
+sign is exactly equivalent to negating the per-channel multiplier `M`. So `--neg-pmul` gives the
+L⁻ golden while the device keeps the neutral `perturbation_sign = +1` default; both ZO passes are
+testable under the plain inference runner. It is a real second test: **all 2048** weight elements
+differ between L⁺ and L⁻ and the output range moves `[-85,60] → [-82,57]`.
+
+**Why the RNG streams agree:** the device seed is
+`(seed + perturb_seed_base) + NUM_CORES*node_id + core_id` with `node_id = attrs['idx']`. The
+fixture copies the source node's `AttributeProto`s verbatim (`idx=2`, `seed=42`) and keeps the
+weight's shape, so the per-core chunking — and hence the stream — matches the host reference.
+
+**Status:** blocker 1b is closed for the pointwise route. Remaining: STEP 3 (blocks 2/3/4, then
+block 0 with the signed-activation fix) and STEP 4 (NE16 is still ~4× slower than `pulp_nn_conv`).

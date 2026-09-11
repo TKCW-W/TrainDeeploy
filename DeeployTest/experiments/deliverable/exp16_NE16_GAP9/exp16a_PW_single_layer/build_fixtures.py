@@ -114,6 +114,16 @@ def main() -> int:
                     help = "exp16b: emit the 1xK conv for the DENSE 3x3 chunk decomposition "
                            "(ceil(K/3) dispatches, each a 3x3 kernel with only the middle row "
                            "populated) instead of the all-pointwise one. Implies --nhwc.")
+    ap.add_argument("--perturb", action = "store_true", default = False,
+                    help = "exp16c phase 2 / blocker 1b: put the REAL RQSPerturbRademacher node in "
+                           "front of the encoder, fed the UNPERTURBED int8 weight, so the device "
+                           "runs the full QZO weight path perturb -> encode -> conv. Implies "
+                           "--device-encode. --neg-pmul negates the per-channel multiplier, which "
+                           "is exactly the L- pass (see RandomNoiseQuant.c: negating the Rademacher "
+                           "sign == negating M), so both ZO passes are testable under the plain "
+                           "runner without touching perturbation_sign.")
+    ap.add_argument("--neg-pmul", action = "store_true", default = False, dest = "neg_pmul",
+                    help = "negate the perturbation multiplier -> the L- pass (see --perturb)")
     ap.add_argument("--device-encode", action = "store_true", default = False, dest = "device_encode",
                     help = "exp16c / blocker 1b: deliver the weight UNENCODED as an int8 graph "
                            "input and insert an NE16WeightEncode node, so the bit-serial encoding "
@@ -152,6 +162,42 @@ def main() -> int:
     base = [npz[k] for k in sorted(k for k in npz.files if k.startswith("arr_"))]
     feed = {i.name: np.asarray(v) for i, v in zip(model.graph.input, base)}
     act, wpert = (np.asarray(t) for t in run_onnx_graph(src, feed, output_names = [ACT, WPERT]))
+    # QW (exp16c phase 2): the RQSPerturbRademacher node that PRODUCES wpert, plus its two inputs.
+    #     Copying the node's AttributeProtos verbatim keeps `idx` (which feeds the device kernel's
+    #     chunk_seed as node_id) and `seed` identical to the real graph, so the device RNG stream
+    #     matches the host reference exactly. -- QW
+    pert_node = next((n for n in g.nodes if n.op == "RQSPerturbRademacher"
+                      and n.outputs[0].name == WPERT), None)
+    if args.perturb:
+        assert pert_node is not None, f"no RQSPerturbRademacher producing {WPERT}"
+        src_pert_proto = next(n for n in model.graph.node if n.name == pert_node.name)
+        pert_protos, pert_domain = list(src_pert_proto.attribute), src_pert_proto.domain
+        w_raw = np.asarray(feed[pert_node.inputs[0].name]).astype(np.int8)
+        w_pmul = np.asarray(pert_node.inputs[1].values).astype(np.int32)
+        print(f"[pert ] {pert_node.name} domain={pert_domain!r} attrs="
+              f"{ {a.name: a.i for a in pert_protos if a.type == onnx.AttributeProto.INT} } "
+              f"w_raw{list(w_raw.shape)} pmul{list(w_pmul.shape)} range [{w_pmul.min()},{w_pmul.max()}]")
+        if args.neg_pmul:
+            # QW: the L- pass. RandomNoiseQuant.c:31 -- "negating r is exactly equivalent to
+            #     negating the per-channel multiplier M" -- so running the host reference with -M
+            #     gives the L- golden, and the device reproduces it with the NEUTRAL
+            #     perturbation_sign = +1 default. That keeps both ZO passes testable under the
+            #     plain inference runner, with no ZO-runtime globals to drive. -- QW
+            pg = helper.make_graph(
+                [helper.make_node("RQSPerturbRademacher", ["w", "pmul"], ["wp"],
+                                  name = "p", domain = pert_domain)],
+                "perturb_only",
+                [helper.make_tensor_value_info("w", onnx.TensorProto.INT8, list(w_raw.shape))],
+                [helper.make_tensor_value_info("wp", onnx.TensorProto.INT8, list(w_raw.shape))],
+                initializer = [numpy_helper.from_array((-w_pmul).astype(np.int32), "pmul")])
+            pg.node[0].attribute.extend(pert_protos)
+            pm = helper.make_model(pg, opset_imports = list(model.opset_import))
+            pm.ir_version = model.ir_version
+            ppath = "/tmp/_exp16c_perturb_neg.onnx"
+            onnx.save(pm, ppath)
+            wpert = np.asarray(run_onnx_graph(ppath, {"w": w_raw}, output_names = ["wp"])[0])
+            print(f"[pert-] L- weight recomputed with -pmul: range [{wpert.min()},{wpert.max()}] "
+                  f"(differs from L+ in {int((wpert != np.asarray(run_onnx_graph(src, feed, output_names=[WPERT])[0])).sum())} of {wpert.size} elements)")
     if args.crop_h or args.crop_w:   # -- QW: see --crop-h help
         act = act[:, :, :args.crop_h or act.shape[2], :args.crop_w or act.shape[3]].copy()
         print(f"[crop ] activation cropped to {list(act.shape)}")
@@ -204,9 +250,12 @@ def main() -> int:
     #     Weight layout: per-tap NE16 encoding stacked as (K, cout, cinMajor, bits*cinMinorBytes),
     #     so tap j's block is CONTIGUOUS at offset j*cout*cinMajor*16 and is byte-identical to
     #     what a standalone 1x1 conv of that tap would use. weight_offset = -128 fixed. -- QW
+    if args.perturb:
+        args.device_encode = True              # -- QW: exp16c phase 2 builds on phase 1
     if args.dense3x3 or args.device_encode:
         args.nhwc = True                       # -- QW: exp16b/exp16c always run NHWC-native
     kdir = os.path.join(args.out, (f"b1_1x{K}_dense3x3{args.suffix}" if args.dense3x3
+                                   else f"b1_1x{K}_pertenc{args.suffix}" if args.perturb
                                    else f"b1_1x{K}_devenc{args.suffix}" if args.device_encode
                                    else f"b1_1x{K}_ne16{args.suffix}"))
     os.makedirs(kdir, exist_ok = True)
@@ -279,12 +328,29 @@ def main() -> int:
                                           else [N, Cin, H, W + pads[1] + pads[3] + extra_w])]
     kVinfo = [helper.make_tensor_value_info("conv_out", onnx.TensorProto.INT32,
                                             [N, H, Wout, Cout] if args.nhwc else [N, Cout, H, Wout])]
+    kInits = [numpy_helper.from_array(mul, "rqs_mul"), numpy_helper.from_array(add, "rqs_add")]
     if args.device_encode:  # -- QW
-        enc_node = helper.make_node("NE16WeightEncode", ["weight"], ["weight_enc"],
+        # QW (exp16c phase 2): with --perturb the encoder is fed by the REAL RQSPerturbRademacher
+        #     instead of by a graph input -- perturb -> encode -> conv, the full QZO weight path on
+        #     device. The node's AttributeProtos are copied verbatim so `idx` (the device kernel's
+        #     chunk_seed node_id) and `seed` match the training graph, and the device RNG stream
+        #     therefore reproduces the host's wpert bit for bit. -- QW
+        encSrc = "weight"
+        if args.perturb:
+            encSrc = "weight_pert"
+            pn = helper.make_node("RQSPerturbRademacher", ["weight", "w_pmul"], ["weight_pert"],
+                                  name = "b1_wpert", domain = pert_domain)
+            pn.attribute.extend(pert_protos)   # verbatim -- `div` stays TENSOR-typed
+            kNodes = [pn] + kNodes
+            kInits.append(numpy_helper.from_array(
+                (-w_pmul if args.neg_pmul else w_pmul).astype(np.int32), "w_pmul"))
+            kVinfo.append(helper.make_tensor_value_info("weight_pert", onnx.TensorProto.INT8,
+                                                        list(wpert.shape)))
+        enc_node = helper.make_node("NE16WeightEncode", [encSrc], ["weight_enc"],
                                     name = "b1_wenc")
         enc_node.attribute.append(helper.make_attribute("ne16_taps", K))
         enc_node.attribute.append(helper.make_attribute("ne16_bits", 8))
-        kNodes = [enc_node] + kNodes
+        kNodes = [enc_node] + kNodes if not args.perturb else kNodes[:1] + [enc_node] + kNodes[1:]
         kIns.append(helper.make_tensor_value_info("weight", onnx.TensorProto.INT8, list(wpert.shape)))
         kVinfo.append(helper.make_tensor_value_info("weight_enc", onnx.TensorProto.UINT8,
                                                     list(enc_taps.shape)))
@@ -297,7 +363,7 @@ def main() -> int:
         kIns,
         [helper.make_tensor_value_info("output", onnx.TensorProto.INT8,
                                        [N, H, Wout, Cout] if args.nhwc else [N, Cout, H, Wout])],
-        initializer = [numpy_helper.from_array(mul, "rqs_mul"), numpy_helper.from_array(add, "rqs_add")],
+        initializer = kInits,
         value_info = kVinfo)
     mk = helper.make_model(kg, opset_imports = opset)
     mk.ir_version = model.ir_version
@@ -308,7 +374,9 @@ def main() -> int:
     # The golden always comes from the NCHW reference graph (ONNX Conv is NCHW-by-definition, so
     # run_onnx_graph must see NCHW); it is simply permuted for the NHWC-native device fixture.
     k_out = ref_out.transpose(0, 2, 3, 1).copy() if args.nhwc else ref_out
-    if args.device_encode:  # -- QW (exp16c): the device gets the RAW int8 weight
+    if args.perturb:  # -- QW (exp16c phase 2): the device gets the UNPERTURBED weight and does both steps
+        np.savez(os.path.join(kdir, "inputs.npz"), input = k_in, weight = w_raw.astype(np.int8))
+    elif args.device_encode:  # -- QW (exp16c phase 1): the device gets the RAW (already perturbed) int8 weight
         np.savez(os.path.join(kdir, "inputs.npz"), input = k_in, weight = wpert.astype(np.int8))
     else:
         np.savez(os.path.join(kdir, "inputs.npz"), input = k_in, weight_enc = enc_taps)
