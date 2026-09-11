@@ -3,58 +3,114 @@
 # SPDX-License-Identifier: Apache-2.0
 """QW (exp16a / STEP 2b): tile constraint for the 1xK -> K-pointwise NE16 decomposition.
 
-Two things make this different from NE16PWConv2DTileConstraint:
+What makes a 1xK node different from a pointwise one is the **halo**. Output columns
+`[w0, w0+Wt)` are produced from
 
-1. **Win != Wout.** A 1xK convolution shrinks W by K-1 (or, with the input pre-padded, keeps it).
-   The pointwise constraint asserts `outputWidthVar == inputWidthVar`, which a 1xK node violates.
+    tap 0  reading input [w0+0,  w0+0+Wt)
+    tap 1  reading input [w0+1,  w0+1+Wt)
+     ...
+    tap K-1 reading    [w0+K-1, w0+K-1+Wt)
+    -----------------------------------------
+    union:             [w0, w0+Wt+K-1)
 
-2. **The output tile must stay resident across all K dispatches.** Taps 1..K-1 use CONFIG0[14]
-   streamin, which preloads the accumulator from `outfeat_addr` -- so every tap must write the
-   SAME output buffer, and that buffer must not be evicted or re-DMA'd between dispatches.
+so each output tile of `Wt` columns needs `Wt + K - 1` input columns, overlapping the next tile by
+`K-1`. `NE16PWConv2DTileConstraint` asserts `inputWidthVar == outputWidthVar` (true for a genuine
+1x1 conv), which a 1xK node violates: taps 1..K-1 would read past the end of their input tile --
+silently, into whatever else sits in L1.
 
-The simplest constraint that satisfies both is to **not tile at all**: pin every dimension of
-every tensor to its maximum, so the whole layer is one tile resident in L1. For SpeechNet block 1
-that fits comfortably:
+This is exactly the relation `NE16DenseConv2DTileConstraint` already expresses for 3x3
+(`outW == (effW - (3-1) - 1)//stride + 1`); here the constant 3 becomes `K`, taken from the node's
+`ne16_taps` attribute, and applied along whichever axis carries the taps.
 
-    input  [1,14,103,8] int8   =  11.5 KB   (K=16, pre-padded)
-    weight (16,16,1,16) uint8  =   4.1 KB
-    output [1,14,88,16] int32  =  78.8 KB
-                       total   =  94.4 KB   <  110 KB (--l1 110000)
+**Streamin imposes nothing here.** Deeploy emits `for (TILING_I) { DMA in; <execution block>;
+DMA out; }` and the execution block is the whole template, so all K dispatches run inside ONE
+tiling iteration on the same L1 buffers -- the output tile cannot be evicted between taps.
+(Verified in the generated Network.c.) An earlier revision of this file claimed otherwise and used
+that as a reason to forbid tiling; that was wrong.
 
-This is a deliberate, documented limitation of exp16a, not a general solution: a layer whose
-int32 output exceeds L1 needs real tiling, and then the halo (K-1 extra input columns per tile)
-and the streamin residency both have to be modelled. Recorded as future work in Findings.md. -- QW
+The input is expected PRE-PADDED (padding is invalid in NE16's 1x1 mode and its guard in gvsoc
+fsm.cpp:53 is commented out), so no padding is modelled here. -- QW
 """
 
 from typing import Dict, List, Tuple
 
+from Deeploy.AbstractDataTypes import PointerClass
+from Deeploy.CommonExtensions.DataTypes import uint16_t, uint32_t
 from Deeploy.DeeployTypes import NetworkContext, OperatorRepresentation, VariableBuffer
+from Deeploy.Targets.NE16.Templates.ConvTemplate import NE162DPWConvTemplate, ioStridesFromDimensions
 from Deeploy.TilingExtension.MemoryConstraints import NodeMemoryConstraint
 from Deeploy.TilingExtension.TileConstraint import TileConstraint
-from Deeploy.TilingExtension.TilerModel import TilerModel
-from Deeploy.TilingExtension.TilingCodegen import AbsoluteHyperRectangle, TilingSchedule, VariableReplacementScheme
+from Deeploy.TilingExtension.TilerModel import PerformanceHint, TilerModel
+from Deeploy.TilingExtension.TilingCodegen import AbsoluteHyperRectangle, HyperRectangle, TilingSchedule, \
+    VariableReplacementScheme
+
+_NE16_SUBTILE_OUTPUT_HW = 3  # NE16 retires a 3x3 output patch per pass
+_NE16_TP_OUT = 32
+
+
+def _tapAxis(parseDict: Dict) -> int:
+    """Which NHWC spatial axis carries the K taps: 2 for 1xK (W), 1 for Kx1 (H)."""
+    kh, kw = (int(v) for v in parseDict['kernel_shape'])
+    return 2 if kh == 1 else 1
 
 
 class NE161xKConv2DTileConstraint(TileConstraint):
 
     @staticmethod
     def addGeometricalConstraint(tilerModel: TilerModel, parseDict: Dict, ctxt: NetworkContext) -> TilerModel:
-        for key in ('data_in', 'weight', 'data_out'):
-            tilerModel.addTensorDimToModel(ctxt, parseDict[key])
+        inName, wName, outName = parseDict['data_in'], parseDict['weight'], parseDict['data_out']
+        for name in (inName, wName, outName):
+            tilerModel.addTensorDimToModel(ctxt, name)
 
-        # Single-tile policy: every dimension pinned to its full extent. This simultaneously
-        # sidesteps the Win != Wout mismatch and guarantees the streamin residency requirement
-        # (one output buffer, never re-staged between the K dispatches).
-        for key in ('data_in', 'weight', 'data_out'):
-            buf = ctxt.lookup(parseDict[key])
-            for dimIdx in range(len(buf.shape)):
-                var = tilerModel.getTensorDimVar(tensorName = buf.name, dimIdx = dimIdx)
-                tilerModel.addConstraint(var == var.Max())
+        taps = int(parseDict['ne16_taps'])
+        axis = _tapAxis(parseDict)
+
+        inBatch = tilerModel.getTensorDimVar(tensorName = inName, dimIdx = 0)
+        outBatch = tilerModel.getTensorDimVar(tensorName = outName, dimIdx = 0)
+        tilerModel.addConstraint(outBatch == inBatch)
+
+        # The tapped axis shrinks by K-1 (the halo); the other spatial axis maps 1:1.
+        for dimIdx in (1, 2):
+            inVar = tilerModel.getTensorDimVar(tensorName = inName, dimIdx = dimIdx)
+            outVar = tilerModel.getTensorDimVar(tensorName = outName, dimIdx = dimIdx)
+            if dimIdx == axis:
+                tilerModel.addConstraint(outVar == inVar - (taps - 1))
+            else:
+                tilerModel.addConstraint(outVar == inVar)
+
+        # Full input channels: NE16 would otherwise produce partial sums over cin that our
+        # streamin chain (already carrying the K taps) has no room to also accumulate.
+        inCh = tilerModel.getTensorDimVar(tensorName = inName, dimIdx = 3)
+        tilerModel.addConstraint(inCh == inCh.Max())
+
+        # The encoded weight holds ALL taps and is addressed by the template as
+        # `weights_addr + j*weight_tap_bytes`; it must be present whole.
+        wBuf = ctxt.lookup(wName)
+        for dimIdx in range(len(wBuf.shape)):
+            var = tilerModel.getTensorDimVar(tensorName = wName, dimIdx = dimIdx)
+            tilerModel.addConstraint(var == var.Max())
         return tilerModel
 
     @staticmethod
     def addPolicyConstraint(tilerModel: TilerModel, parseDict: Dict, ctxt: NetworkContext) -> TilerModel:
-        return tilerModel  # nothing to prefer: the geometry is already fully determined
+        outName = parseDict['data_out']
+        outH = tilerModel.getTensorDimVar(tensorName = outName, dimIdx = 1)
+        outW = tilerModel.getTensorDimVar(tensorName = outName, dimIdx = 2)
+        outC = tilerModel.getTensorDimVar(tensorName = outName, dimIdx = 3)
+
+        # Same alignment preferences as the pointwise path: NE16 retires a 3x3 output patch and
+        # TP_OUT=32 channels per pass, so body tiles that are multiples of those waste less.
+        # PerformanceHints, never hard constraints -- a dimension smaller than the granularity
+        # simply takes its whole extent.
+        for key, var, gran, prio in (("dim_im_out_x", outH, _NE16_SUBTILE_OUTPUT_HW, 3),
+                                     ("dim_im_out_y", outW, _NE16_SUBTILE_OUTPUT_HW, 2),
+                                     ("ch_im_out", outC, _NE16_TP_OUT, 1)):
+            if parseDict[key] > gran:
+                tilerModel.addTileSizeDivisibleConstraint(parseDict, key, var, gran,
+                                                          strategy = PerformanceHint(priority = prio))
+            else:
+                tilerModel.addConstraint(var == var.Max(), strategy = PerformanceHint(priority = prio))
+        return tilerModel
 
     @classmethod
     def serializeTilingSolution(
@@ -62,21 +118,53 @@ class NE161xKConv2DTileConstraint(TileConstraint):
             targetMemLevel: str, ctxt: NetworkContext,
             operatorRepresentation: OperatorRepresentation) -> Tuple[VariableReplacementScheme, TilingSchedule]:
         outputCubes = [cube.rectangle for cube in absoluteOutputCubes]
-        addrNames = ['data_in', 'weight', 'data_out']
         inputBaseOffsets, outputBaseOffsets = cls.extractBaseAddr(tilingSolution, targetMemLevel,
-                                                                  operatorRepresentation, addrNames)
+                                                                  operatorRepresentation,
+                                                                  ['data_in', 'weight', 'data_out'])
 
-        inBuf: VariableBuffer = ctxt.lookup(operatorRepresentation['data_in'])
+        taps = int(operatorRepresentation['ne16_taps'])
+        axis = _tapAxis(operatorRepresentation)
         wBuf: VariableBuffer = ctxt.lookup(operatorRepresentation['weight'])
 
-        # One tile: each tensor is transferred whole, exactly once.
-        from Deeploy.TilingExtension.TilingCodegen import HyperRectangle
-        inputLoadSchedule = [{
-            "data_in": HyperRectangle((0,) * len(inBuf.shape), tuple(inBuf.shape)),
-            "weight": HyperRectangle((0,) * len(wBuf.shape), tuple(wBuf.shape)),
-        }]
-        outputLoadSchedule = [{"data_out": cube} for cube in outputCubes]
+        keys = ["dim_im_in_x_stride", "dim_im_in_y_stride", "dim_im_out_x_stride", "dim_im_out_y_stride",
+                "input_addr_offset", "nKo", "nKi", "nHo", "nWo", "bKo", "bKi", "bHo", "bWo", "bHi", "bWi"]
+        replacements: Dict[str, List[int]] = {k: [] for k in keys}
+        replacementTypes = {
+            k: PointerClass(uint32_t if ("stride" in k or k == "input_addr_offset") else uint16_t)
+            for k in keys
+        }
 
-        # Nothing varies per tile, so there is nothing to replace per iteration.
-        return VariableReplacementScheme({}, {}), \
+        inputLoadSchedule, outputLoadSchedule = [], []
+        for cube in outputCubes:
+            bOff, hOff, wOff, _ = cube.offset
+            bSz, hSz, wSz, cSz = cube.dims
+
+            # THE HALO: the tapped axis needs K-1 extra input elements.
+            inDims = [bSz, hSz, wSz, operatorRepresentation['ch_im_in']]
+            inDims[axis] += taps - 1
+            inCube = HyperRectangle((bOff, hOff, wOff, 0), tuple(inDims))
+            inputLoadSchedule.append({
+                "data_in": inCube,
+                # the whole encoded weight: the template indexes taps inside it
+                "weight": HyperRectangle((0,) * len(wBuf.shape), tuple(wBuf.shape)),
+            })
+            outputLoadSchedule.append({"data_out": cube})
+
+            inHSz, inWSz, inCSz = inDims[1], inDims[2], inDims[3]
+            # Strides come from the INPUT tile's own width, so each row step skips the halo too.
+            xStrideIn, yStrideIn = ioStridesFromDimensions(inWSz, inCSz, operatorRepresentation["input_bits"])
+            xStrideOut, yStrideOut = ioStridesFromDimensions(wSz, cSz, operatorRepresentation["output_bits"])
+            replacements["dim_im_in_x_stride"].append(xStrideIn)
+            replacements["dim_im_in_y_stride"].append(yStrideIn)
+            replacements["dim_im_out_x_stride"].append(xStrideOut)
+            replacements["dim_im_out_y_stride"].append(yStrideOut)
+            replacements["input_addr_offset"].append(0)  # input is pre-padded; no NE16 padding
+
+            # Counters describe ONE tap's pointwise job over this OUTPUT tile.
+            counters = NE162DPWConvTemplate.getCounters(inCSz, hSz, wSz, cSz, 0, 0, operatorRepresentation)
+            for name, value in zip(["nKo", "nKi", "nHo", "nWo", "bKo", "bKi", "bHo", "bWo", "bHi", "bWi"],
+                                   counters):
+                replacements[name].append(value)
+
+        return VariableReplacementScheme(replacements, replacementTypes), \
             TilingSchedule(inputBaseOffsets, outputBaseOffsets, inputLoadSchedule, outputLoadSchedule)

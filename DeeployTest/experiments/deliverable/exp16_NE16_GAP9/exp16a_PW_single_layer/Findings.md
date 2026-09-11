@@ -120,8 +120,9 @@ difference = 16384 = 0x4000  ->  exactly NE16_FLAG_STREAMIN
 ```
 
 **Spatial crop.** The activation is cropped to `4x24` (from `14x87`). `NE161xKConv2DTileConstraint`
-pins the layer to a SINGLE tile so the output stays resident across the K streamin dispatches; at
-full extent the int32 output alone is `14*88*16*4 = 78,848 B` and, together with the two layout
+pins the layer to a SINGLE tile to sidestep the `1×K` **halo** (each output tile of `Wt` columns
+needs `Wt + K - 1` input columns, while the pointwise constraint it derives from asserts
+`Win == Wout`). At full extent the int32 output alone is `14*88*16*4 = 78,848 B` and, together with the two layout
 transposes (each needing input+output resident), overflows GAP9's ~110 KB L1 —
 `Allocation failed for allocator 2`, after which the DMA runs on a null pointer
 (`dma/trace: Got error during transfer (addr: 0x10101, size: 0x100)`). Every value is real; only

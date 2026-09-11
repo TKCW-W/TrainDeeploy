@@ -349,10 +349,13 @@ docker exec deeploy_gap9 bash -lc '
 
 ### Known limitations (both recorded in `exp16a/Findings.md §4, §9`)
 
-* **Spatial crop `4×24`.** The single-tile constraint keeps the output resident across the K
-  streamin dispatches; at full `14×88` the int32 output is 78,848 B and, with the two layout
-  transposes, overflows GAP9's ~110 KB L1 (`Allocation failed for allocator 2`). Lifting this
-  needs real tiling with a `K-1` halo **and** streamin residency modelled — **blocker for STEP 3**.
+* **Spatial crop `4×24`.** The single-tile constraint sidesteps the `1×K` **halo** (an output tile
+  of `Wt` columns needs `Wt + K-1` input columns). At full `14×88` the int32 output is 78,848 B and, with the two layout
+  transposes, overflows GAP9's ~110 KB L1 (`Allocation failed for allocator 2`). Lifting this needs
+  only the halo relation in the tile constraint — the same one `NE16DenseConv2DTileConstraint`
+  already implements for 3×3. **Correction to an earlier note:** streamin does NOT require the
+  output tile to persist across tiling iterations; all K dispatches run inside ONE `TILING_I`
+  iteration, so residency is automatic (verified in the generated `Network.c`).
 * **Blocker 1b** still open: the host supplies the already-perturbed weight; the QZO loop computes
   it on device. Next = the linearity decomposition or a device-side encode kernel.
 
