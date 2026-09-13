@@ -69,11 +69,16 @@ class NE162D3x3ChunkConvTemplate(NE162DDenseConvTemplate):
         return ctxt, operatorRepresentation, []
 
 
+# QW (exp16c_SDK_port phase 1): pipelined over NE16's 2-deep job queue, same rationale and same
+# safety argument as Conv1xKTemplate.py -- see the long comment there. -- QW
 NE163x3ChunkTaskTemplateStr = """
 // NE16 1xK dense conv as ${ne16_chunks} DENSE 3x3 dispatches (streamin accumulation, exp16b)
+// Pipelined over NE16's 2-deep job queue -- see Conv1xKTemplate.py. -- QW
+{
+ne16_task_t task;
 % for _chunk in range(ne16_chunks):
 {
-    ne16_task_t task = {
+    task = (ne16_task_t) {
         .data = (ne16_task_data_t) {
             .weights_addr = (uint32_t)${weight} + ${_chunk} * ${weight_chunk_bytes},
             .infeat_addr = (uint32_t)${data_in} + ${_chunk} * ${input_chunk_bytes} - ${input_addr_offset},
@@ -123,11 +128,14 @@ NE163x3ChunkTaskTemplateStr = """
     task.kernel_shape = ${ne16_kernel_shape};
     task.depthwise = ${ne16_depthwise};
 
+    // Block only while both job contexts are busy, then program this chunk into the free one.
     ne16_nnx_dispatch_wait(ne16_pulp_get_dev());
     ne16_nnx_dispatch(ne16_pulp_get_dev(), &task);
-    ne16_nnx_resolve_wait(ne16_pulp_get_dev(), &task);
 }
 % endfor
+// Wait for the whole chunk chain exactly once, not once per chunk.
+ne16_nnx_resolve_wait(ne16_pulp_get_dev(), &task);
+}
 """
 
 NE163x3ChunkConv2D_Template = NE162D3x3ChunkConvTemplate(NE163x3ChunkTaskTemplateStr)

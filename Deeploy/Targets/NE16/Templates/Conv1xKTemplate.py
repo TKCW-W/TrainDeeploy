@@ -82,11 +82,37 @@ class NE162D1xKConvTemplate(NE162DPWConvTemplate):
 
 # One ne16_task_t is built per tap. Only weights_addr, infeat_addr and conf0 differ; the struct is
 # otherwise identical to the single-dispatch pointwise task in ConvTemplate.py.
+#
+# QW (exp16c_SDK_port phase 1): the dispatch loop is PIPELINED, matching the GAP9 SDK's own 1-D
+# NE16 kernel (`KerConv1D_StrideS_NE16`, CNN_BasicKernels_NE16.c:1643, which does
+# "already commit and trigger NE16 computation, while programming the next one").
+#
+# NE16 has a 2-deep job queue (NE16_TASK_QUEUE_SIZE, pulp-nnx ne16/hal/ne16.h:27).
+# `ne16_nnx_dispatch_wait` blocks only while the queue is FULL, so the core can program tap j+1's
+# registers into the free context while tap j is still computing. The previous revision called
+# `ne16_nnx_resolve_wait` after EVERY dispatch, and under GVSoC that reduces to
+# `ne16_task_queue_empty(dev)` (pulp_nnx_ne16.c:57) -- a full drain -- so every tap ran serialised
+# and the second job context was never used.
+#
+# This is SAFE with streamin, which creates a RAW dependency from tap j's output to tap j+1's
+# accumulator preload: GVSoC's `fsm_end_handler` (gap/ne16/src/fsm.cpp:88) decrements job_pending,
+# flips cxt_use_ptr and only THEN enqueues the next job, while `fsm_start_handler` sets
+# job_running = 1. Queued jobs therefore execute ONE AT A TIME, IN ORDER -- the queue is a
+# program-ahead buffer, not concurrency. Verified before this change was made.
+#
+# The task struct is declared ONCE outside the loop and reassigned per tap: `ne16_nnx_dispatch`
+# copies the descriptor into the accelerator's register context immediately
+# (`hwpe_task_queue_write_task`), so reuse is safe, and keeping the last task alive lets the final
+# `ne16_nnx_resolve_wait` carry a valid task id on real silicon (where, unlike GVSoC, the check
+# uses task->id). -- QW
 NE161xKTaskTemplateStr = """
 // NE16 1x${ne16_taps} dense conv as ${ne16_taps} pointwise dispatches (streamin accumulation)
+// Pipelined over NE16's 2-deep job queue -- see Conv1xKTemplate.py. -- QW
+{
+ne16_task_t task;
 % for _tap in range(ne16_taps):
 {
-    ne16_task_t task = {
+    task = (ne16_task_t) {
         .data = (ne16_task_data_t) {
             .weights_addr = (uint32_t)${weight} + ${_tap} * ${weight_tap_bytes},
 % if ne16_tap_axis == 1:
@@ -142,11 +168,14 @@ NE161xKTaskTemplateStr = """
     task.kernel_shape = ${ne16_kernel_shape};
     task.depthwise = ${ne16_depthwise};
 
+    // Block only while both job contexts are busy, then program this tap into the free one.
     ne16_nnx_dispatch_wait(ne16_pulp_get_dev());
     ne16_nnx_dispatch(ne16_pulp_get_dev(), &task);
-    ne16_nnx_resolve_wait(ne16_pulp_get_dev(), &task);
 }
 % endfor
+// Wait for the whole tap chain exactly once, not once per tap.
+ne16_nnx_resolve_wait(ne16_pulp_get_dev(), &task);
+}
 """
 
 NE161xKConv2D_Template = NE162D1xKConvTemplate(NE161xKTaskTemplateStr)

@@ -796,3 +796,57 @@ The decomposition was a rediscovery, not a contribution. What remains ours is th
 around it — on-device perturbation and bit-serial encoding of a weight that changes every training
 step. And the performance gap is unsurprising: a textbook dispatch loop against a library with
 years of shape-specific tuning.
+
+---
+
+## 2026-09-14 — Session 6: exp16c_SDK_port phase 1 — pipelined dispatch
+
+**Experiment:** `DeeployTest/experiments/deliverable/exp16_NE16_GAP9/exp16c_SDK_port/`
+
+Ported SDK **technique A** (`KerConv1D_StrideS_NE16` — *"already commit and trigger NE16
+computation, while programming the next one"*): the per-tap loop now blocks only while NE16's
+2-deep job queue is full, and waits for completion **once, after the whole chain**, instead of
+after every dispatch.
+
+**Safety, verified before changing anything:** `streamin` creates a RAW dependency from tap *j*'s
+output to tap *j+1*'s accumulator preload. GVSoC's `fsm_end_handler` (`gap/ne16/src/fsm.cpp:88`)
+decrements `job_pending`, flips `cxt_use_ptr`, and only **then** enqueues the next job;
+`fsm_start_handler` sets `job_running = 1`. Queued jobs execute **one at a time, in order** — the
+queue is a program-ahead buffer, not concurrency. The dependency is preserved.
+
+| block | before | after | saved | cluster | ratio |
+|---|---|---|---|---|---|
+| 0 | 5,517,302 | 5,480,672 | 0.66 % | 732,178 | 7.49× |
+| 1 | 1,608,939 | 1,548,078 | **3.78 %** | 337,999 | 4.58× |
+| 2 | 420,743 | 398,739 | **5.23 %** | 98,723 | 4.04× |
+| 3 | 183,651 | 176,503 | 3.89 % | 26,835 | 6.58× |
+| 4 | 145,990 | 142,915 | 2.11 % | 30,329 | 4.71× |
+| **total** | **7,876,625** | **7,746,907** | **1.65 %** | 1,226,064 | **6.32×** |
+
+All five still **bit-exact** (`0/78512`, `0/19712`, `0/5152`, `0/1280`, `0/320`).
+
+### This corrects my own exp16b interpretation
+
+exp16b concluded the layer is "DMA- and **setup**-bound", and I read "setup" as job programming.
+Pipelining removes almost all of that programming cost and buys only **1.65 %** — so job setup was
+*not* the dominant term. exp16b's observation stands (fewer dispatches **is** faster) but the
+mechanism is the **int32 `streamin` round-trips through L1**, not register writes.
+
+Two consequences:
+
+* **SDK technique B** (10 register writes instead of 24) is now clearly not worth its cost — it
+  would mean abandoning pulp-nnx's task API for a fraction of an already-1.65 % term. Dropped.
+* **SDK technique C** (im2col channel folding) matters *more* than I thought, because it removes
+  the streamin traffic outright: one dispatch, no accumulator round-trips, `TP_IN` fully packed.
+
+### Files changed
+
+* `Deeploy/Targets/NE16/Templates/Conv1xKTemplate.py` — task declared once outside the loop and
+  reassigned per tap; `ne16_nnx_resolve_wait` moved out of the loop.
+* `Deeploy/Targets/NE16/Templates/Conv3x3ChunkTemplate.py` — same, per chunk.
+
+### Next
+
+Phase 2: an automatic `1×K` → NE16 graph pass, so the **real** QZO graph compiles without a fixture
+builder hand-authoring the NE16 attributes. That, not performance, is the blocker for running full
+SpeechNet QZO on NE16.
