@@ -116,8 +116,13 @@ class NE16Engine(DeploymentEngine):
         if ks is None or len(ks) != 2:
             return False
         kh, kw = int(ks[0]), int(ks[1])
-        return self._weightAcceptable(node) and \
-            node.attrs.get("dilations", [1, 1]) == [1, 1] and \
+        # QW (exp16c_SDK_port phase 2): unlike the 3x3/PW paths, the 1xK path does NOT require a
+        #     gs.Constant weight. NE16Prepare1xKPass re-encodes it either way -- on the host for a
+        #     constant, or by inserting NE16WeightEncode for a runtime tensor (the QZO case, where
+        #     the weight is an RQSPerturbRademacher output). Engine coloring runs BEFORE that pass,
+        #     so if canExecute insisted on a constant here the rewrite would never see the node.
+        #     Gated behind enable1xK, so PR #183's behaviour is untouched. -- QW
+        return node.attrs.get("dilations", [1, 1]) == [1, 1] and \
             int(node.attrs.get("group", 1)) == 1 and \
             (node.attrs.get("strides", [1, 1]) == [1, 1] or self.enableStrides) and \
             ((kh == 1 and kw > 1) or (kw == 1 and kh > 1))

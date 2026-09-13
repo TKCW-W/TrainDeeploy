@@ -34,6 +34,16 @@ class NE16Deployer(GAP9Deployer):
         # NE16OptimizationPass below. This avoids breaking cluster-fallback DW convs
         # (stride-2 layers) when --enable-3x3 is on for mixed-engine graphs.
 
+        # QW (exp16c_SDK_port phase 2): NE16Prepare1xKPass must run AFTER engine coloring but
+        #     BEFORE PULPNCHWtoNHWCPass, which permutes every rank-4 conv input and takes the
+        #     spatial rank from the weight's rank -- both wrong for a bit-serial weight.
+        #     `_NCHWtoNHWC_fun` skips a weight marked `ne16_weight_preencoded`, but only if the mark
+        #     is already there. Appending (as below) would place it after ALL coloring and after
+        #     NHWC, so insert at index 1 instead: EngineColoringDeployer puts an EngineColoringPass
+        #     at index 0, so nodes are coloured by then. -- QW
+        from Deeploy.Targets.NE16.TopologyOptimizationPasses.Prepare1xKPass import NE16Prepare1xKPass  # -- QW
+        self.loweringOptimizer.passes.insert(1, NE16Prepare1xKPass("NE16"))  # -- QW
+
         self.loweringOptimizer.passes += [
             ConvEngineDiscolorationPass(),
             NE16OptimizationPass(self.default_channels_first, "NE16"),

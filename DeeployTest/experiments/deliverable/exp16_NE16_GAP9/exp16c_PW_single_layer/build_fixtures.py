@@ -79,6 +79,11 @@ def main() -> int:
     ap.add_argument("--out", default = "TrainDeeploy/DeeployTest/Tests/Models/NE16")
     ap.add_argument("--block", type = int, default = 2, help = "SpeechNet block index 0..4")
     ap.add_argument("--suffix", default = "")
+    ap.add_argument("--plain", action = "store_true", default = False,
+                    help = "exp16c_SDK_port phase 2: emit the conv with NO NE16 attributes and NO "
+                           "NE16WeightEncode node -- a plain NCHW Conv fed by RQSPerturbRademacher, "
+                           "exactly as the real QZO graph has it. NE16Prepare1xKPass must do the "
+                           "whole rewrite. This is the test that the flow works without fixture surgery.")
     ap.add_argument("--neg-pmul", action = "store_true", default = False, dest = "neg_pmul",
                     help = "negate the perturbation multiplier -> the L- pass (RandomNoiseQuant.c:31)")
     args = ap.parse_args()
@@ -185,7 +190,7 @@ def main() -> int:
     print(f"[ref  ] output {ref_out.shape} range [{ref_out.min()},{ref_out.max()}] -> {rdir}")
 
     # ---- 2. the NE16 fixture: perturb -> encode -> conv, NHWC-native ----------------------------
-    kdir = os.path.join(args.out, f"b{N_}_ne16{args.suffix}")
+    kdir = os.path.join(args.out, f"b{N_}_{'plain' if args.plain else 'ne16'}{args.suffix}")
     os.makedirs(kdir, exist_ok = True)
 
     # Weight layout: per-tap NE16 encoding stacked (taps*cout, cinMajor, encBytes). RANK 3 on
@@ -195,15 +200,39 @@ def main() -> int:
     enc_taps = np.concatenate([_weightEncode((t.astype(np.int32) - WEIGHT_OFFSET).astype(np.uint8), bits = 8)
                                for t in taps], axis = 0)
 
-    conv_n = helper.make_node("Conv", ["input", "weight_enc"], ["conv_out"], name = f"b{N_}_conv1xk",
-                              kernel_shape = [kh, kw], pads = [0, 0, 0, 0], strides = [1, 1],
-                              dilations = [1, 1], group = 1)
-    for k, v in (("ne16_weight_preencoded", 1), ("weight_offset", WEIGHT_OFFSET),
-                 ("ne16_taps", K), ("channels_first", 0)):
-        conv_n.attribute.append(helper.make_attribute(k, v))
+    preNodes = []
+    if args.plain:
+        # QW (exp16c_SDK_port phase 2): a PLAIN conv. No ne16_* attributes, no encode node, NCHW.
+        #     Everything NE16 needs must be produced by NE16Prepare1xKPass.
+        #
+        #     The Relu is not padding for the test: in the REAL QZO graph every conv except block 0
+        #     is fed through Relu (-> MaxPool -> Quant), and that is exactly what tells
+        #     NE16Prepare1xKPass the activation is non-negative -- NE16 reads activations as
+        #     unsigned and GAP9 has no signed-input bit. The single-layer fixture had cut that Relu
+        #     off, leaving the conv fed by a bare graph input, which the pass must (correctly)
+        #     refuse. Restoring it makes the fixture structurally honest; it is numerically the
+        #     identity here because the extracted activation is already >= 0 (asserted above).
+        #     The activation reaches this fixture as a GRAPH INPUT, so the pass's producer-chain
+        #     analysis cannot see the Relu that guarantees non-negativity in the real network --
+        #     and an int8 Relu cannot be spliced in to express it, because GAP9's only Relu binding
+        #     is fp32 (Targets/GAP9/Bindings.py:381). State it with the explicit override instead;
+        #     the value really is >= 0 (asserted above). In the real QZO graph the chain
+        #     Quant <- MaxPool <- Relu is visible and no override is needed.
+        conv_n = helper.make_node("Conv", ["input", "weight_pert"], ["conv_out"], name = f"b{N_}_conv",
+                                  kernel_shape = [kh, kw], pads = [0, 0, 0, 0], strides = [1, 1],
+                                  dilations = [1, 1], group = 1)
+        conv_n.attribute.append(helper.make_attribute("ne16_unsigned_input", 1))
+    else:
+        conv_n = helper.make_node("Conv", ["input", "weight_enc"], ["conv_out"], name = f"b{N_}_conv1xk",
+                                  kernel_shape = [kh, kw], pads = [0, 0, 0, 0], strides = [1, 1],
+                                  dilations = [1, 1], group = 1)
+        for k, v in (("ne16_weight_preencoded", 1), ("weight_offset", WEIGHT_OFFSET),
+                     ("ne16_taps", K), ("channels_first", 0)):
+            conv_n.attribute.append(helper.make_attribute(k, v))
     rqsAddName = "rqs_add_corr" if signedAct else "rqs_add"
     rqs_n = _rqs_node(f"b{N_}_rqs", "conv_out", "rqs_mul", rqsAddName, "output", rqs_protos, rqs_domain)
-    rqs_n.attribute.append(helper.make_attribute("channels_first", 0))
+    if not args.plain:
+        rqs_n.attribute.append(helper.make_attribute("channels_first", 0))
 
     pert_n = helper.make_node("RQSPerturbRademacher", ["weight", "w_pmul"], ["weight_pert"],
                               name = f"b{N_}_wpert", domain = pert_domain)
@@ -226,25 +255,31 @@ def main() -> int:
     Hp, Wp = actp.shape[2], actp.shape[3]
     assert (Hp if tapAxisH else Wp) == (Hout if tapAxisH else Wout) + K - 1, \
         f"tap-axis extent {(Hp if tapAxisH else Wp)} != out+{K-1}"
-    k_in = actp.transpose(0, 2, 3, 1).copy()           # NHWC-native: no layout Transposes at all
+    k_in = actp if args.plain else actp.transpose(0, 2, 3, 1).copy()   # plain = NCHW, let Deeploy lower it
     if signedAct:
         k_in = (k_in.astype(np.int32) + 128).astype(np.uint8)   # x_u = x + 128, read as uint8
-    k_out = ref_out.transpose(0, 2, 3, 1).copy()
+    k_out = ref_out if args.plain else ref_out.transpose(0, 2, 3, 1).copy()
 
+    kNodeList = (preNodes + [pert_n, conv_n, rqs_n] if args.plain
+                 else [pert_n] + extraNodes + [enc_n, conv_n, rqs_n])
     kg = helper.make_graph(
-        [pert_n] + extraNodes + [enc_n, conv_n, rqs_n],
+        kNodeList,
         f"b{N_}_ne16{args.suffix}",
         [helper.make_tensor_value_info("input",
                                        onnx.TensorProto.UINT8 if signedAct else onnx.TensorProto.INT8,
-                                       [Nb, Hp, Wp, Cin]),
+                                       [Nb, Cin, Hp, Wp] if args.plain else [Nb, Hp, Wp, Cin]),
          helper.make_tensor_value_info("weight", onnx.TensorProto.INT8, list(w_raw.shape))],
-        [helper.make_tensor_value_info("output", onnx.TensorProto.INT8, [Nb, Hout, Wout, Cout])],
+        [helper.make_tensor_value_info("output", onnx.TensorProto.INT8,
+                                       [Nb, Cout, Hout, Wout] if args.plain else [Nb, Hout, Wout, Cout])],
         initializer = [numpy_helper.from_array(mul, "rqs_mul"), numpy_helper.from_array(add, "rqs_add"),
                        numpy_helper.from_array((-w_pmul if args.neg_pmul else w_pmul).astype(np.int32), "w_pmul")],
         value_info = [helper.make_tensor_value_info("weight_pert", onnx.TensorProto.INT8, list(wpert.shape)),
-                      helper.make_tensor_value_info("weight_enc", onnx.TensorProto.UINT8, list(enc_taps.shape)),
                       helper.make_tensor_value_info("conv_out", onnx.TensorProto.INT32,
-                                                    [Nb, Hout, Wout, Cout])] + extraVinfo)
+                                                    [Nb, Cout, Hout, Wout] if args.plain
+                                                    else [Nb, Hout, Wout, Cout])]
+                     + ([] if args.plain else [helper.make_tensor_value_info(
+                            "weight_enc", onnx.TensorProto.UINT8, list(enc_taps.shape))])
+                     + extraVinfo)
     mk = helper.make_model(kg, opset_imports = opset)
     mk.ir_version = model.ir_version
     onnx.save(mk, os.path.join(kdir, "network.onnx"))   # no shape inference: shapes are explicit

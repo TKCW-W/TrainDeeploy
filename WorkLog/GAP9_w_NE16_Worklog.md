@@ -850,3 +850,70 @@ Two consequences:
 Phase 2: an automatic `1×K` → NE16 graph pass, so the **real** QZO graph compiles without a fixture
 builder hand-authoring the NE16 attributes. That, not performance, is the blocker for running full
 SpeechNet QZO on NE16.
+
+### 2026-09-14 — Session 6 (cont.): exp16c_SDK_port phase 2 — automatic `1×K` → NE16 rewrite
+
+Until now the NE16 form of a `1×K` conv — per-tap stacked bit-serial weight, `ne16_taps` /
+`weight_offset` / `ne16_weight_preencoded`, and the `NE16WeightEncode` node — was **authored by
+hand in the fixture builder**. The real QZO graph has none of it, so nothing could compile without
+fixture surgery. `NE16Prepare1xKPass` now does the rewrite.
+
+**Verified on a PLAIN graph** — ordinary NCHW `Conv`, runtime weight from `RQSPerturbRademacher`,
+no NE16 attributes at all:
+
+| fixture | errors | cycles | dispatches | device encodes | cluster convs |
+|---|---|---|---|---|---|
+| `b3_plain` (7×1) | **0 / 1280** ✓ | 180,585 | 7 | 1 | 0 |
+| `b4_plain` (7×1) | **0 / 320** ✓ | 146,409 | 7 | 1 | 0 |
+
+(Slightly above the hand-authored NHWC fixtures — 176,503 / 142,915 — because the plain graph is
+NCHW and pays for the layout Transposes the NHWC-native fixtures avoided.)
+
+#### Two ordering constraints that decide where the pass runs
+
+1. **After engine coloring, before `PULPNCHWtoNHWCPass`.** That pass permutes every rank-4 conv
+   input and takes the spatial rank from the *weight's* rank — both wrong for a bit-serial weight.
+   `_NCHWtoNHWC_fun` skips a weight marked `ne16_weight_preencoded`, but only if the mark is there
+   by then. `NE16Deployer` therefore **inserts at index 1**, right after the `EngineColoringPass`
+   that `EngineColoringDeployer` places at index 0 — appending (as the other NE16 passes do) would
+   put it after all coloring *and* after NHWC.
+2. **The node must still be a `Conv`.** The existing `ne16_taps` guard in `PULPConvRequantMergePass`
+   fires correctly, because index 1 is before every lowering pass.
+
+#### Three things the pass has to do that the fixtures did by hand
+
+* **Relax the engine gate.** `is1xKConv` required a `gs.Constant` weight via `_weightAcceptable`.
+  Coloring runs *before* the pass, so a runtime weight was rejected and the rewrite never saw the
+  node. The 1×K path re-encodes either way, so the requirement is dropped there (still behind
+  `enable1xK`, so PR #183 is untouched).
+* **Tag the RequantShift `channels_first = 1`.** It is deliberately not merged, so it sits
+  *outside* the NHWC region and consumes the NCHW tensor the layout pass transposes back. Without
+  the tag, `RequantShiftLayer.computeShapes` reads the channel count from the last axis:
+  `Could not broadcast rqs_mul_tensor from (32,) to [1, 5]`.
+* **Decide signedness structurally.** Every `Quant` in the QZO graph declares `signed = 1`, so the
+  type says nothing. Walking the producer chain does: blocks 1–4 reach a `Relu` through
+  `Quant ← MaxPool`, block 0 reaches the graph input. A conv that can be negative is **handed back
+  to the cluster**, never silently miscomputed. `ne16_unsigned_input=1` is an explicit override for
+  graphs where the chain cannot show it — needed by the single-layer fixtures, whose activation is
+  a bare graph input, and where an int8 `Relu` cannot be spliced in to express it because GAP9's
+  only `Relu` binding is fp32 (`Targets/GAP9/Bindings.py:381`).
+
+#### A silent-wrongness hazard closed
+
+The pass now **refuses padded convolutions**. NE16's 1×1 mode cannot pad, and its guard in
+`gvsoc fsm.cpp:53` is commented out — a padded 1×1 job returns wrong results rather than trapping.
+Every experiment so far pre-padded the activation *in the fixture data*; a real graph carries
+padding on the node. Without this guard the pass would have silently miscomputed blocks 0/1/2.
+
+**This is now the main coverage limit:** SpeechNet blocks 0/1/2 are padded
+(`[0,2,0,2]`, `[0,8,0,8]`, `[0,4,0,4]`), so only the two `7×1` blocks reach NE16 automatically.
+The GAP9 SDK solves this with pointer arithmetic plus border-subtile computation
+(`NE16_ComputeBorders`), not with NE16 padding — that is the shape of the fix, and it belongs in
+`NE161xKConstraint.serializeTilingSolution`.
+
+#### Files changed
+
+* `Deeploy/Targets/NE16/TopologyOptimizationPasses/Prepare1xKPass.py` — **new**, the pass
+* `Deeploy/Targets/NE16/Deployer.py` — insert at index 1
+* `Deeploy/Targets/NE16/Engine.py` — 1×K no longer requires a constant weight
+* `.../exp16c_PW_single_layer/build_fixtures.py` — `--plain`
