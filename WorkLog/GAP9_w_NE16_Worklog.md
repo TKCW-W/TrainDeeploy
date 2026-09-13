@@ -685,3 +685,114 @@ array is idle on each of its 4 dispatches, over the network's largest spatial ex
 STEP 4 is now the only thing between this and a useful accelerator. exp16b named the lever
 (dispatch count, not MAC utilisation) and block 0 illustrates the other half (`Cin` packing:
 `Cin=1` wastes 15/16 of `TP_IN`).
+
+---
+
+## 2026-09-14 — Session 5: exploring the GAP9 SDK — the vendor had already solved this
+
+**Trigger:** supervisor's point that GreenWaves must already handle corner cases like our
+`1×K` / `K×1`. Correct on every count.
+
+**Summaries written:** `ETH/WorkLog/GAP9_Container_Inventory.md` (what the `deeploy:gap9` image
+contains) and `ETH/WorkLog/GAP9_SDK_NE16_Corner_Cases.md` (the NE16 findings, with file/line
+references). This entry is the short version.
+
+### What the container actually is
+
+`ghcr.io/runwangdl/deeploy:gap9`, 13.7 GB, Ubuntu 22.04 x86_64. It is not a GAP9 runner — it is the
+**complete GreenWaves GAP9 SDK** (3.8 GB, commit `8c42b653…`) plus toolchains for SoftHier, Snitch,
+MemPool, Chimera and PULPOpen. The GAP9 SDK carries `tools/autotiler_v3` (their code generator,
+including `CNN_Generators_NE16.c` 243 KB and `CNN_BasicKernels_NE16.c` 267 KB), `tools/nntool`
+(their NN compiler), pmsis RTOS, and their own GVSoC with the GAP9 chip models. Two separate GVSoC
+installs exist; our runs use the SDK's, not `/app/install/gvsoc`.
+
+### Finding 1 — our exp16a decomposition **is** the vendor's own 1-D kernel
+
+`KerConv1D_StrideS_NE16` (`CNN_BasicKernels_NE16.c:1643`) is line-for-line what
+`Conv1xKTemplate.py` does: loop `subfilter_i = 0 … Fx-1`, `pIn += Tile_InFeat*subfilter_i*Dx`,
+`pFilt += <one encoded tap block>*subfilter_i`, `SET_STREAMIN` for `subfilter_i > 0`, padding via
+pointer arithmetic with `SetNE16_ConfigPad({0,0,0,0}, 0)`.
+
+Independent convergence — the algorithm is validated, but it was never an open problem.
+
+### Finding 2 — their PREFERRED route is the channel folding we filed as STEP 4
+
+`Ker_MM_Conv1DSmallv2_NE16` (`:4681`): the 8 cores build an im2col column buffer, NE16 then runs an
+ordinary **1×1** convolution with `ColBuffSize = InFeat*Fx` input channels. Two column buffers
+alternate so the cores prepare job *n+1* while NE16 computes job *n*.
+
+For SpeechNet this is close to ideal — `TP_IN = 16`:
+
+| block | kernel | Cin | Cin·K | TP_IN groups | our disp. | folded |
+|---|---|---|---|---|---|---|
+| 0 | 1×4 | 1 | 4 | 1 (¼ full) | 4 | 1 |
+| 1 | 1×16 | 8 | **128** | **8 exact** | 16 | 1 |
+| 2 | 1×8 | 16 | **128** | **8 exact** | 8 | 1 |
+| 3 | 7×1 | 16 | **112** | **7 exact** | 7 | 1 |
+| 4 | 7×1 | 32 | **224** | **14 exact** | 7 | 1 |
+
+Both levers exp16b/exp16c identified — dispatch count and `Cin` packing — at once.
+
+Note the generator's native `KOP_CONV1D` path is gated on `Height == 1`
+(`CNN_Generators_NE16.c:1169`), i.e. genuine 1-D signals. Our maps are 2-D, so for **our** shape
+their answer is specifically the im2col route; the kernel matcher selects on filter dims only and
+`Ker_MM_Conv1DSmallv2_NE16` is registered as `Fx = any, Fy = 1`.
+
+Also worth knowing: if the filter spans the whole input they collapse the conv to
+`CNN_LinearAct_NE16` with `InFeat*Fcx*Fcy` inputs — channel folding taken to its limit, and the
+first thing `CNN_ConvolutionNE16` checks.
+
+### Finding 3 — two concrete defects in OUR dispatch loop
+
+This is the immediately actionable part, and it plausibly accounts for much of the 4.3–7.5× gap.
+
+1. **We serialise where they pipeline.** NE16 has a 2-deep job queue
+   (`NE16_TASK_QUEUE_SIZE (2)`). They acquire a slot, program it, `COMMIT_AND_TRIGGER`, and
+   immediately acquire the next — *"already commit and trigger NE16 computation, while programming
+   the next one"* — blocking only when both slots are full. Our template calls
+   `ne16_nnx_resolve_wait` after **every** dispatch, and under GVSoC that reduces to
+   `ne16_task_queue_empty(dev)` — a full drain. Block 1's 16 taps therefore run with **zero**
+   overlap and the queue depth is never used.
+2. **We rewrite the whole register file every dispatch.** `ne16_nnx_dispatch` writes all
+   `sizeof(ne16_task_data_t)/4` = **24 words** each time. They write **10** in steady state
+   (3 pointers + 3 remainder + 2 dim + 2 config) and guard the invariant block —
+   strides, bias/scale pointers, padding, filter mask, weight offset — with `if (SubTileCount < 2)`,
+   because the two job contexts only need them once. exp16b proved this layer is **setup-bound**, so
+   this sits directly on the critical path.
+
+### Finding 4 — a trick not applicable to us, recorded anyway
+
+For a genuine 1-D signal they remap the W axis onto NE16's 3×3 output grid (`HW_SIZE = 3`,
+`SetNE16_Dim(Nb_KI, Nb_KO, 1, 1)`, `PreferedHWTile = OneDInput ? 9 : 3`) to retire **9** output
+pixels per dispatch instead of 3. Our maps are 2-D so we already fill the subtile.
+
+### Finding 5 — `ne16v2` exists in the SDK but is NOT GAP9
+
+`gvsoc/gvsoc_gap/gap/ne16v2/` decodes a far richer CONFIG0 than v1: **bit [28] `mode_signed`
+(0=uint8, 1=int8)**, **bit [15] `use_rounding`**, bias/scale broadcast [27]/[26], `ki_scatter`
+[11:9], matadd modes [31:30]. A signed-input bit and hardware rounding would remove **both** of our
+arithmetic workarounds (BLOCKER 3's `x+128` + `add − 128·Σw·mul`, and the `+div/2` baked into the
+bias).
+
+**Verified it is not ours:** `gap/gap9/cluster.py:27` does `from gap.ne16.ne16 import Ne16` and
+instantiates it at line 136; `gap/gap9/gap9.py` builds the chip from that cluster and the
+`gap9_v2` efuse/ROM — and `gap9_v2` is exactly the `TARGET_NAME` our `gap9_evk_audio.sh` sets. A
+tree-wide grep finds `ne16v2` referenced only inside `ne16v2.py` itself. So it is a
+next-generation HWPE model, and our workarounds remain necessary. (PR #183's `input_signed` at
+bit 26 matches neither model — in v2 that bit is `scale_broadcast`.)
+
+### Revised plan for STEP 4
+
+1. **Fix the dispatch loop first** (Finding 3) — one template, no new algorithm, aimed squarely at
+   the cost exp16b measured as dominant.
+2. **Then channel folding** (Finding 2), using `Ker_MM_Conv1DSmallv2_NE16` as the specification.
+3. **Keep our decomposition**: it matches the vendor's own 1-D kernel and, unlike theirs, already
+   handles runtime-perturbed weights — the QZO-specific part no inference SDK needs.
+4. **Ignore `ne16v2` features** — not in GAP9.
+
+### Honest framing
+
+The decomposition was a rediscovery, not a contribution. What remains ours is the QZO machinery
+around it — on-device perturbation and bit-serial encoding of a weight that changes every training
+step. And the performance gap is unsurprising: a textbook dispatch loop against a library with
+years of shape-specific tuning.
