@@ -917,3 +917,60 @@ The GAP9 SDK solves this with pointer arithmetic plus border-subtile computation
 * `Deeploy/Targets/NE16/Deployer.py` — insert at index 1
 * `Deeploy/Targets/NE16/Engine.py` — 1×K no longer requires a constant weight
 * `.../exp16c_PW_single_layer/build_fixtures.py` — `--plain`
+
+### 2026-09-14 — Session 6 (cont.): exp16c_SDK_port phase 3 — SpeechNet QZO runs on GAP9 with NE16
+
+```
+PASSED          Errors: 0 out of 8      (the harness's optimizer-output check)
+NE16 dispatches 14        device weight encodes 2        cluster convs 3
+train cycles    68,077,617  (cluster-only baseline: 66,817,357)
+```
+
+Blocks **3 and 4** (`7×1`, unpadded) execute on NE16 with their weights perturbed **and** bit-serial
+encoded on device; blocks 0/1/2 stay on the cluster because they are padded. Reproducible — two
+independent runs gave identical loss bits.
+
+Two harness gaps had to be closed first, both silent: `deeployMezoRunner` never threaded
+`--enable-1xk` into `gen_args` (its own header warns about exactly this), and `testMVPTraining.py`
+did not accept the flag or set `enable1xK` on the engine. Until both were fixed the NE16 engine
+claimed nothing and the whole graph fell back to the cluster.
+
+Also worth recording: `-D BN_FROZEN_STATS=ON` and `--l1 110000` are **load-bearing**. Without them
+`.weightmem_sram` overflows `L2_shared` by ~706 KB — **with or without NE16** (checked against the
+cluster-only baseline), so it is a pre-existing property of this graph, not an NE16 cost.
+
+#### OPEN, and important: full-network numerical equivalence is NOT established
+
+The per-pass losses differ from the cluster-only baseline
+(`lp = 0x3ff172fd` vs `0x3f9bbcb3`, and so on). Both runs pass the harness check and both are
+deterministic, but that check covers only 8 elements and the divergence is far too large to be
+last-ulp. **The port runs; it is not yet shown to be correct.**
+
+Three hypotheses tested and eliminated:
+
+* **Layout** — the lowered graph shows conv → NHWC int32 → `Transpose` → NCHW → RQS tagged
+  `channels_first=1`. Correct.
+* **Perturbation RNG** — generated C has `tile_seed_offset = 0` for every perturb node and
+  `node_id` from the stable `idx` attribute, so both runs use identical random directions.
+* **Requant rounding on the original RequantShift** — `b3_ref` (merged on cluster, `+div/2` baked)
+  and `b3_plain` (un-merged, NE16) both score 0 errors against the *same* golden.
+
+**Leading remaining hypothesis:** in-network, blocks 3/4 are requantised by a
+`QSTANDALONE_QCDQ_..._Quant`-derived RequantShift, **not** the original `RequantShift` the
+single-layer fixtures exercised. Preventing the merge changes which node requantises, and
+`_merge_conv_rq_fun` bakes `+div/2` into a constant add when it merges. That path was never covered
+by a single-layer test.
+
+**Next session's first task:** layer-probe the full network — dump block 3's int8 output under both
+configurations and diff.
+
+#### Second open item: padded convolutions
+
+`ne16_1xkAdmissible` refuses non-zero pads, so blocks 0/1/2 stay on the cluster and only **5.8 %**
+of conv MACs reach NE16. This is a correctness guard, not conservatism (NE16's 1×1 mode cannot pad
+and the gvsoc guard is commented out). The SDK's fix is pointer arithmetic plus border-subtile
+computation (`NE16_ComputeBorders`), and it belongs in `NE161xKConstraint.serializeTilingSolution`.
+Lifting it would bring block 1 — 68 % of conv MACs on its own — onto NE16.
+
+Full write-up with reproduction commands and a file-by-file change list:
+`DeeployTest/experiments/deliverable/exp16_NE16_GAP9/exp16c_SDK_port/Findings.md`.

@@ -122,10 +122,13 @@ class NE16Engine(DeploymentEngine):
         #     the weight is an RQSPerturbRademacher output). Engine coloring runs BEFORE that pass,
         #     so if canExecute insisted on a constant here the rewrite would never see the node.
         #     Gated behind enable1xK, so PR #183's behaviour is untouched. -- QW
-        return node.attrs.get("dilations", [1, 1]) == [1, 1] and \
-            int(node.attrs.get("group", 1)) == 1 and \
-            (node.attrs.get("strides", [1, 1]) == [1, 1] or self.enableStrides) and \
-            ((kh == 1 and kw > 1) or (kw == 1 and kh > 1))
+        # QW (exp16c_SDK_port phase 3): admissibility lives in ONE place, shared with the rewrite
+        #     pass. Coloring must not claim a node the pass cannot rewrite -- kernel shape, group,
+        #     dilations, strides, PADDING and input signedness are all decided there. Local import
+        #     to avoid an import cycle (the pass module imports the NE16 topology passes). -- QW
+        from Deeploy.Targets.NE16.TopologyOptimizationPasses.Prepare1xKPass import ne16_1xkAdmissible
+        del kh, kw
+        return ne16_1xkAdmissible(node)
 
     def canExecute(self, node: gs.Node) -> bool:
         if self.enable1xK and self.is1xKConv(node):  # -- QW

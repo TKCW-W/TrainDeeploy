@@ -94,6 +94,14 @@ def main(tiling_enabled: bool = True, default_platform: str = 'Siracusa', defaul
                         default = 0,
                         help = 'MeZO base seed (default: 0)\n')
 
+    # -- QW (exp16c_SDK_port phase 3): NE16 engine flags. As this file's own header warns, anything
+    #    not threaded explicitly into `gen_args` below silently does nothing -- so without these the
+    #    NE16 engine claims no node and the whole QZO network falls back to the cluster.
+    parser.add_argument('--enable-1xk', action = 'store_true', default = False, dest = 'enable_1xk',
+                        help = 'GAP9_w_NE16 only: let NE16 claim 1xK / Kx1 dense convolutions\n')
+    parser.add_argument('--enable-3x3', action = 'store_true', default = False, dest = 'enable_3x3',
+                        help = 'GAP9_w_NE16 only: let NE16 claim 3x3 and depthwise convolutions\n')
+
     args = parser.parse_args()
 
     platform = default_platform
@@ -112,6 +120,10 @@ def main(tiling_enabled: bool = True, default_platform: str = 'Siracusa', defaul
         cmake_args.extend(args.cmake)
 
     gen_args = [f'--cores={args.cores}']
+    if args.enable_1xk:  # -- QW
+        gen_args.append('--enable-1xk')  # -- QW
+    if args.enable_3x3:  # -- QW
+        gen_args.append('--enable-3x3')  # -- QW
     if args.tolerance is not None:
         gen_args.append(f'--tolerance={args.tolerance}')
     if args.input_type_map:

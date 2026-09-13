@@ -74,6 +74,44 @@ def _inputIsNonNegative(tensor: gs.Tensor, maxDepth: int = 8) -> bool:
     return False
 
 
+def ne16_1xkAdmissible(node: gs.Node) -> bool:
+    """Can NE16Prepare1xKPass actually rewrite this node?
+
+    This is the SINGLE source of truth, called both by `NE16Engine.is1xKConv` (so engine coloring
+    never claims a node the pass cannot rewrite) and by the pass itself. Keeping it in one place
+    matters: an earlier revision refused unsupported nodes only inside the pass, by dropping their
+    `engine` attribute -- and the very next `EngineColoringPass` simply re-claimed them, producing a
+    conv coloured NE16 with no `ne16_taps` that then failed to bind.
+    """
+    ks = node.attrs.get("kernel_shape", None)
+    if ks is None or len(ks) != 2:
+        return False
+    kh, kw = int(ks[0]), int(ks[1])
+    if not ((kh == 1 and kw > 1) or (kw == 1 and kh > 1)):
+        return False
+    if int(node.attrs.get("group", 1)) != 1:
+        return False
+    if list(node.attrs.get("dilations", [1, 1])) != [1, 1]:
+        return False
+    if list(node.attrs.get("strides", [1, 1])) != [1, 1]:
+        return False
+
+    # PADDING IS NOT MODELLED, and getting it wrong is SILENT: NE16's 1x1 mode cannot pad and its
+    # guard in gvsoc fsm.cpp:53 is commented out, so a padded 1x1 job returns wrong results rather
+    # than trapping. The template emits `.padding = 0` with `input_addr_offset = 0`; every fixture
+    # so far pre-padded the activation DATA, whereas a real graph carries padding on the node.
+    # SpeechNet blocks 0/1/2 are padded and therefore stay on the cluster. The GAP9 SDK solves this
+    # with pointer arithmetic plus border-subtile computation (`NE16_ComputeBorders`), not with NE16
+    # padding -- see the exp16c_SDK_port Findings.
+    if any(int(p) != 0 for p in node.attrs.get("pads", [0, 0, 0, 0])):
+        return False
+
+    # NE16 reads activations as UNSIGNED and GAP9's NE16 has no signed-input bit.
+    if int(node.attrs.get("ne16_unsigned_input", 0)) == 1:
+        return True
+    return _inputIsNonNegative(node.inputs[0])
+
+
 def _tapSlice(values: np.ndarray, j: int, tapAxisIsH: bool) -> np.ndarray:
     """Tap j of a (cout, cin, H, W) kernel as its own (cout, cin, 1, 1) pointwise kernel."""
     return values[:, :, j:j + 1, :] if tapAxisIsH else values[:, :, :, j:j + 1]
@@ -87,51 +125,13 @@ def _ne16_prepare_1xk_fun(graph: gs.Graph, match: Match, name: str, ne16EngineNa
     if "ne16_taps" in node.attrs:
         return graph  # already prepared -- the pass is idempotent
 
-    ks = node.attrs.get("kernel_shape", None)
-    if ks is None or len(ks) != 2:
-        return graph
-    kh, kw = int(ks[0]), int(ks[1])
-    if not ((kh == 1 and kw > 1) or (kw == 1 and kh > 1)):
-        return graph
-    if int(node.attrs.get("group", 1)) != 1:
-        return graph
-    if list(node.attrs.get("dilations", [1, 1])) != [1, 1]:
-        return graph
-    if list(node.attrs.get("strides", [1, 1])) != [1, 1]:
-        return graph
-
-    # QW: PADDING IS NOT MODELLED, and getting this wrong is SILENT. NE16's 1x1 mode cannot pad at
-    #     all (its guard in gvsoc fsm.cpp:53 is commented out, so a padded 1x1 job produces wrong
-    #     results rather than trapping), and the template emits `.padding = 0` with
-    #     `input_addr_offset = 0`. Every experiment so far pre-padded the activation in the FIXTURE
-    #     DATA; a real graph carries the padding on the node instead. Refuse those and let the
-    #     cluster have them.
-    #
-    #     This is the single biggest remaining gap: SpeechNet blocks 0/1/2 are padded
-    #     ([0,2,0,2], [0,8,0,8], [0,4,0,4]) and therefore stay on the cluster, leaving only the two
-    #     7x1 blocks on NE16. The GAP9 SDK's own 1-D kernel solves it with pointer arithmetic plus
-    #     border-subtile computation (`NE16_ComputeBorders`, CNN_BasicKernels_NE16.c) rather than
-    #     with NE16 padding -- that is the shape of the fix, and it belongs in
-    #     NE161xKConstraint.serializeTilingSolution. See the exp16c_SDK_port Findings. -- QW
-    if any(int(p) != 0 for p in node.attrs.get("pads", [0, 0, 0, 0])):
+    if not ne16_1xkAdmissible(node):
+        # Should not happen: the engine uses the same predicate, so an inadmissible node is never
+        # coloured NE16 in the first place. Kept as a guard in case the pass is reused elsewhere.
         node.attrs.pop("engine", None)
         return graph
 
-    # QW: NE16 reads activations as unsigned and GAP9's NE16 has no signed-input bit. Rather than
-    #     emit silently wrong results, hand the node back to the cluster. `ConvEngineDiscolorationPass`
-    #     (already in the NE16 pipeline) re-decides the colour after this mutation.
-    #     Lifting this needs an input-offset op (x -> x+128 as uint8) to pair with the existing
-    #     NE16SignedInputBias correction; see the exp16c_SDK_port Findings.
-    #     `ne16_unsigned_input=1` on the node is an explicit override for graphs where the producer
-    #     chain cannot show what the author knows -- e.g. a single-layer fixture whose activation is
-    #     a graph input. (GAP9's only `Relu` binding is fp32, `Bindings.py:381`, so an int8 Relu
-    #     cannot simply be spliced in to express it.) In the real QZO graph no override is needed:
-    #     the chain really is Quant <- MaxPool <- Relu for blocks 1-4, and Quant <- graph input for
-    #     block 0, so the analysis separates them on its own.
-    if int(node.attrs.get("ne16_unsigned_input", 0)) != 1 and not _inputIsNonNegative(node.inputs[0]):
-        node.attrs.pop("engine", None)
-        return graph
-
+    kh, kw = (int(v) for v in node.attrs["kernel_shape"])
     taps = kh * kw
     tapAxisIsH = (kh != 1)
     weight = node.inputs[1]

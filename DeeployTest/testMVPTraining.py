@@ -68,6 +68,13 @@ def generateTiledTrainingNetwork(args) -> None:
 
     # 3. Platform setup.
     platform, signProp = mapPlatform(args.platform)
+
+    # -- QW (exp16c_SDK_port phase 3): NE16 engine flags, mirroring testMVP.py:77-82. Without these
+    #    the NE16 engine claims nothing and the whole QZO training graph falls back to the cluster.
+    if getattr(args, "enable_3x3", False):  # -- QW
+        platform.engines[0].enable3x3 = True  # -- QW
+    if getattr(args, "enable_1xk", False):  # -- QW
+        platform.engines[0].enable1xK = True  # -- QW
     log.debug(f"Platform: {platform} (sign: {signProp})")
 
     clusters = [engine for engine in platform.engines if isinstance(engine, PULPClusterEngine)]
@@ -340,6 +347,16 @@ if __name__ == '__main__':
                         action = "store_true",  # -- QW
                         help = "MeZO (ZO) mode: emit loss_plus/loss_minus references in testoutputs.h "  # -- QW
                         "instead of the BP single-loss reference.")  # -- QW
+    parser.add_argument('--enable-1xk',  # -- QW
+                        dest = "enable_1xk",
+                        action = "store_true",
+                        default = False,
+                        help = 'GAP9_w_NE16: let NE16 claim 1xK / Kx1 dense convs\n')
+    parser.add_argument('--enable-3x3',  # -- QW
+                        dest = "enable_3x3",
+                        action = "store_true",
+                        default = False,
+                        help = 'GAP9_w_NE16: let NE16 claim 3x3 / depthwise convs\n')
     parser.add_argument("--shouldFail", action = "store_true")
     parser.add_argument('--promoteToL2',
                         action = 'store_true',
