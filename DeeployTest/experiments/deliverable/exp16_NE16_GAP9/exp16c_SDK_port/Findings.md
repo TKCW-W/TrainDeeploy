@@ -198,6 +198,20 @@ single-layer fixtures exercised. Preventing the conv+requant merge changes which
 requantisation, and `_merge_conv_rq_fun` bakes `+div/2` rounding into a **constant** add when it
 merges. That path has never been covered by a single-layer test.
 
+**Further evidence gathered, narrowing it:**
+
+* The fused and standalone requant paths use **different rounding conventions that cancel**. The
+  generated C shows `b3_ref` (merged, cluster) carrying `rqs_add = {65468, 65476, ...}` — i.e.
+  `32700 + 32768`, the `+div/2` the merge bakes in — while `b3_plain` (NE16, un-merged) carries the
+  raw `{32700, 32708, ...}`. **Both score `0 / 1280` against the same golden**, so the fused kernel
+  truncates and needs the baked rounding, and `RequantShift_s32_s8_NCHW` rounds internally and must
+  not get it. That is self-consistent, and it means rounding is *not* the explanation.
+* The full network uses `RequantShift_s32_s8_NCHW` exactly **twice** — once per NE16 conv — the same
+  kernel that is bit-exact in isolation. So the kernel is not the variable either.
+* The harness's `0 out of 8` covers only **8 elements** of the update graph, whose fixture carries
+  `loss_plus (52,)`, `loss_minus (52,)` and `grad (13,)` among ~20 output tensors. It is far too
+  coarse to certify forward-pass equivalence, which is why it passes in both configurations.
+
 **Next step:** layer-probe the full network — dump block 3's int8 output under both configurations
 and diff. This is the top priority before the port can be called correct.
 

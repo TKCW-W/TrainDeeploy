@@ -974,3 +974,19 @@ Lifting it would bring block 1 — 68 % of conv MACs on its own — onto NE16.
 
 Full write-up with reproduction commands and a file-by-file change list:
 `DeeployTest/experiments/deliverable/exp16_NE16_GAP9/exp16c_SDK_port/Findings.md`.
+
+#### Session 6 addendum — two more hypotheses eliminated for the loss divergence
+
+* **Requant rounding is self-consistent, not the cause.** Generated C: `b3_ref` (merged, cluster)
+  carries `rqs_add = {65468, 65476, …}` = `32700 + 32768` — the `+div/2` the merge bakes in — while
+  `b3_plain` (NE16, un-merged) carries the raw `{32700, 32708, …}`. **Both score `0/1280` against
+  the same golden.** So the fused kernel truncates and needs the baked rounding, while
+  `RequantShift_s32_s8_NCHW` rounds internally and must not get it. The two conventions cancel.
+* **Same kernel in-network.** The full NE16 network contains `RequantShift_s32_s8_NCHW` exactly
+  twice — one per NE16 conv — the same kernel that is bit-exact in isolation.
+* **The pass criterion is weak.** `Errors: 0 out of 8` checks 8 elements of the update graph, whose
+  fixture carries `loss_plus (52,)`, `loss_minus (52,)`, `grad (13,)` and ~20 output tensors. It
+  cannot certify forward-pass equivalence, which is why it passes in both configurations.
+
+Still unexplained, still the top priority: a device layer-probe of block 3's int8 output under both
+configurations.
