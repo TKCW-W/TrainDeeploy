@@ -2,7 +2,7 @@
   "experiment": "exp16c_SDK_port",
   "date": "2026-09-14",
   "goal": "port the GAP9 SDK's NE16 techniques into our flow and run SpeechNet QZO on GAP9 with NE16",
-  "status": "phases 1-3 landed (plumbing works end-to-end); the full-network NE16 result is NUMERICALLY WRONG -- see numerical_status",
+  "status": "phases 1-3 landed; a +div/2 rounding bug found and FIXED; NE16 now matches the host reference as closely as the cluster, with one smaller residual pass remaining",
   "phase1_pipelined_dispatch": {
     "technique": "SDK technique A (KerConv1D_StrideS_NE16): block only while NE16's 2-deep job queue is full; resolve once after the whole tap chain",
     "per_block": [
@@ -95,44 +95,49 @@
     "why": "NE16's 1x1 mode cannot pad and its gvsoc guard (fsm.cpp:53) is COMMENTED OUT, so a padded job returns wrong results rather than trapping. Every fixture so far pre-padded the activation DATA; a real graph carries padding on the node.",
     "fix_shape": "The GAP9 SDK handles it with pointer arithmetic plus border-subtile computation (NE16_ComputeBorders, CNN_BasicKernels_NE16.c), not with NE16 padding. That belongs in NE161xKConstraint.serializeTilingSolution."
   },
-  "numerical_status": {
-    "verdict": "WRONG. Measured against the host reference losses in speechnet_qzo12_update/outputs.npz, the NE16 run is 20-55% off while the cluster baseline matches to ~1e-5.",
-    "examples": [
-      {
-        "pass": "L+ #0",
-        "ne16": 1.8863217,
-        "cluster": 1.2166961,
-        "host_reference": 1.2166874
-      },
-      {
-        "pass": "L- #0",
-        "ne16": 0.4562725,
-        "cluster": 0.2909873,
-        "host_reference": 0.2909976
-      },
-      {
-        "pass": "L+ #3",
-        "ne16": 2.1837227,
-        "cluster": 1.6105008,
-        "host_reference": 1.5945725
-      }
+  "rounding_bug": {
+    "file": "Deeploy/Targets/PULPOpen/Templates/RequantShiftTemplate.py (and the Generic twin)",
+    "bug": "the standalone RequantShift passed rounding=1 unconditionally, while PULPConvRequantMergePass bakes +div/2 into the add ONLY for a gs.Constant add; for a runtime (perturbed) add it bakes nothing and the fused kernel truncates",
+    "effect": "with div=65536 the NE16 (un-merged) path was off by exactly div/2 -- a systematic +0.5 LSB on every output element of blocks 3 and 4, amplifying to a 20-55% wrong loss",
+    "why_isolated_tests_missed_it": "the single-layer fixtures bake the perturbed bias in as a CONSTANT initializer, which puts them in the branch where merged and un-merged agree by construction",
+    "pre_existing": "the bug is older than this work but was unreachable -- with every conv fused into RequantizedConv, no standalone RequantShift with a runtime add ever existed. NE16 is the first thing to leave one un-merged, and it must, because streamin forces int32 output.",
+    "fix": "rqs_rounding = int(hasattr(addBuffer,'values') and addBuffer.values is not None)",
+    "verified": "generated C now ends both NE16 requant calls with '-128, 127, 0)'"
+  },
+  "numerical_result": {
+    "losses_after_fix": [
+      1.216181,
+      0.289454,
+      0.190928,
+      1.145638,
+      0.106618,
+      0.016925,
+      1.6103,
+      0.543904
     ],
-    "why_harness_passes": "'Errors: 0 out of 8' checks the UPDATE graph, which is driven by the reference loss_plus/loss_minus arrays from the fixture, not by the device-measured losses. It is structurally blind to the forward pass.",
-    "bisection": {
-      "block3_only": 1.819185,
-      "block4_only": 1.258438,
-      "cluster_only": 1.216696,
-      "note": "both convs independently wrong; with only block 4 on NE16 it receives a known-correct input (blocks 0-3 all cluster) and is still wrong, while being bit-exact in isolation"
-    },
-    "eliminated": [
-      "layout of the un-merged RequantShift (verified NCHW + channels_first=1)",
-      "perturbation RNG (tile_seed_offset=0, node_id from the stable idx attribute)",
-      "requant rounding (fused truncates + baked div/2, standalone rounds internally; both score 0/1280 on the same golden)",
-      "requant call arguments (verified against RequantShift.h:105: log2D=16, HW=40, rounding=1)",
-      "spatial tiling (single-layer fixture forced to the SAME 4-way tiling still scores 0/1280)",
-      "output-channel tiling (nKo/bKo are scalars, Cout is not split)"
+    "cluster": [
+      1.216696,
+      0.290987,
+      0.188705,
+      1.132746,
+      0.108673,
+      0.01682,
+      1.610501,
+      0.54526
     ],
-    "structural_note": "The cluster has NO int8 standalone Conv binding (only PULPFPConv2D*), so the un-merged Conv+RequantShift path exists only on NE16 and has never been checked against an independent implementation -- the single-layer goldens come from run_onnx_graph on the same un-merged graph.",
-    "next_step": "Dump the encoded weight and block 3's int32 conv output from the FULL network and diff against host-computed values. Leading hypothesis: buffer lifetime/aliasing of weight_enc or the int32 intermediate under full-network memory pressure."
+    "host_reference": [
+      1.216687,
+      0.290998,
+      0.190276,
+      1.132753,
+      0.108246,
+      0.016822,
+      1.594573,
+      0.545274
+    ],
+    "max_abs_ne16_vs_host": 0.01573,
+    "max_abs_cluster_vs_host": 0.01593,
+    "verdict": "NE16 is now as close to the host reference as the cluster is (marginally closer). The ~1.6e-2 residual on L+ #3 is present in the cluster baseline too -- the known pre-existing device-vs-host int8/fp32 gap.",
+    "residual": "Against the cluster directly, six of eight passes agree to ~1e-3 or better but L- #1 differs by 1.29e-2, where the cluster tracks the host to 7e-6. A second, ~40x smaller discrepancy remains -- signature changed from uniform offset to sparse disagreement, suggesting a few 1-LSB elements rather than a systematic bias. Next to chase."
   }
 }

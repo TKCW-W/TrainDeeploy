@@ -1040,3 +1040,62 @@ stresses.
 
 A second diagnostic (`QW_NOMERGE_KS`, forcing the same un-merge on the cluster) was written and then
 **removed**: it cannot work, because of the missing int8 cluster Conv binding above.
+
+### 2026-09-14 — Session 6 (cont.): the `+div/2` rounding bug — FOUND and FIXED
+
+The wrong full-network loss has a single, concrete cause, and it is a **pre-existing Deeploy bug
+that only NE16 could reach**.
+
+**File:** `Deeploy/Targets/PULPOpen/Templates/RequantShiftTemplate.py` (and the Generic twin) —
+the standalone RequantShift passed `rounding = 1` to the kernel **unconditionally**.
+
+`PULPConvRequantMergePass._merge_conv_rq_fun` bakes `+div/2` into the requant's `add` **only when
+that add is a `gs.Constant`**. For a *runtime* add — a perturbed bias, i.e. an
+`RQSPerturbRademacher` output, which is exactly the QZO case — it bakes nothing and the fused
+kernel truncates, matching the host reference. So:
+
+| | merged (cluster) | standalone (NE16) |
+|---|---|---|
+| **constant** add | `+div/2` baked, kernel truncates | kernel adds `div/2` itself → **agree** ✓ |
+| **variable** add | nothing baked, kernel truncates | kernel still adds `div/2` → **off by `div/2`** ✗ |
+
+With `div = 65536` that is a systematic **+0.5 LSB on every output element** of blocks 3/4.
+
+**Why every isolated fixture missed it:** the single-layer builders evaluate the perturbed bias on
+the host and bake it in as a **constant initializer** — the agreeing row. The real graph takes the
+disagreeing row. This is also why `b3_ref` (merged, `add = 32700 + 32768`) and `b3_plain`
+(un-merged, `add = 32700`) matched each other exactly: both end up computing
+`(acc·mul + 65468) >> 16`.
+
+**Why it had never been hit:** with every convolution fused into a `RequantizedConv`, no standalone
+RequantShift with a runtime add ever existed. NE16 is the first thing to leave one un-merged — and
+it must, because `streamin` forces int32 output.
+
+**Fix:** derive the flag instead of hardcoding it —
+`rqs_rounding = int(hasattr(addBuffer, "values") and addBuffer.values is not None)`.
+Generated C now ends both NE16 requant calls with `-128, 127, 0)`.
+
+#### Result
+
+| pass | NE16 before | **NE16 after** | cluster | host ref |
+|---|---|---|---|---|
+| L+ #0 | 1.886322 | **1.216181** | 1.216696 | 1.216687 |
+| L− #0 | 0.456273 | **0.289454** | 0.290987 | 0.290998 |
+| L+ #3 | 2.183723 | **1.610300** | 1.610501 | 1.594573 |
+
+```
+max |NE16_after − host_ref| = 1.57e-2
+max |cluster    − host_ref| = 1.59e-2     <- pre-existing device-vs-host gap
+```
+
+**NE16 is now as close to the host reference as the cluster is** (marginally closer). The residual
+~1.6e-2 on L+ #3 appears in the cluster baseline too, so it is the known int8/fp32 divergence, not
+an NE16 artefact.
+
+#### Residual, stated honestly
+
+Against the cluster directly, six of eight passes agree to ~1e-3 or better, but **L− #1 differs by
+1.29e-2** while the cluster tracks the host to 7e-6 there. Identical int8 datapaths would give
+identical losses, so **a second, ~40× smaller discrepancy remains**. The signature has changed from
+a uniform offset to sparse disagreement, which points at a handful of 1-LSB elements rather than a
+systematic bias. That is the next thing to chase.

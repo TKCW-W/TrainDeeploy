@@ -7,11 +7,11 @@ Driver: `ETH/WorkLog/GAP9_SDK_NE16_Corner_Cases.md`
 > on the accelerator, their weights perturbed *and* bit-serial encoded on device, and nothing
 > hand-authored in the graph. The plumbing works.
 >
-> **But the full-network result is numerically WRONG** (§5): measured against the host reference
-> losses the NE16 run is 20–55 % off where the cluster baseline matches to ~1e-5 — and the harness
-> reports `PASSED` regardless, because its check is driven by reference losses rather than the
-> device's. Every layer is bit-exact *in isolation*, including under the same tiling, so the fault
-> is in the integration. §5 lists six eliminated hypotheses and the next step.
+> A real numerical bug was found and **fixed** along the way (§5): a standalone RequantShift passed
+> `rounding = 1` unconditionally, while the conv+requant merge bakes `+div/2` only into a *constant*
+> add — so with the perturbed (runtime) bias the NE16 path was off by exactly `div/2`, a systematic
+> +0.5 LSB on every element. Losses went from 20–55 % wrong to matching the host reference as
+> closely as the cluster does. A much smaller residual remains on one pass (§5, last part).
 >
 > Padded convolutions are also still refused, so only 5.8 % of conv MACs reach NE16 (§6).
 
@@ -139,6 +139,8 @@ Logs for every run above are in `./logs/`; the generated `TrainingNetwork.c` is 
 | `Deeploy/Targets/NE16/Engine.py` | **phase 2/3** — `is1xKConv` defers to `ne16_1xkAdmissible`; a 1×K conv no longer needs a `gs.Constant` weight |
 | `DeeployTest/testUtils/deeployMezoRunner.py` | **phase 3** — thread `--enable-1xk` / `--enable-3x3` into `gen_args` |
 | `DeeployTest/testMVPTraining.py` | **phase 3** — accept those flags and set `enable1xK` / `enable3x3` on the NE16 engine |
+| `Deeploy/Targets/PULPOpen/Templates/RequantShiftTemplate.py` | **§5 bug fix** — `rounding` derived from whether the `add` is a constant, instead of hardcoded `1` |
+| `Deeploy/Targets/Generic/Templates/RequantShiftTemplate.py` | same fix in the Generic twin |
 | `.../exp16c_PW_single_layer/build_fixtures.py` | `--plain` (emit a graph with no NE16 attributes at all) |
 
 ### Three things the pass has to do that the fixtures used to do by hand
@@ -175,70 +177,98 @@ NE16 with no `ne16_taps` that then failed to bind. Admissibility now lives in **
    separate cluster node; the existing `ne16_taps` guard in `PULPConvRequantMergePass` fires
    correctly because index 1 precedes every lowering pass.
 
-## 5. **The full-network NE16 path is NUMERICALLY WRONG**
+## 5. The `+div/2` rounding bug — found and fixed
 
-> This section supersedes an earlier, softer reading. The divergence is not "unestablished
-> equivalence" — the NE16 result is **wrong**, and the harness does not catch it.
+### The symptom
 
-The update fixture ships **host reference losses**, which settles it:
+The NE16 full-network losses were **20–55 % off** the host reference while the cluster baseline
+matched it closely, even though **every layer is bit-exact in isolation**, including under the same
+tiling. The harness reported `PASSED` throughout, because `Errors: 0 out of 8` checks the *update*
+graph, which is driven by the fixture's reference `loss_plus`/`loss_minus` arrays rather than the
+losses the device measured. It is structurally blind to the forward pass.
 
-| pass | NE16 run | cluster baseline | host reference |
-|---|---|---|---|
-| L+ #0 | **1.8863217** | 1.2166961 | **1.2166874** |
-| L− #0 | **0.4562725** | 0.2909873 | **0.2909976** |
-| L+ #1 | **0.1412244** | 0.1887053 | **0.1902758** |
-| L+ #3 | **2.1837227** | 1.6105008 | **1.5945725** |
+### The cause
 
-The cluster baseline tracks the host reference to ~1e-5 — the known fp32 last-ulp behaviour. The
-NE16 run is **20–55 % off**. It is wrong.
+**File:** `Deeploy/Targets/PULPOpen/Templates/RequantShiftTemplate.py` (and the Generic twin).
+The standalone RequantShift passed `rounding = 1` to the kernel **unconditionally**.
 
-**Why the harness still reports `PASSED`.** `Errors: 0 out of 8` checks the *update* graph, which is
-driven by the reference `loss_plus` / `loss_minus` arrays from the fixture — not by the losses the
-device just measured. The check is structurally blind to the forward pass. Any future NE16 work on
-the full network must compare the device losses against `speechnet_qzo12_update/outputs.npz`, not
-rely on the harness verdict.
+`PULPConvRequantMergePass._merge_conv_rq_fun` bakes `+div/2` into the requant's `add` **only when
+that add is a `gs.Constant`**. For a *runtime* add — a perturbed bias, i.e. an
+`RQSPerturbRademacher` output, which is exactly the quantized-ZO case — it bakes nothing and the
+fused kernel truncates, matching the host reference.
 
-### Bisection
+So the two paths only agree for a constant add:
 
-`QW_NE16_ONLY` (a diagnostic env var in `Prepare1xKPass.py`, off by default) restricts NE16 to one
-node so the network can be bisected:
-
-| configuration | first L+ | verdict |
+| | merged (cluster) | standalone (NE16) |
 |---|---|---|
-| block 3 only on NE16 | 1.8192 | wrong |
-| block 4 only on NE16 | 1.2584 | wrong (mildly) |
-| cluster only | 1.2167 | correct |
+| **constant** add | `+div/2` baked, kernel truncates → `(acc·mul + add + div/2) >> s` | kernel adds `div/2` itself → **same** ✓ |
+| **variable** add | nothing baked, kernel truncates → `(acc·mul + add) >> s` | kernel still adds `div/2` → **off by `div/2`** ✗ |
 
-**Both convolutions are independently wrong in-network**, and block 4's case is the sharper clue:
-with only block 4 on NE16, blocks 0–3 are all cluster, so block 4 receives a **known-correct input**
-and still produces a wrong result — while the same convolution is bit-exact in isolation.
+With `div = 65536`, that is a systematic **+0.5 LSB on every output element** of blocks 3 and 4,
+which amplifies through the network into a visibly wrong loss.
 
-### What has been ruled out
+### Why every isolated test missed it
 
-| hypothesis | evidence |
-|---|---|
-| Layout of the un-merged RequantShift | lowered graph: conv → NHWC int32 → `Transpose` → NCHW → RQS tagged `channels_first=1`. Correct. |
-| Perturbation RNG | `tile_seed_offset = 0` for every perturb node, `node_id` from the stable `idx` attribute. Identical directions in both runs. |
-| Requant rounding | `b3_ref` (merged) carries `rqs_add = 32700 + 32768`, `b3_plain` (un-merged) the raw `32700`, and **both score 0/1280 against the same golden** — the fused kernel truncates, `RequantShift_s32_s8_NCHW` rounds internally (`rounding = 1` in the emitted call), and the conventions cancel. |
-| Requant call arguments | verified against `RequantShift.h:105` — `(…, log2D=16, HW=40, …, rounding=1)` for block 3, i.e. `div = 65536`, `8×5 = 40`. Correct. |
-| **Spatial tiling** | the single-layer fixture forced to the **same 4-way tiling** (`--l1 20000 / 12000 / 8000`, `numTiles = {0,4}`) is still **`0 / 1280`**. |
-| Output-channel tiling | `nKo` / `bKo` are scalars, not per-tile arrays — `Cout` is not split, so the missing per-channel weight offset is not being exercised. |
+The single-layer fixtures evaluate the perturbed bias on the host and bake it in as a **constant
+initializer**. That puts them in the agreeing row of the table above — so `b3_ref` (merged) and
+`b3_plain` (un-merged) matched each other exactly, and both matched their golden, while the real
+graph took the disagreeing row.
 
-### A structural observation that matters
+The bug is also **older than this work and was simply unreachable**: with every convolution fused
+into a `RequantizedConv`, no standalone RequantShift with a runtime add ever existed. NE16 is the
+first thing to leave one un-merged — and it must, because `streamin` forces int32 output.
 
-**The cluster has no int8 standalone `Conv` binding** — only `PULPFPConv2DParser` / `PULPFPDWConv2DParser`.
-An attempt to force the same un-merge on the cluster fails to bind. So the un-merged
-`Conv(int8) + RequantShift` path **exists only on NE16**, and has never been checked against an
-independent implementation of the same structure: the single-layer goldens come from
-`run_onnx_graph` on that same un-merged graph. That is a weaker check than it looked.
+### The fix
 
-### Next step
+`alignToContext` now derives the flag instead of hardcoding it:
 
-Dump the encoded weight and block 3's int32 conv output from the **full network** and diff them
-against host-computed values (`weight_enc_golden.npz` already exists for the isolated case). The
-leading hypothesis is now that something environmental — buffer lifetime or aliasing of
-`weight_enc` / the int32 intermediate under full-network memory pressure — corrupts an input the
-isolated fixture never stresses.
+```python
+addBuffer = ctxt.lookup(operatorRepresentation['add'])
+operatorRepresentation['rqs_rounding'] = int(hasattr(addBuffer, "values") and addBuffer.values is not None)
+```
+
+Constant add → `rounding = 1` (unchanged); runtime add → `rounding = 0`, matching the merged path
+and the host reference. Confirmed in the generated C: both NE16 requant calls now end `-128, 127, 0)`.
+
+### Result
+
+| pass | NE16 before | **NE16 after** | cluster | host reference |
+|---|---|---|---|---|
+| L+ #0 | 1.886322 | **1.216181** | 1.216696 | 1.216687 |
+| L− #0 | 0.456273 | **0.289454** | 0.290987 | 0.290998 |
+| L+ #1 | 0.141224 | **0.190928** | 0.188705 | 0.190276 |
+| L− #1 | 0.999376 | **1.145638** | 1.132746 | 1.132753 |
+| L+ #2 | 0.021218 | **0.106618** | 0.108673 | 0.108246 |
+| L− #2 | 0.005849 | **0.016925** | 0.016820 | 0.016822 |
+| L+ #3 | 2.183723 | **1.610300** | 1.610501 | 1.594573 |
+| L− #3 | 1.038151 | **0.543904** | 0.545260 | 0.545274 |
+
+```
+max |NE16_after − host_ref| = 1.57e-2
+max |cluster    − host_ref| = 1.59e-2      <- the pre-existing device-vs-host gap
+```
+
+**NE16 is now as close to the host reference as the cluster is** — marginally closer, in fact. The
+residual ~1.6e-2 on L+ #3 is present in the cluster baseline too, so it is the known pre-existing
+int8/fp32 device-vs-host divergence, not an NE16 artefact.
+
+### Still not a clean bill of health
+
+Comparing NE16 against the *cluster* directly, per pass:
+
+```
+L+ #0 5.15e-04   L- #0 1.53e-03   L+ #1 2.22e-03   L- #1 1.29e-02
+L+ #2 2.05e-03   L- #2 1.05e-04   L+ #3 2.01e-04   L- #3 1.36e-03
+```
+
+Six passes agree to ~1e-3 or better, but **L− #1 still differs by 1.3e-2**, and on that pass the
+cluster tracks the host reference to 7e-6 while NE16 does not. If the two int8 datapaths were truly
+identical the losses would be identical, so **a second, much smaller discrepancy remains** — most
+likely a handful of elements differing by 1 LSB rather than a systematic bias (the signature has
+changed from uniform offset to sparse disagreement).
+
+That residual is the next thing to chase; it is ~40× smaller than the bug just fixed and of the
+same order as the pre-existing device-vs-host gap.
 
 ## 6. OPEN — padded convolutions are refused
 
