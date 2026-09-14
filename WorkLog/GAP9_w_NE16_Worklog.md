@@ -1167,3 +1167,68 @@ perturbation. But it is **not** the residual's cause.
 
 **Next:** make the reproducer symmetric (perturb the weight on device in the reference too, or feed
 both the pre-perturbed weight), then chase the ordering/aliasing hypothesis for the runtime `add`.
+
+### 2026-09-14 — Session 6 (cont.): the residual localised to an L1 buffer overlap
+
+#### A symmetric control removes every excuse
+
+Running the **same** `b3_plain_vb` fixture with and without `--enable-1xk` — same graph, same golden,
+both perturbations on device, the only variable being which engine runs the conv:
+
+```
+cluster (no --enable-1xk):     Errors: 0 out of 1280
+NE16    (--enable-1xk):     Errors: 1240 out of 1280
+```
+
+The fixture and golden are consistent and both device perturbations are correct. **NE16 is at
+fault**, and this is now a ~2-minute reproducer.
+
+#### The error signature names the mechanism
+
+```
+Expected:    5  Actual:   73  Diff:  -68 at Index   40      <- channel 1
+Expected:  -14  Actual:   39  Diff:  -53 at Index 1279      <- channel 31
+```
+
+The difference is a **constant per output channel**, and **channel 0 is exactly right** (the 40
+correct outputs are precisely channel 0's `8×5 = 40` elements). That is not arithmetic drift — it is
+a wrong per-channel *multiplier* in the bias perturbation.
+
+#### The mechanism, in the generated C
+
+```c
+b3_bpert_data_in_ref  = ARENA_L1 + 128;
+b3_bpert_mul_ref      = ARENA_L1 + 132;   // only 4 bytes later
+...
+mchan_transfer_1d(1441920, ..._data_in_ref, ...);   // cmd & 0xFFFF = 128 bytes
+mchan_transfer_1d(1441920, ..._mul_ref,     ...);   // cmd & 0xFFFF = 128 bytes
+```
+
+Two buffers **4 bytes apart**, each receiving a **128-byte** DMA — a 124-byte overlap. The bias
+transfer clobbers the multiplier array, so the perturbation uses corrupted per-channel multipliers.
+Symptom and mechanism match exactly.
+
+The root is a disagreement between the two halves of `RQSPerturbTileConstraint`:
+`addGeometricalConstraint` **sizes** the tile buffers, `serializeTilingSolution` **sizes the DMAs**,
+and they pick the channel axis independently. Once the requant bias is broadcast to `(1, cout)` by
+the un-merged RequantShift, they disagree.
+
+#### Status of the two channel-axis changes — kept, with a caveat
+
+The committed `serializeTilingSolution` fix (skip leading unit axes) is **semantically right**:
+without it `channel_width = cout` and the kernel's `M[(start+i)/channel_width]` collapses to `M[0]`
+for every output channel. But on its own it makes the reproducer go **40 → 1240** errors, because it
+starts requesting the full 128-byte multiplier transfer into a buffer the tiler still sized at 4
+bytes. **The number went up because the change exposes the allocation bug instead of masking it** —
+both states are wrong, and 40 was the *quieter* wrong.
+
+A matching change to `addGeometricalConstraint` was written and **reverted**: it did not move the
+offsets, so the 4-byte buffer is `data_in`, not `mul`, and the sizing comes from somewhere I have
+not yet traced. Leaving an unproven change in the tree would be worse than leaving the bug
+documented.
+
+Regression after all of this: `b3_plain` `0/1280`, `b4_plain` `0/320` — unchanged. Full network
+unchanged (max |NE16 − cluster| still 1.29e-2).
+
+**Next:** trace why `b3_bpert`'s `data_in` tile is allocated 4 bytes when its DMA is 128, fix the
+sizing, then re-check the reproducer — it should go to 0, and with it the full-network residual.
