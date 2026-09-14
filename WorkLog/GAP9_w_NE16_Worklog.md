@@ -8,6 +8,83 @@ at `TrainDeeploy@28ff5fa` / `Onnx4Deeploy@2be5137`, both of which are pushed to 
 
 **Scope: QZO only.** Backpropagation is out of scope — see the plan's Appendix A for why.
 
+---
+
+# ⏸ PAUSED 2026-09-14 — READ THIS FIRST TO RESUME
+
+**State: the goal is met.** SpeechNet QZO runs end-to-end on GAP9 with NE16 and is
+**bit-identical** to the cluster-only baseline (`max |NE16 − cluster| = 0.00e+00` across all eight
+per-pass losses). Working tree clean, 10 commits, head `ac6fe16`.
+
+> ⚠️ **`feat/GAP9_w_NE16` has NO UPSTREAM — it exists only on this machine.** Push it before
+> relying on it surviving.
+
+### What runs today
+
+`deeployMezoRunner_tiled_GAP9_w_NE16.py` on `speechnet_qzo12_train` with `--enable-1xk`:
+**14 NE16 dispatches, 2 on-device weight encodes, 3 cluster convs.** Blocks **3 and 4** execute on
+NE16 with their weights perturbed *and* bit-serial encoded on device; blocks 0/1/2 stay on the
+cluster. Exact command in `exp16c_SDK_port/Findings.md §2`.
+
+### The two open items, in priority order
+
+| # | item | why it matters | where to start |
+|---|---|---|---|
+| **1** | **Padded convolutions** | Blocks 0/1/2 carry pads, and `ne16_1xkAdmissible` refuses them — so only **5.8 % of conv MACs** reach NE16. Lifting this brings block 1 (68 % of MACs on its own) onto NE16. | `Prepare1xKPass.ne16_1xkAdmissible`; the fix shape is the SDK's `NE16_ComputeBorders` — pointer arithmetic + border subtiles, **not** NE16 padding (its 1×1 mode cannot pad and the gvsoc guard is commented out, so it fails *silently*). |
+| **2** | **Performance** | NE16 is **4.0–7.5× slower per layer** than `pulp_nn_conv`; the full step is ~1.9 % slower overall. | Block 1 retires **~1.6 MAC/cycle ≈ 700 cycles per output subtile** for work that should take tens. **Profile that first** — it dominates, and channel folding alone is estimated to close only about half the gap (see the caveat below). |
+
+**Block 0 additionally needs the signed-activation path wired into the pass.** The arithmetic is
+already built and validated (`NE16SignedInputBias`, exp16c_PW phase 4, `0/78512`); what is missing
+is a graph-level op applying `x ^ 0x80`. Note that **im2col would dissolve both blockers at once** —
+the cores write pad values *and* the `+128` offset into the column buffer, and NE16 then runs an
+unpadded, unsigned 1×1 conv.
+
+### Estimate caveat — do not trust the folding numbers without measuring
+
+Channel folding only reduces MAC work where `Cin` leaves a `TP_IN` group half-empty: **blocks 2, 3
+and 4 already fill it exactly**, so for them folding buys only the removal of streamin traffic and
+per-dispatch setup. Estimated overall: NE16 conv time 7.75 M → ~3–4 M cycles against the cluster's
+1.23 M — i.e. **probably still slower**. My cost models have been wrong twice here in both
+directions (predicted dense-3×3 3× slower, measured 1.15× *faster*; expected pipelining to matter,
+measured 1.65 %). Measure one folded block-1 dispatch before building on any of this.
+
+### Three traps that will cost you a day if forgotten
+
+1. **The harness verdict is not a correctness check.** `Errors: 0 out of 8` checks the *update*
+   graph, driven by the fixture's reference losses — **not** the device-measured ones. It reported
+   `PASSED` for the entire period when losses were 20–55 % wrong. Compare device losses against
+   `speechnet_qzo12_update/outputs.npz` directly.
+2. **Single-layer fixtures must use `--variable-bias`.** Baking the perturbed bias in as a
+   *constant* puts the fixture in the branch where merged and un-merged agree by construction —
+   which is exactly why every isolated test passed while the network was wrong. The faithful
+   reproducer (`b3_plain_vb`, ~2 min) is what found all three bugs.
+3. **`-D BN_FROZEN_STATS=ON` and `--l1 110000` are load-bearing.** Without them `.weightmem_sram`
+   overflows `L2_shared` by ~706 KB — **with or without NE16**, so it is not an NE16 cost.
+
+### Three bugs fixed here — all pre-existing, all unreachable before NE16
+
+With every convolution fused into a `RequantizedConv`, no standalone RequantShift with a runtime
+bias ever existed; NE16 is the first thing to leave one un-merged, and it must, because `streamin`
+forces int32 output.
+
+| # | file | defect |
+|---|---|---|
+| 1 | `Targets/{PULPOpen,Generic}/Templates/RequantShiftTemplate.py` | `rounding = 1` hardcoded; the merge bakes `+div/2` only for a **constant** add → off by `div/2` with a runtime bias |
+| 2 | `Targets/PULPOpen/TileConstraints/RQSPerturbTileConstraint.py` (serialize) | `channelDim = dims[0]` on a broadcast `(1,cout)` bias → kernel collapses to `M[0]` for every channel |
+| 3 | same file (geometry) | input/output dims paired by raw index → 4-byte tile against a 128-byte DMA → 124-byte L1 overlap |
+
+Plus two earlier ones: `RequantShiftLayer.computeShapes` ignoring `channels_first`, and
+`UniformRequantShiftParser.parseNode` *raising* instead of declining on a runtime mul/add.
+
+### Where the detail is
+
+`exp16c_SDK_port/Findings.md` — results, a copy-pasteable reproduction section, and every changed
+file by path. Sibling experiments: `exp16a` (all-pointwise), `exp16b` (dense 3×3),
+`exp16c_PW_single_layer` (blocker 1b + STEP 3). SDK study:
+`ETH/WorkLog/GAP9_SDK_NE16_Corner_Cases.md` and `ETH/WorkLog/GAP9_Container_Inventory.md`.
+
+---
+
 ### Where the detailed material lives (do not rely on this file alone)
 
 | what | exact path |
@@ -26,8 +103,8 @@ at `TrainDeeploy@28ff5fa` / `Onnx4Deeploy@2be5137`, both of which are pushed to 
 | 1 | **Make it compile** — `GAP9_w_NE16` exists, QZO builds+runs on it with NE16 claiming nothing | ✅ **DONE** 2026-09-10 |
 | 2a | **Make it work (plumbing)** — a real SpeechNet conv dispatches to NE16, bit-exact | ✅ **DONE** 2026-09-10 |
 | 2b | **Make it work (real shape)** — block 1 at its true `1×16` via the 1×k decomposition | ✅ **DONE** 2026-09-11 (cropped extent; see exp16a) |
-| 3 | **Make it correct** — full SpeechNet, inference then training | ⬜ |
-| 4 | **Optimise** | 🔶 exp16b measured one lever (dispatch count) — see 2026-09-11 session 3 |
+| 3 | **Make it correct** — full SpeechNet, inference then training | ✅ **DONE** 2026-09-14 — all 5 convs bit-exact standalone; full QZO step bit-identical to the cluster with blocks 3/4 on NE16 (0/1/2 blocked by padding) |
+| 4 | **Optimise** | ⬜ **OPEN** — NE16 is 4.0–7.5× slower per layer; see the PAUSED section at the top |
 
 ---
 
