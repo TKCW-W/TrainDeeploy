@@ -1099,3 +1099,8 @@ Against the cluster directly, six of eight passes agree to ~1e-3 or better, but 
 identical losses, so **a second, ~40× smaller discrepancy remains**. The signature has changed from
 a uniform offset to sparse disagreement, which points at a handful of 1-LSB elements rather than a
 systematic bias. That is the next thing to chase.
+
+**Regression after the shared-template change** (the fix touches a template used by every target,
+so this matters): `b3_ref` `0/1280`, `b3_plain` `0/1280`, `b4_plain` `0/320` — all unchanged, and
+all three still emit `rounding = 1` because their fixtures bake the bias in as a constant. Only the
+runtime-add case changes behaviour, which is the one that was wrong.

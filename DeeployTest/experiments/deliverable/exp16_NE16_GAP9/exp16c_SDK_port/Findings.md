@@ -252,6 +252,13 @@ max |cluster    − host_ref| = 1.59e-2      <- the pre-existing device-vs-host 
 residual ~1.6e-2 on L+ #3 is present in the cluster baseline too, so it is the known pre-existing
 int8/fp32 device-vs-host divergence, not an NE16 artefact.
 
+### Regression
+
+The fix touches a template shared by every target, so the single-layer fixtures were re-run:
+`b3_ref` `0/1280`, `b3_plain` `0/1280`, `b4_plain` `0/320` — all unchanged, and all three still emit
+`rounding = 1`, because their fixtures bake the bias in as a constant. Only the runtime-add case
+changes behaviour, which is precisely the case that was wrong.
+
 ### Still not a clean bill of health
 
 Comparing NE16 against the *cluster* directly, per pass:
