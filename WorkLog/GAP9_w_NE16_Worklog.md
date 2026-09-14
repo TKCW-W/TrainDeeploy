@@ -16,8 +16,8 @@ at `TrainDeeploy@28ff5fa` / `Onnx4Deeploy@2be5137`, both of which are pushed to 
 **bit-identical** to the cluster-only baseline (`max |NE16 − cluster| = 0.00e+00` across all eight
 per-pass losses). Working tree clean, 10 commits, head `ac6fe16`.
 
-> ⚠️ **`feat/GAP9_w_NE16` has NO UPSTREAM — it exists only on this machine.** Push it before
-> relying on it surviving.
+**Pushed** to `origin` (`TKCW-W/TrainDeeploy`) 2026-09-14 — `feat/GAP9_w_NE16` tracks
+`origin/feat/GAP9_w_NE16`. `Onnx4Deeploy` is untouched by this work, still at `2be5137`.
 
 ### What runs today
 
