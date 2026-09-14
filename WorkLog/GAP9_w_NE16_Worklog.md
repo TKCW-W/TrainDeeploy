@@ -1232,3 +1232,75 @@ unchanged (max |NE16 − cluster| still 1.29e-2).
 
 **Next:** trace why `b3_bpert`'s `data_in` tile is allocated 4 bytes when its DMA is 128, fix the
 sizing, then re-check the reproducer — it should go to 0, and with it the full-network residual.
+
+### 2026-09-14 — Session 6 (cont.): **BIT-IDENTICAL** — the third bug, and the goal met
+
+`RQSPerturbTileConstraint.addGeometricalConstraint` paired input and output dims **by raw index**.
+The op is elementwise, but the ranks diverge once the *output* is broadcast to `(1, cout)` while the
+*input* stays `(cout,)`:
+
+```
+data_in.dim0 (cout)  ==  data_out.dim0 (1)      <- forces the input tile to ONE element
+```
+
+So the tiler sized `data_in` at **4 bytes** while `serializeTilingSolution` scheduled a **128-byte**
+DMA — the overlap seen directly in the generated C (`data_in` at arena+128, `mul` at arena+132).
+Fixed by aligning axes from the first non-unit axis, numpy-broadcast style. Buffers now land at
+`+0 / +128 / +256`.
+
+#### Result — the loop's goal is met, and met correctly
+
+```
+b3_plain_vb (the faithful reproducer):   Errors: 0 out of 1280
+full SpeechNet QZO on GAP9 + NE16:       max |NE16 − cluster| = 0.00e+00
+                                         max |NE16 − host_ref| = 1.59e-2
+                                         max |cluster − host_ref| = 1.59e-2
+```
+
+**Every per-pass loss is bit-identical to the cluster-only baseline**, and NE16's distance to the
+host reference is now exactly the cluster's — the known pre-existing device-vs-host int8/fp32 gap,
+not an NE16 artefact. 14 NE16 dispatches, 2 on-device weight encodes, 3 cluster convs.
+
+Regression: `b3_plain` `0/1280`, `b4_plain` `0/320`, `b3_ref_vb` `0/1280` — all clean.
+
+#### Three bugs, one structural cause
+
+| # | file | defect |
+|---|---|---|
+| 1 | `Templates/RequantShiftTemplate.py` (PULPOpen + Generic) | `rounding = 1` hardcoded; the merge bakes `+div/2` only for a **constant** add → off by `div/2` with a runtime bias |
+| 2 | `TileConstraints/RQSPerturbTileConstraint.py` (serialize) | `channelDim = dims[0]` → `channel_width = cout` on a broadcast bias → kernel collapses to `M[0]` for every channel |
+| 3 | `TileConstraints/RQSPerturbTileConstraint.py` (geometry) | input/output dims paired by raw index → 4-byte tile against a 128-byte DMA → 124-byte buffer overlap |
+
+**All three were pre-existing and unreachable before NE16.** With every convolution fused into a
+`RequantizedConv`, no standalone RequantShift with a runtime bias ever existed — the bias was never
+broadcast and the rounding branch was never taken. NE16 is the first thing to leave a conv
+un-merged, and it must, because `streamin` forces int32 output.
+
+#### What made them findable
+
+* **A faithful fixture.** `--variable-bias` keeps the requant bias a runtime tensor, as the real
+  graph has it. Earlier fixtures baked it in as a constant — exactly the branch where merged and
+  un-merged agree by construction, which is why they all passed while the network was wrong. It
+  reproduced the whole failure in a **2-minute** run.
+* **A symmetric control.** The same fixture with and without `--enable-1xk` — same graph, same
+  golden, only the engine differs — removed every "unfair fixture" excuse.
+* **Reading the error signature.** A constant diff *per output channel* with channel 0 correct named
+  the mechanism (corrupted per-channel multipliers) before any code was read.
+
+One intermediate state worth remembering: fixing bug 2 alone took the reproducer from **40 → 1240**
+errors. That was not a regression — it made the code request the full multiplier transfer into a
+buffer still sized at 4 bytes, **exposing** bug 3 instead of masking it.
+
+#### Also worth recording
+
+The harness's `Errors: 0 out of 8` reported `PASSED` throughout the period when the losses were
+20–55 % wrong: it checks the **update** graph, which is driven by the fixture's reference losses,
+not the device-measured ones. Future NE16 work must compare device losses against
+`speechnet_qzo12_update/outputs.npz` directly.
+
+#### Remaining (not blockers for the goal)
+
+* **Padded convolutions** — blocks 0/1/2 stay on the cluster, so only 5.8 % of conv MACs reach NE16.
+  The SDK's fix is pointer arithmetic plus border-subtile computation (`NE16_ComputeBorders`).
+* **Performance** — NE16 is 4.3×–7.5× slower than `pulp_nn_conv` per layer; exp16b/exp16c point at
+  im2col channel folding as the lever.

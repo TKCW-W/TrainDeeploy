@@ -7,11 +7,10 @@ Driver: `ETH/WorkLog/GAP9_SDK_NE16_Corner_Cases.md`
 > on the accelerator, their weights perturbed *and* bit-serial encoded on device, and nothing
 > hand-authored in the graph. The plumbing works.
 >
-> A real numerical bug was found and **fixed** along the way (§5): a standalone RequantShift passed
-> `rounding = 1` unconditionally, while the conv+requant merge bakes `+div/2` only into a *constant*
-> add — so with the perturbed (runtime) bias the NE16 path was off by exactly `div/2`, a systematic
-> +0.5 LSB on every element. Losses went from 20–55 % wrong to matching the host reference as
-> closely as the cluster does. A much smaller residual remains on one pass (§5, last part).
+> **And it is numerically correct**: every per-pass loss is now **bit-identical** to the cluster-only
+> baseline (§5). Reaching that took three pre-existing Deeploy bugs — a misapplied `+div/2`
+> rounding, a collapsed perturbation channel axis, and a 124-byte L1 buffer overlap — all of which
+> were unreachable before NE16, because NE16 is the first thing to leave a convolution un-merged.
 >
 > Padded convolutions are also still refused, so only 5.8 % of conv MACs reach NE16 (§6).
 
@@ -59,9 +58,14 @@ pays for the layout Transposes.)
 ### Phase 3 — full SpeechNet QZO on GAP9 with NE16
 
 ```
-PASSED          Errors: 0 out of 8      (the harness's optimizer-output check)
+PASSED          max |NE16 − cluster| = 0.00e+00   (bit-identical, see section 5)
 NE16 dispatches 14        device weight encodes 2        cluster convs 3
 ```
+
+Do **not** rely on the harness's own `Errors: 0 out of 8`: it checks the *update* graph, which is
+driven by the fixture's reference losses rather than the device-measured ones, so it is blind to the
+forward pass. It reported `PASSED` throughout the period when the losses were 20–55 % wrong. Compare
+the device losses against `speechnet_qzo12_update/outputs.npz` instead.
 
 Blocks **3 and 4** (`7×1`, unpadded) run on NE16 with their weights perturbed and encoded on
 device; blocks 0/1/2 stay on the cluster because they are padded (§6).
@@ -139,8 +143,11 @@ Logs for every run above are in `./logs/`; the generated `TrainingNetwork.c` is 
 | `Deeploy/Targets/NE16/Engine.py` | **phase 2/3** — `is1xKConv` defers to `ne16_1xkAdmissible`; a 1×K conv no longer needs a `gs.Constant` weight |
 | `DeeployTest/testUtils/deeployMezoRunner.py` | **phase 3** — thread `--enable-1xk` / `--enable-3x3` into `gen_args` |
 | `DeeployTest/testMVPTraining.py` | **phase 3** — accept those flags and set `enable1xK` / `enable3x3` on the NE16 engine |
-| `Deeploy/Targets/PULPOpen/Templates/RequantShiftTemplate.py` | **§5 bug fix** — `rounding` derived from whether the `add` is a constant, instead of hardcoded `1` |
+| `Deeploy/Targets/PULPOpen/Templates/RequantShiftTemplate.py` | **§5 bug 1** — `rounding` derived from whether the `add` is a constant, instead of hardcoded `1` |
 | `Deeploy/Targets/Generic/Templates/RequantShiftTemplate.py` | same fix in the Generic twin |
+| `Deeploy/Targets/PULPOpen/TileConstraints/RQSPerturbTileConstraint.py` | **§5 bugs 2 and 3** — channel axis and input/output axis alignment both skip leading unit axes |
+| `Deeploy/Targets/Generic/Parsers.py` | `UniformRequantShiftParser.parseNode` declines instead of raising when mul/add is runtime-produced |
+| `.../exp16c_PW_single_layer/build_fixtures.py` | `--variable-bias` (keep the requant bias a runtime tensor, as the real graph has it) |
 | `.../exp16c_PW_single_layer/build_fixtures.py` | `--plain` (emit a graph with no NE16 attributes at all) |
 
 ### Three things the pass has to do that the fixtures used to do by hand
@@ -177,105 +184,99 @@ NE16 with no `ne16_taps` that then failed to bind. Admissibility now lives in **
    separate cluster node; the existing `ne16_taps` guard in `PULPConvRequantMergePass` fires
    correctly because index 1 precedes every lowering pass.
 
-## 5. The `+div/2` rounding bug — found and fixed
+## 5. Numerical correctness: three bugs, and a bit-identical result
 
-### The symptom
+**Final state — SpeechNet QZO on GAP9 with NE16 is bit-identical to the cluster-only baseline.**
 
-The NE16 full-network losses were **20–55 % off** the host reference while the cluster baseline
-matched it closely, even though **every layer is bit-exact in isolation**, including under the same
-tiling. The harness reported `PASSED` throughout, because `Errors: 0 out of 8` checks the *update*
-graph, which is driven by the fixture's reference `loss_plus`/`loss_minus` arrays rather than the
-losses the device measured. It is structurally blind to the forward pass.
+| pass | NE16 | cluster | host ref |
+|---|---|---|---|
+| L+ #0 | 1.216696 | 1.216696 | 1.216687 |
+| L− #0 | 0.290987 | 0.290987 | 0.290998 |
+| L+ #1 | 0.188705 | 0.188705 | 0.190276 |
+| L− #1 | 1.132746 | 1.132746 | 1.132753 |
+| L+ #2 | 0.108673 | 0.108673 | 0.108246 |
+| L− #2 | 0.016820 | 0.016820 | 0.016822 |
+| L+ #3 | 1.610501 | 1.610501 | 1.594573 |
+| L− #3 | 0.545260 | 0.545260 | 0.545274 |
 
-### The cause
+```
+max |NE16 − cluster|     = 0.00e+00      every loss matches bit for bit
+max |NE16 − host_ref|    = 1.59e-2
+max |cluster − host_ref| = 1.59e-2       <- identical: the pre-existing device-vs-host gap
+```
 
-**File:** `Deeploy/Targets/PULPOpen/Templates/RequantShiftTemplate.py` (and the Generic twin).
-The standalone RequantShift passed `rounding = 1` to the kernel **unconditionally**.
+Getting there took three bugs. **All three are pre-existing Deeploy defects that were unreachable
+before NE16**, for the same structural reason: with every convolution fused into a
+`RequantizedConv`, no standalone RequantShift with a runtime bias ever existed — so the bias was
+never broadcast, and the rounding branch was never taken. NE16 is the first thing to leave a conv
+un-merged, and it *must*, because `streamin` forces int32 output.
 
-`PULPConvRequantMergePass._merge_conv_rq_fun` bakes `+div/2` into the requant's `add` **only when
-that add is a `gs.Constant`**. For a *runtime* add — a perturbed bias, i.e. an
-`RQSPerturbRademacher` output, which is exactly the quantized-ZO case — it bakes nothing and the
-fused kernel truncates, matching the host reference.
+### Bug 1 — `+div/2` rounding applied when it shouldn't be
 
-So the two paths only agree for a constant add:
+**`Deeploy/Targets/PULPOpen/Templates/RequantShiftTemplate.py`** (and the Generic twin) passed
+`rounding = 1` **unconditionally**, while `PULPConvRequantMergePass` bakes `+div/2` into the
+requant's `add` **only when that add is a `gs.Constant`**:
 
 | | merged (cluster) | standalone (NE16) |
 |---|---|---|
-| **constant** add | `+div/2` baked, kernel truncates → `(acc·mul + add + div/2) >> s` | kernel adds `div/2` itself → **same** ✓ |
-| **variable** add | nothing baked, kernel truncates → `(acc·mul + add) >> s` | kernel still adds `div/2` → **off by `div/2`** ✗ |
+| **constant** add | `div/2` baked, kernel truncates | kernel adds `div/2` itself → **agree** ✓ |
+| **variable** add | nothing baked, kernel truncates | kernel still rounds → **off by `div/2`** ✗ |
 
-With `div = 65536`, that is a systematic **+0.5 LSB on every output element** of blocks 3 and 4,
-which amplifies through the network into a visibly wrong loss.
+A systematic **+0.5 LSB on every output element**, amplifying to a 20–55 % wrong loss.
+**Fix:** derive the flag — `rqs_rounding = int(hasattr(addBuffer, "values") and addBuffer.values is not None)`.
 
-### Why every isolated test missed it
+### Bug 2 — perturbation channel axis (serialization)
 
-The single-layer fixtures evaluate the perturbed bias on the host and bake it in as a **constant
-initializer**. That puts them in the agreeing row of the table above — so `b3_ref` (merged) and
-`b3_plain` (un-merged) matched each other exactly, and both matched their golden, while the real
-graph took the disagreeing row.
+**`Deeploy/Targets/PULPOpen/TileConstraints/RQSPerturbTileConstraint.py`**, `serializeTilingSolution`
+took `channelDim = cube.dims[0]`. Once the bias is broadcast to `(1, cout)` that is 1, so
+`channel_width = size // 1 = cout`, and the kernel's `M[(start + i) / channel_width]`
+(`RandomNoiseQuant.c:182`) collapses to **`M[0]` for every output channel**.
+**Fix:** skip leading unit axes.
 
-The bug is also **older than this work and was simply unreachable**: with every convolution fused
-into a `RequantizedConv`, no standalone RequantShift with a runtime add ever existed. NE16 is the
-first thing to leave one un-merged — and it must, because `streamin` forces int32 output.
+### Bug 3 — perturbation axis alignment (geometry), the buffer overlap
 
-### The fix
+`addGeometricalConstraint` paired input and output dims **by raw index**. The op is elementwise, but
+the ranks diverge once the *output* is broadcast to `(1, cout)` while the *input* stays `(cout,)`:
+`data_in.dim0 (cout)` was equated with `data_out.dim0 (1)`, sizing the input tile at **one element —
+4 bytes** — against a 128-byte DMA. Straight from the generated C:
 
-`alignToContext` now derives the flag instead of hardcoding it:
-
-```python
-addBuffer = ctxt.lookup(operatorRepresentation['add'])
-operatorRepresentation['rqs_rounding'] = int(hasattr(addBuffer, "values") and addBuffer.values is not None)
+```c
+b3_bpert_data_in_ref = ARENA_L1 + 128;
+b3_bpert_mul_ref     = ARENA_L1 + 132;   // 4 bytes later
+mchan_transfer_1d(1441920, ..._data_in_ref, ...);   // cmd & 0xFFFF = 128 bytes
+mchan_transfer_1d(1441920, ..._mul_ref,     ...);   // cmd & 0xFFFF = 128 bytes
 ```
 
-Constant add → `rounding = 1` (unchanged); runtime add → `rounding = 0`, matching the merged path
-and the host reference. Confirmed in the generated C: both NE16 requant calls now end `-128, 127, 0)`.
+A **124-byte overlap**: the bias transfer clobbered the multiplier array, so the perturbation used
+corrupted per-channel multipliers. The error signature said exactly this — a **constant diff per
+output channel**, with **channel 0 correct** (the 40 good outputs were precisely channel 0's `8×5`).
 
-### Result
+**Fix:** align axes from the first non-unit axis, numpy-broadcast style. Buffers now land at
+`+0 / +128 / +256` with no overlap.
 
-| pass | NE16 before | **NE16 after** | cluster | host reference |
-|---|---|---|---|---|
-| L+ #0 | 1.886322 | **1.216181** | 1.216696 | 1.216687 |
-| L− #0 | 0.456273 | **0.289454** | 0.290987 | 0.290998 |
-| L+ #1 | 0.141224 | **0.190928** | 0.188705 | 0.190276 |
-| L− #1 | 0.999376 | **1.145638** | 1.132746 | 1.132753 |
-| L+ #2 | 0.021218 | **0.106618** | 0.108673 | 0.108246 |
-| L− #2 | 0.005849 | **0.016925** | 0.016820 | 0.016822 |
-| L+ #3 | 2.183723 | **1.610300** | 1.610501 | 1.594573 |
-| L− #3 | 1.038151 | **0.543904** | 0.545260 | 0.545274 |
+### What made these findable
 
-```
-max |NE16_after − host_ref| = 1.57e-2
-max |cluster    − host_ref| = 1.59e-2      <- the pre-existing device-vs-host gap
-```
+Two methodological changes did the work:
 
-**NE16 is now as close to the host reference as the cluster is** — marginally closer, in fact. The
-residual ~1.6e-2 on L+ #3 is present in the cluster baseline too, so it is the known pre-existing
-int8/fp32 device-vs-host divergence, not an NE16 artefact.
+1. **A faithful fixture.** Every earlier single-layer fixture evaluated the perturbed bias on the
+   host and baked it in as a **constant** — precisely the branch where merged and un-merged agree by
+   construction. `--variable-bias` reproduces the graph's own bias perturbation, and it reproduced
+   the whole failure at single-layer scale: a **2-minute** run instead of a 10-minute network run.
+2. **A symmetric control.** Running the *same* fixture with and without `--enable-1xk` — same graph,
+   same golden, only the engine differs — removed every "the fixture isn't fair" excuse:
+   cluster `0/1280`, NE16 `1240/1280`.
+
+### A note on one intermediate state
+
+Fixing bug 2 alone took the reproducer from **40 to 1240** errors. That looked like a regression and
+was not: it made the code request the full 128-byte multiplier transfer into a buffer the tiler
+still sized at 4 bytes, i.e. it **exposed** bug 3 rather than masking it. Both states were wrong;
+40 was the quieter wrong.
 
 ### Regression
 
-The fix touches a template shared by every target, so the single-layer fixtures were re-run:
-`b3_ref` `0/1280`, `b3_plain` `0/1280`, `b4_plain` `0/320` — all unchanged, and all three still emit
-`rounding = 1`, because their fixtures bake the bias in as a constant. Only the runtime-add case
-changes behaviour, which is precisely the case that was wrong.
-
-### Still not a clean bill of health
-
-Comparing NE16 against the *cluster* directly, per pass:
-
-```
-L+ #0 5.15e-04   L- #0 1.53e-03   L+ #1 2.22e-03   L- #1 1.29e-02
-L+ #2 2.05e-03   L- #2 1.05e-04   L+ #3 2.01e-04   L- #3 1.36e-03
-```
-
-Six passes agree to ~1e-3 or better, but **L− #1 still differs by 1.3e-2**, and on that pass the
-cluster tracks the host reference to 7e-6 while NE16 does not. If the two int8 datapaths were truly
-identical the losses would be identical, so **a second, much smaller discrepancy remains** — most
-likely a handful of elements differing by 1 LSB rather than a systematic bias (the signature has
-changed from uniform offset to sparse disagreement).
-
-That residual is the next thing to chase; it is ~40× smaller than the bug just fixed and of the
-same order as the pre-existing device-vs-host gap.
+`b3_plain` `0/1280`, `b4_plain` `0/320`, `b3_ref_vb` `0/1280`, `b3_plain_vb` `0/1280` — all clean.
+These templates and constraints are shared by every target, so each fix was re-checked.
 
 ## 6. OPEN — padded convolutions are refused
 

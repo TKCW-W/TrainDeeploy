@@ -30,19 +30,44 @@ class RQSPerturbTileConstraint(TileConstraint):
             tilerModel.addTensorDimToModel(ctxt, bufferName)
 
         inputShape = ctxt.lookup(inputBufferName).shape
+        outputShape = ctxt.lookup(outputBufferName).shape
 
         mulBufferShapeLen = len(ctxt.lookup(mulBufferName).shape)
 
+        # QW: this op is ELEMENTWISE -- input and output hold the same elements -- but their RANKS
+        #     can differ. A perturbed requant bias is rank-1 `(cout,)`, and when a downstream
+        #     consumer needs it broadcast (which the un-merged RequantShift does) Deeploy rewrites
+        #     the OUTPUT tensor's shape to `(1, cout)` while the node's input stays `(cout,)`.
+        #
+        #     Pairing dims by raw index then equates `data_in.dim0 (cout)` with
+        #     `data_out.dim0 (1)`, so the tiler sized the INPUT tile at ONE ELEMENT -- 4 bytes --
+        #     while `serializeTilingSolution` still scheduled the full 128-byte DMA. Observed
+        #     directly in the generated C: `data_in` at arena+128 and `mul` at arena+132, four bytes
+        #     apart, each receiving a 128-byte transfer. The bias DMA clobbered the multiplier array
+        #     and the perturbation came out wrong by a constant per output channel (channel 0 right,
+        #     channels 1..31 wrong -- 1240 of 1280 outputs on block 3).
+        #
+        #     Align the axes the way numpy broadcasting does -- from the first non-unit axis onward --
+        #     so ranks may differ as long as the real axes correspond. A weight `(cout, cin, H, W)`
+        #     is unaffected (no leading unit axis on either side). -- QW
+        def _firstNonUnit(shape) -> int:
+            idx = 0
+            while idx < len(shape) - 1 and shape[idx] == 1:
+                idx += 1
+            return idx
+
+        inOff, outOff = _firstNonUnit(inputShape), _firstNonUnit(outputShape)
+
         mulChannelVar = tilerModel.getTensorDimVar(tensorName = mulBufferName, dimIdx = 0)
 
-        # Channel dim always first since we manipulate parameter tensors.
-        inChannelVar = tilerModel.getTensorDimVar(tensorName = inputBufferName, dimIdx = 0)
+        # Channel dim is the first REAL (non-unit) axis, since we manipulate parameter tensors.
+        inChannelVar = tilerModel.getTensorDimVar(tensorName = inputBufferName, dimIdx = inOff)
 
         tilerModel.addConstraint(mulChannelVar == inChannelVar)
 
-        for dim in range(len(inputShape)):
-            inputDimVar = tilerModel.getTensorDimVar(tensorName = inputBufferName, dimIdx = dim)
-            outputDimVar = tilerModel.getTensorDimVar(tensorName = outputBufferName, dimIdx = dim)
+        for dim in range(min(len(inputShape) - inOff, len(outputShape) - outOff)):
+            inputDimVar = tilerModel.getTensorDimVar(tensorName = inputBufferName, dimIdx = inOff + dim)
+            outputDimVar = tilerModel.getTensorDimVar(tensorName = outputBufferName, dimIdx = outOff + dim)
             tilerModel.addConstraint(inputDimVar == outputDimVar)  # Channel dim
 
         return tilerModel

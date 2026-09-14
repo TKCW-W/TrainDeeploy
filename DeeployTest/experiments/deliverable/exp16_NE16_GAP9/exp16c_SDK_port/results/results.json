@@ -2,7 +2,7 @@
   "experiment": "exp16c_SDK_port",
   "date": "2026-09-14",
   "goal": "port the GAP9 SDK's NE16 techniques into our flow and run SpeechNet QZO on GAP9 with NE16",
-  "status": "phases 1-3 landed; a +div/2 rounding bug found and FIXED; NE16 now matches the host reference as closely as the cluster, with one smaller residual pass remaining",
+  "status": "COMPLETE -- SpeechNet QZO runs on GAP9 with NE16 and is BIT-IDENTICAL to the cluster-only baseline",
   "phase1_pipelined_dispatch": {
     "technique": "SDK technique A (KerConv1D_StrideS_NE16): block only while NE16's 2-deep job queue is full; resolve once after the whole tap chain",
     "per_block": [
@@ -139,5 +139,54 @@
     "max_abs_cluster_vs_host": 0.01593,
     "verdict": "NE16 is now as close to the host reference as the cluster is (marginally closer). The ~1.6e-2 residual on L+ #3 is present in the cluster baseline too -- the known pre-existing device-vs-host int8/fp32 gap.",
     "residual": "Against the cluster directly, six of eight passes agree to ~1e-3 or better but L- #1 differs by 1.29e-2, where the cluster tracks the host to 7e-6. A second, ~40x smaller discrepancy remains -- signature changed from uniform offset to sparse disagreement, suggesting a few 1-LSB elements rather than a systematic bias. Next to chase."
-  }
+  },
+  "final_result": {
+    "max_abs_ne16_vs_cluster": 0.0,
+    "note": "all eight per-pass losses match the cluster baseline bit for bit (identical fp32 hex)",
+    "max_abs_ne16_vs_host_ref": 0.0159,
+    "max_abs_cluster_vs_host_ref": 0.0159,
+    "interpretation": "NE16's distance to the host reference is now exactly the cluster's -- the residual is the known pre-existing device-vs-host int8/fp32 gap, not an NE16 artefact",
+    "engine_split": {
+      "ne16_dispatches": 14,
+      "device_weight_encodes": 2,
+      "cluster_convs": 3
+    },
+    "losses": [
+      1.216696,
+      0.290987,
+      0.188705,
+      1.132746,
+      0.108673,
+      0.01682,
+      1.610501,
+      0.54526
+    ]
+  },
+  "bugs_found_and_fixed": [
+    {
+      "n": 1,
+      "name": "+div/2 rounding",
+      "file": "Deeploy/Targets/PULPOpen/Templates/RequantShiftTemplate.py (+ Generic twin)",
+      "bug": "standalone RequantShift passed rounding=1 unconditionally; PULPConvRequantMergePass bakes +div/2 only into a CONSTANT add, so with a runtime (perturbed) bias the un-merged path was off by exactly div/2",
+      "impact": "systematic +0.5 LSB on every NE16 output element -> 20-55% wrong loss",
+      "fix": "rqs_rounding derived from whether the add buffer is constant"
+    },
+    {
+      "n": 2,
+      "name": "perturb channel axis (serialize)",
+      "file": "Deeploy/Targets/PULPOpen/TileConstraints/RQSPerturbTileConstraint.py",
+      "bug": "channelDim = cube.dims[0]; once the bias is broadcast to (1,cout) this gives channel_width = cout, and the kernel's M[(start+i)/channel_width] collapses to M[0] for every channel",
+      "fix": "skip leading unit axes"
+    },
+    {
+      "n": 3,
+      "name": "perturb axis alignment (geometry)",
+      "file": "Deeploy/Targets/PULPOpen/TileConstraints/RQSPerturbTileConstraint.py",
+      "bug": "addGeometricalConstraint paired input/output dims by raw index. The op is elementwise but the ranks differ once the OUTPUT is broadcast to (1,cout) while the input stays (cout,): data_in.dim0 (cout) was equated with data_out.dim0 (1), sizing the input tile at ONE element (4 bytes) against a 128-byte DMA",
+      "evidence": "generated C showed data_in at arena+128 and mul at arena+132 -- 4 bytes apart, both receiving 128-byte transfers, a 124-byte overlap that clobbered the multipliers",
+      "impact": "perturbation wrong by a constant per output channel; channel 0 correct, channels 1..31 wrong (1240/1280 on block 3)",
+      "fix": "align axes from the first non-unit axis, numpy-broadcast style"
+    }
+  ],
+  "common_thread": "All three are PRE-EXISTING Deeploy defects that were unreachable before NE16. With every convolution fused into a RequantizedConv, no standalone RequantShift with a runtime bias ever existed -- so the bias was never broadcast and the rounding branch was never taken. NE16 is the first thing to leave a conv un-merged, and it must, because streamin forces int32 output."
 }
