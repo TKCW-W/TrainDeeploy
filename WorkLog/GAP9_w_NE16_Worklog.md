@@ -1104,3 +1104,66 @@ systematic bias. That is the next thing to chase.
 so this matters): `b3_ref` `0/1280`, `b3_plain` `0/1280`, `b4_plain` `0/320` — all unchanged, and
 all three still emit `rounding = 1` because their fixtures bake the bias in as a constant. Only the
 runtime-add case changes behaviour, which is the one that was wrong.
+
+### 2026-09-14 — Session 6 (cont.): a faithful single-layer reproducer, and a second latent bug
+
+#### The fixtures were lying by construction — now they aren't
+
+Every single-layer fixture so far evaluated the perturbed requant bias on the host and baked it in
+as a **constant**. The real graph's bias is `blocks.N.conv.bias_rqsadd_pert`, a runtime
+`RQSPerturbRademacher` output. That is precisely the branch where merged and un-merged agree by
+construction, which is *why* the `+div/2` bug survived every isolated test.
+
+`exp16c_PW_single_layer/build_fixtures.py` gained **`--variable-bias`**: it feeds the *unperturbed*
+bias as a graph input and reproduces the graph's own bias perturbation, exactly as the network does.
+
+**It immediately reproduced the residual at single-layer scale** — `b3_plain_vb` (NE16)
+`40 / 1280` against `b3_ref_vb` (cluster) `0 / 1280`. A ~2-minute run instead of a ~10-minute
+network run. That reproducer is the main deliverable of this stretch.
+
+#### Second latent bug: `RQSPerturbTileConstraint` channel dimension
+
+`Deeploy/Targets/PULPOpen/TileConstraints/RQSPerturbTileConstraint.py` took
+`channelDim = cube.dims[0]`. A perturbed requant bias is rank-1 `(cout,)` **until something
+downstream needs it broadcast** — which is exactly what the un-merged RequantShift does — at which
+point Deeploy rewrites the *shared* buffer's shape to `(1, cout)`. Then `dims[0] == 1` and
+
+```
+channel_width = size // 1 = cout        (32, instead of 1)
+```
+
+The kernel indexes `M[(start_offset + i) / channel_width]` (`RandomNoiseQuant.c:182`), so **every
+bias element took `M[0]`** — one multiplier for all 32 output channels. Confirmed in the generated
+C: the NE16 build emitted `% 32` where the cluster build emitted `% 1`.
+
+Like the rounding bug, this was **unreachable before NE16**: with every conv fused, the bias is
+consumed by the fused node and never broadcast. Fixed by skipping leading unit axes, which is right
+for both shapes — `(1, cout)` → `cout`, and a weight `(cout, cin, H, W)` → `cout` (unchanged).
+
+Regression: `b3_plain` `0/1280`, `b4_plain` `0/320` — unchanged.
+
+#### But it does NOT explain the residual, and one result is unexplained
+
+Full network after the fix: `PASSED`, losses essentially unchanged (only L+ #1 moved,
+0.190928 → 0.192629), **max |NE16 − cluster| still 1.29e-2**.
+
+And on the new fixture the fix made things *worse*: `b3_plain_vb` went from **40 → 1240 / 1280**
+errors. I cannot currently explain that, and I am not going to pretend otherwise. Two things are
+worth noting before the next session picks this up:
+
+* The fixture's comparison is **not symmetric**: `b3_ref_vb` takes the *host*-perturbed weight as a
+  graph input, while `b3_plain_vb` perturbs on device. That asymmetry was harmless while the bias
+  was constant (`b3_plain` scored `0/1280`), so it is not obviously the cause — but it is a
+  confound the reproducer should remove.
+* The only structural difference between `b3_plain` (0 errors) and `b3_plain_vb` (1240 errors) is
+  the **presence of the bias-perturb node**. That points at ordering or buffer handling of the
+  runtime `add` in the un-merged path — e.g. the requant's `add` being DMA'd before the perturbation
+  that writes it — rather than at arithmetic. 1240/1280 ≈ 97 % is the signature of a systematic
+  shift, not sparse disagreement.
+
+The channel-width fix is kept because `M[0]` for all output channels is indefensible regardless, its
+full-network effect is negligible, and it makes the NE16 build agree with the cluster build on the
+perturbation. But it is **not** the residual's cause.
+
+**Next:** make the reproducer symmetric (perturb the weight on device in the reference too, or feed
+both the pre-perturbed weight), then chase the ordering/aliasing hypothesis for the runtime `add`.

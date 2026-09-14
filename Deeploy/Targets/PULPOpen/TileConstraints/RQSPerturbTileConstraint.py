@@ -80,8 +80,26 @@ class RQSPerturbTileConstraint(TileConstraint):
         for cube in inputCubes:
             
             # this OP is applied to weights, the output channels are the dim that matters, ant that's always the first.
-            rqCube = HyperRectangle((cube.offset[0],), (cube.dims[0],))
-            channelDim = cube.dims[0]
+            # QW: ...but skip LEADING UNIT axes first. A perturbed requant bias is rank-1 `(cout,)`
+            #     until something downstream needs it broadcast, at which point Deeploy rewrites the
+            #     SHARED buffer's shape to `(1, cout)` -- and then `dims[0]` is 1, giving
+            #     `channel_width = size // 1 = cout` instead of 1. The kernel indexes
+            #     `M[(start_offset + i) / channel_width]` (RandomNoiseQuant.c:182), so every element
+            #     would take `M[0]`: one multiplier for all output channels.
+            #
+            #     This never fired while every conv was fused into a RequantizedConv, because then
+            #     the bias is consumed by the fused node and never broadcast. NE16 leaves the
+            #     RequantShift standalone (streamin forces int32 out), the broadcast happens, and the
+            #     perturbation silently used the wrong per-channel multipliers -- 40 of 1280 outputs
+            #     wrong on block 3, i.e. exactly one output channel.
+            #
+            #     A leading axis of extent 1 carries no channels, so skipping it is right for both
+            #     shapes: `(1, cout)` -> cout, and a weight `(cout, cin, H, W)` -> cout (unchanged). -- QW
+            chIdx = 0
+            while chIdx < len(cube.dims) - 1 and cube.dims[chIdx] == 1:
+                chIdx += 1
+            rqCube = HyperRectangle((cube.offset[chIdx],), (cube.dims[chIdx],))
+            channelDim = cube.dims[chIdx]
 
             rqCubes.append(rqCube)
 

@@ -79,6 +79,15 @@ def main() -> int:
     ap.add_argument("--out", default = "TrainDeeploy/DeeployTest/Tests/Models/NE16")
     ap.add_argument("--block", type = int, default = 2, help = "SpeechNet block index 0..4")
     ap.add_argument("--suffix", default = "")
+    ap.add_argument("--variable-bias", action = "store_true", default = False, dest = "variable_bias",
+                    help = "exp16c_SDK_port: keep the requant bias a RUNTIME tensor -- feed the "
+                           "UNPERTURBED bias as a graph input and reproduce the graph's own "
+                           "RQSPerturbRademacher on it -- instead of evaluating it on the host and "
+                           "baking it in as a constant. This is the fidelity gap that hid the "
+                           "+div/2 rounding bug: PULPConvRequantMergePass bakes rounding only into "
+                           "a CONSTANT add, so a constant-bias fixture exercises the branch where "
+                           "merged and un-merged agree by construction, and can never reproduce "
+                           "what the real graph does.")
     ap.add_argument("--plain", action = "store_true", default = False,
                     help = "exp16c_SDK_port phase 2: emit the conv with NO NE16 attributes and NO "
                            "NE16WeightEncode node -- a plain NCHW Conv fed by RQSPerturbRademacher, "
@@ -142,6 +151,22 @@ def main() -> int:
     add = np.asarray(add_t.values).astype(np.int32) if isinstance(add_t, gs.Constant) else \
         np.asarray(run_onnx_graph(src, feed, output_names = [add_t.name])[0]).astype(np.int32)
 
+    # QW: the requant bias in the REAL graph is `blocks.N.conv.bias_rqsadd_pert`, a runtime
+    #     RQSPerturbRademacher output. Reproduce that producer rather than freezing its value.
+    biasPert = None
+    if args.variable_bias:
+        biasPert = next((n for n in g.nodes if n.op == "RQSPerturbRademacher"
+                         and n.outputs[0].name == add_t.name), None)
+        assert biasPert is not None, f"{add_t.name} is not produced by RQSPerturbRademacher"
+        bp_proto = next(n for n in model.graph.node if n.name == biasPert.name)
+        bp_protos, bp_domain = list(bp_proto.attribute), bp_proto.domain
+        bias_raw = np.asarray(feed[biasPert.inputs[0].name]).astype(np.int32)
+        bias_pmul = np.asarray(biasPert.inputs[1].values).astype(np.int32)
+        if args.neg_pmul:
+            bias_pmul = -bias_pmul
+        print(f"[vbias] {biasPert.name}: raw{list(bias_raw.shape)} pmul{list(bias_pmul.shape)} "
+              f"-> runtime add (evaluated value would have been {add[:3]}...)")
+
     Nb, Cin, H, W = act.shape
     Cout = wpert.shape[0]
     Hout = H + pads[0] + pads[2] - kh + 1
@@ -170,20 +195,37 @@ def main() -> int:
     # ---- 1. cluster reference ------------------------------------------------------------------
     rdir = os.path.join(args.out, f"b{N_}_ref{args.suffix}")
     os.makedirs(rdir, exist_ok = True)
+    addName = "rqs_add_pert" if args.variable_bias else "rqs_add"
+    refNodes = [helper.make_node("Conv", ["input", "weight"], ["conv_out"], name = f"b{N_}_conv",
+                                 kernel_shape = [kh, kw], pads = pads, strides = [1, 1],
+                                 dilations = [1, 1], group = 1),
+                _rqs_node(f"b{N_}_rqs", "conv_out", "rqs_mul", addName, "output", rqs_protos, rqs_domain)]
+    refIns = [helper.make_tensor_value_info("input", onnx.TensorProto.INT8, [Nb, Cin, H, W]),
+              helper.make_tensor_value_info("weight", onnx.TensorProto.INT8, list(wpert.shape))]
+    refInits = [numpy_helper.from_array(mul, "rqs_mul")]
+    refVinfo = []
+    if args.variable_bias:
+        bpn = helper.make_node("RQSPerturbRademacher", ["bias_raw", "bias_pmul"], ["rqs_add_pert"],
+                               name = f"b{N_}_bpert", domain = bp_domain)
+        bpn.attribute.extend(bp_protos)
+        refNodes = [bpn] + refNodes
+        refIns.append(helper.make_tensor_value_info("bias_raw", onnx.TensorProto.INT32, list(bias_raw.shape)))
+        refInits.append(numpy_helper.from_array(bias_pmul, "bias_pmul"))
+        refVinfo.append(helper.make_tensor_value_info("rqs_add_pert", onnx.TensorProto.INT32, list(bias_raw.shape)))
+    else:
+        refInits.append(numpy_helper.from_array(add, "rqs_add"))
     ref = helper.make_graph(
-        [helper.make_node("Conv", ["input", "weight"], ["conv_out"], name = f"b{N_}_conv",
-                          kernel_shape = [kh, kw], pads = pads, strides = [1, 1],
-                          dilations = [1, 1], group = 1),
-         _rqs_node(f"b{N_}_rqs", "conv_out", "rqs_mul", "rqs_add", "output", rqs_protos, rqs_domain)],
+        refNodes,
         f"b{N_}_ref{args.suffix}",
-        [helper.make_tensor_value_info("input", onnx.TensorProto.INT8, [Nb, Cin, H, W]),
-         helper.make_tensor_value_info("weight", onnx.TensorProto.INT8, list(wpert.shape))],
+        refIns,
         [helper.make_tensor_value_info("output", onnx.TensorProto.INT8, [Nb, Cout, Hout, Wout])],
-        initializer = [numpy_helper.from_array(mul, "rqs_mul"), numpy_helper.from_array(add, "rqs_add")])
+        initializer = refInits, value_info = refVinfo)
     mr = helper.make_model(ref, opset_imports = opset)
     mr.ir_version = model.ir_version
     onnx.save(onnx.shape_inference.infer_shapes(mr, strict_mode = False), os.path.join(rdir, "network.onnx"))
     feed_ref = {"input": act.astype(np.int8), "weight": wpert.astype(np.int8)}
+    if args.variable_bias:
+        feed_ref["bias_raw"] = bias_raw.astype(np.int32)
     ref_out = np.asarray(run_onnx_graph(os.path.join(rdir, "network.onnx"), feed_ref, output_names = ["output"])[0])
     np.savez(os.path.join(rdir, "inputs.npz"), **feed_ref)
     np.savez(os.path.join(rdir, "outputs.npz"), output = ref_out.astype(np.int8))
@@ -229,7 +271,7 @@ def main() -> int:
         for k, v in (("ne16_weight_preencoded", 1), ("weight_offset", WEIGHT_OFFSET),
                      ("ne16_taps", K), ("channels_first", 0)):
             conv_n.attribute.append(helper.make_attribute(k, v))
-    rqsAddName = "rqs_add_corr" if signedAct else "rqs_add"
+    rqsAddName = "rqs_add_corr" if signedAct else ("rqs_add_pert" if args.variable_bias else "rqs_add")
     rqs_n = _rqs_node(f"b{N_}_rqs", "conv_out", "rqs_mul", rqsAddName, "output", rqs_protos, rqs_domain)
     if not args.plain:
         rqs_n.attribute.append(helper.make_attribute("channels_first", 0))
@@ -260,20 +302,32 @@ def main() -> int:
         k_in = (k_in.astype(np.int32) + 128).astype(np.uint8)   # x_u = x + 128, read as uint8
     k_out = ref_out if args.plain else ref_out.transpose(0, 2, 3, 1).copy()
 
-    kNodeList = (preNodes + [pert_n, conv_n, rqs_n] if args.plain
-                 else [pert_n] + extraNodes + [enc_n, conv_n, rqs_n])
+    biasNodes = []
+    if args.variable_bias:
+        bpn2 = helper.make_node("RQSPerturbRademacher", ["bias_raw", "bias_pmul"], ["rqs_add_pert"],
+                                name = f"b{N_}_bpert", domain = bp_domain)
+        bpn2.attribute.extend(bp_protos)
+        biasNodes = [bpn2]
+    kNodeList = (preNodes + biasNodes + [pert_n, conv_n, rqs_n] if args.plain
+                 else biasNodes + [pert_n] + extraNodes + [enc_n, conv_n, rqs_n])
     kg = helper.make_graph(
         kNodeList,
         f"b{N_}_ne16{args.suffix}",
         [helper.make_tensor_value_info("input",
                                        onnx.TensorProto.UINT8 if signedAct else onnx.TensorProto.INT8,
                                        [Nb, Cin, Hp, Wp] if args.plain else [Nb, Hp, Wp, Cin]),
-         helper.make_tensor_value_info("weight", onnx.TensorProto.INT8, list(w_raw.shape))],
+         helper.make_tensor_value_info("weight", onnx.TensorProto.INT8, list(w_raw.shape))]
+        + ([helper.make_tensor_value_info("bias_raw", onnx.TensorProto.INT32, list(bias_raw.shape))]
+           if args.variable_bias else []),
         [helper.make_tensor_value_info("output", onnx.TensorProto.INT8,
                                        [Nb, Cout, Hout, Wout] if args.plain else [Nb, Hout, Wout, Cout])],
-        initializer = [numpy_helper.from_array(mul, "rqs_mul"), numpy_helper.from_array(add, "rqs_add"),
-                       numpy_helper.from_array((-w_pmul if args.neg_pmul else w_pmul).astype(np.int32), "w_pmul")],
-        value_info = [helper.make_tensor_value_info("weight_pert", onnx.TensorProto.INT8, list(wpert.shape)),
+        initializer = [numpy_helper.from_array(mul, "rqs_mul"),
+                       numpy_helper.from_array((-w_pmul if args.neg_pmul else w_pmul).astype(np.int32), "w_pmul")]
+                      + ([numpy_helper.from_array(bias_pmul, "bias_pmul")] if args.variable_bias
+                         else [numpy_helper.from_array(add, "rqs_add")]),
+        value_info = ([helper.make_tensor_value_info("rqs_add_pert", onnx.TensorProto.INT32,
+                                                     list(bias_raw.shape))] if args.variable_bias else []) +
+                     [helper.make_tensor_value_info("weight_pert", onnx.TensorProto.INT8, list(wpert.shape)),
                       helper.make_tensor_value_info("conv_out", onnx.TensorProto.INT32,
                                                     [Nb, Cout, Hout, Wout] if args.plain
                                                     else [Nb, Hout, Wout, Cout])]
@@ -283,7 +337,10 @@ def main() -> int:
     mk = helper.make_model(kg, opset_imports = opset)
     mk.ir_version = model.ir_version
     onnx.save(mk, os.path.join(kdir, "network.onnx"))   # no shape inference: shapes are explicit
-    np.savez(os.path.join(kdir, "inputs.npz"), input = k_in, weight = w_raw.astype(np.int8))
+    kFeed = {"input": k_in, "weight": w_raw.astype(np.int8)}
+    if args.variable_bias:
+        kFeed["bias_raw"] = bias_raw.astype(np.int32)   # -- QW: must match the graph's input order
+    np.savez(os.path.join(kdir, "inputs.npz"), **kFeed)
     np.savez(os.path.join(kdir, "outputs.npz"), output = k_out.astype(np.int8))
     np.savez(os.path.join(kdir, "weight_enc_golden.npz"), weight_enc = enc_taps)
     print(f"[ne16 ] {K} dispatches, weight_enc {enc_taps.shape} ({enc_taps.nbytes} B) encoded ON DEVICE, "
