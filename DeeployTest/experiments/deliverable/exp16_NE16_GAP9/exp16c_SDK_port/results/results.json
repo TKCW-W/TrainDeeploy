@@ -2,7 +2,7 @@
   "experiment": "exp16c_SDK_port",
   "date": "2026-09-14",
   "goal": "port the GAP9 SDK's NE16 techniques into our flow and run SpeechNet QZO on GAP9 with NE16",
-  "status": "phases 1-3 landed; full network RUNS with NE16 engaged and PASSES the harness check, but full-network numerical equivalence to the cluster-only baseline is NOT established (see open_issue)",
+  "status": "phases 1-3 landed (plumbing works end-to-end); the full-network NE16 result is NUMERICALLY WRONG -- see numerical_status",
   "phase1_pipelined_dispatch": {
     "technique": "SDK technique A (KerConv1D_StrideS_NE16): block only while NE16's 2-deep job queue is full; resolve once after the whole tap chain",
     "per_block": [
@@ -90,19 +90,49 @@
     "opt_cycles_cluster_only": 372177,
     "reproducible": "yes -- two independent runs produced identical loss bits"
   },
-  "open_issue": {
-    "summary": "The per-pass losses printed by the NE16 run differ from the cluster-only baseline (e.g. first L+ 0x3ff172fd vs 0x3f9bbcb3). Both runs PASS the harness's 8-element optimizer-output check, and both are reproducible, but full-network numerical equivalence is NOT established.",
-    "hypotheses_eliminated": [
-      "Layout: the un-merged RequantShift after each NE16 conv is genuinely NCHW (conv emits NHWC int32, a Transpose converts, RQS tagged channels_first=1) -- verified in the lowered graph.",
-      "Perturbation RNG: generated C shows tile_seed_offset = 0 for every perturb node and node_id taken from the stable `idx` attribute, so the random directions are identical in both runs.",
-      "Requant rounding on the ORIGINAL RequantShift: b3_ref (merged, cluster, rounding baked) and b3_plain (un-merged, NE16) both score 0 errors against the SAME golden, so those two paths agree on device."
-    ],
-    "leading_remaining_hypothesis": "In-network, blocks 3/4's requantisation is a QSTANDALONE_QCDQ_..._Quant-derived RequantShift, NOT the original RequantShift the single-layer fixtures exercised. Preventing the conv+requant merge changes which node performs it, and _merge_conv_rq_fun bakes +div/2 rounding into a CONSTANT add when it merges. That path was never covered by a single-layer test.",
-    "next_step": "layer-probe the full network: dump block 3's int8 output under both configurations and diff. This is the top priority before claiming the port is numerically correct."
-  },
   "coverage_limit": {
     "issue": "NE16Prepare1xKPass refuses PADDED convolutions, so SpeechNet blocks 0/1/2 (pads [0,2,0,2], [0,8,0,8], [0,4,0,4]) stay on the cluster -- only 5.8% of conv MACs reach NE16.",
     "why": "NE16's 1x1 mode cannot pad and its gvsoc guard (fsm.cpp:53) is COMMENTED OUT, so a padded job returns wrong results rather than trapping. Every fixture so far pre-padded the activation DATA; a real graph carries padding on the node.",
     "fix_shape": "The GAP9 SDK handles it with pointer arithmetic plus border-subtile computation (NE16_ComputeBorders, CNN_BasicKernels_NE16.c), not with NE16 padding. That belongs in NE161xKConstraint.serializeTilingSolution."
+  },
+  "numerical_status": {
+    "verdict": "WRONG. Measured against the host reference losses in speechnet_qzo12_update/outputs.npz, the NE16 run is 20-55% off while the cluster baseline matches to ~1e-5.",
+    "examples": [
+      {
+        "pass": "L+ #0",
+        "ne16": 1.8863217,
+        "cluster": 1.2166961,
+        "host_reference": 1.2166874
+      },
+      {
+        "pass": "L- #0",
+        "ne16": 0.4562725,
+        "cluster": 0.2909873,
+        "host_reference": 0.2909976
+      },
+      {
+        "pass": "L+ #3",
+        "ne16": 2.1837227,
+        "cluster": 1.6105008,
+        "host_reference": 1.5945725
+      }
+    ],
+    "why_harness_passes": "'Errors: 0 out of 8' checks the UPDATE graph, which is driven by the reference loss_plus/loss_minus arrays from the fixture, not by the device-measured losses. It is structurally blind to the forward pass.",
+    "bisection": {
+      "block3_only": 1.819185,
+      "block4_only": 1.258438,
+      "cluster_only": 1.216696,
+      "note": "both convs independently wrong; with only block 4 on NE16 it receives a known-correct input (blocks 0-3 all cluster) and is still wrong, while being bit-exact in isolation"
+    },
+    "eliminated": [
+      "layout of the un-merged RequantShift (verified NCHW + channels_first=1)",
+      "perturbation RNG (tile_seed_offset=0, node_id from the stable idx attribute)",
+      "requant rounding (fused truncates + baked div/2, standalone rounds internally; both score 0/1280 on the same golden)",
+      "requant call arguments (verified against RequantShift.h:105: log2D=16, HW=40, rounding=1)",
+      "spatial tiling (single-layer fixture forced to the SAME 4-way tiling still scores 0/1280)",
+      "output-channel tiling (nKo/bKo are scalars, Cout is not split)"
+    ],
+    "structural_note": "The cluster has NO int8 standalone Conv binding (only PULPFPConv2D*), so the un-merged Conv+RequantShift path exists only on NE16 and has never been checked against an independent implementation -- the single-layer goldens come from run_onnx_graph on the same un-merged graph.",
+    "next_step": "Dump the encoded weight and block 3's int32 conv output from the FULL network and diff against host-computed values. Leading hypothesis: buffer lifetime/aliasing of weight_enc or the int32 intermediate under full-network memory pressure."
   }
 }

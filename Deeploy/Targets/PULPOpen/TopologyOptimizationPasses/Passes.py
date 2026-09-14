@@ -177,6 +177,7 @@ def _merge_conv_rq_fun(graph: gs.Graph, match: Match, name: str):
     if 'ne16_taps' in conv.attrs:  # -- QW
         return graph  # -- QW
 
+
     totalShift = int(np.log2(rqs.attrs['div'].values))
 
     # Artifically add half the shift division value to implement rounding

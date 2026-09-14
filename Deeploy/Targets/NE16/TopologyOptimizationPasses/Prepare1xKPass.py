@@ -33,6 +33,7 @@ than silently miscomputed; see the note in `_ne16_prepare_1xk_fun`.
 -- QW
 """
 
+import os
 from functools import partial
 from typing import Optional
 
@@ -104,6 +105,13 @@ def ne16_1xkAdmissible(node: gs.Node) -> bool:
     # with pointer arithmetic plus border-subtile computation (`NE16_ComputeBorders`), not with NE16
     # padding -- see the exp16c_SDK_port Findings.
     if any(int(p) != 0 for p in node.attrs.get("pads", [0, 0, 0, 0])):
+        return False
+
+    # QW (exp16c_SDK_port, DIAGNOSTIC): QW_NE16_ONLY restricts NE16 to nodes whose name contains the
+    #     given substring, so the full network can be bisected one convolution at a time. Off unless
+    #     the env var is set. -- QW
+    _only = os.environ.get('QW_NE16_ONLY', '')
+    if _only and _only not in node.name:
         return False
 
     # NE16 reads activations as UNSIGNED and GAP9's NE16 has no signed-input bit.

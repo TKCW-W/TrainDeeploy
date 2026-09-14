@@ -3,13 +3,17 @@
 Date: **2026-09-14** · Branch `feat/GAP9_w_NE16` · Plan: `./Plan.md`
 Driver: `ETH/WorkLog/GAP9_SDK_NE16_Corner_Cases.md`
 
-> **SpeechNet QZO now runs end-to-end on GAP9 with NE16 engaged** — the harness check passes, two
-> convolutions execute on the accelerator with their weights perturbed *and* bit-serial encoded on
-> device, and nothing is hand-authored in the graph any more.
+> **SpeechNet QZO compiles and runs end-to-end on GAP9 with NE16 engaged**, with two convolutions
+> on the accelerator, their weights perturbed *and* bit-serial encoded on device, and nothing
+> hand-authored in the graph. The plumbing works.
 >
-> **Two things are not done, and both are stated plainly below.** Full-network numerical
-> equivalence to the cluster-only baseline is **not established** (§5), and padded convolutions are
-> still refused, so only 5.8 % of conv MACs reach NE16 (§6).
+> **But the full-network result is numerically WRONG** (§5): measured against the host reference
+> losses the NE16 run is 20–55 % off where the cluster baseline matches to ~1e-5 — and the harness
+> reports `PASSED` regardless, because its check is driven by reference losses rather than the
+> device's. Every layer is bit-exact *in isolation*, including under the same tiling, so the fault
+> is in the integration. §5 lists six eliminated hypotheses and the next step.
+>
+> Padded convolutions are also still refused, so only 5.8 % of conv MACs reach NE16 (§6).
 
 ---
 
@@ -171,49 +175,70 @@ NE16 with no `ne16_taps` that then failed to bind. Admissibility now lives in **
    separate cluster node; the existing `ne16_taps` guard in `PULPConvRequantMergePass` fires
    correctly because index 1 precedes every lowering pass.
 
-## 5. OPEN — full-network numerical equivalence is not established
+## 5. **The full-network NE16 path is NUMERICALLY WRONG**
 
-The per-pass losses printed by the NE16 run differ from the cluster-only baseline:
+> This section supersedes an earlier, softer reading. The divergence is not "unestablished
+> equivalence" — the NE16 result is **wrong**, and the harness does not catch it.
 
-```
-NE16      lp=0x3ff172fd  lm=0x3ee99c8e  lp=0x3e109d23  lm=0x3f7fd718 ...
-cluster   lp=0x3f9bbcb3  lm=0x3e94fc49  lp=0x3e413bf6  lm=0x3f90fdd0 ...
-```
+The update fixture ships **host reference losses**, which settles it:
 
-Both runs **pass** the harness's 8-element optimizer-output check, and both are **reproducible**
-(two independent NE16 runs gave identical bits) — but that check is weak, and this divergence is
-too large to be last-ulp. **I am not claiming the full-network port is numerically correct.**
+| pass | NE16 run | cluster baseline | host reference |
+|---|---|---|---|
+| L+ #0 | **1.8863217** | 1.2166961 | **1.2166874** |
+| L− #0 | **0.4562725** | 0.2909873 | **0.2909976** |
+| L+ #1 | **0.1412244** | 0.1887053 | **0.1902758** |
+| L+ #3 | **2.1837227** | 1.6105008 | **1.5945725** |
 
-Three hypotheses were tested and **eliminated**:
+The cluster baseline tracks the host reference to ~1e-5 — the known fp32 last-ulp behaviour. The
+NE16 run is **20–55 % off**. It is wrong.
 
-| hypothesis | why it is dead |
+**Why the harness still reports `PASSED`.** `Errors: 0 out of 8` checks the *update* graph, which is
+driven by the reference `loss_plus` / `loss_minus` arrays from the fixture — not by the losses the
+device just measured. The check is structurally blind to the forward pass. Any future NE16 work on
+the full network must compare the device losses against `speechnet_qzo12_update/outputs.npz`, not
+rely on the harness verdict.
+
+### Bisection
+
+`QW_NE16_ONLY` (a diagnostic env var in `Prepare1xKPass.py`, off by default) restricts NE16 to one
+node so the network can be bisected:
+
+| configuration | first L+ | verdict |
+|---|---|---|
+| block 3 only on NE16 | 1.8192 | wrong |
+| block 4 only on NE16 | 1.2584 | wrong (mildly) |
+| cluster only | 1.2167 | correct |
+
+**Both convolutions are independently wrong in-network**, and block 4's case is the sharper clue:
+with only block 4 on NE16, blocks 0–3 are all cluster, so block 4 receives a **known-correct input**
+and still produces a wrong result — while the same convolution is bit-exact in isolation.
+
+### What has been ruled out
+
+| hypothesis | evidence |
 |---|---|
-| Layout of the un-merged RequantShift | the lowered graph shows conv → NHWC int32 → `Transpose` → NCHW → RQS tagged `channels_first=1`. Correct. |
-| Perturbation RNG differs | generated C shows `tile_seed_offset = 0` for every perturb node and `node_id` from the stable `idx` attribute (`NUM_CORES*6`, `*8`, …). Identical directions. |
-| Requant rounding on the original RequantShift | `b3_ref` (merged on the cluster, `+div/2` baked) and `b3_plain` (un-merged, NE16) both score **0 errors against the same golden**. Those paths agree on device. |
+| Layout of the un-merged RequantShift | lowered graph: conv → NHWC int32 → `Transpose` → NCHW → RQS tagged `channels_first=1`. Correct. |
+| Perturbation RNG | `tile_seed_offset = 0` for every perturb node, `node_id` from the stable `idx` attribute. Identical directions in both runs. |
+| Requant rounding | `b3_ref` (merged) carries `rqs_add = 32700 + 32768`, `b3_plain` (un-merged) the raw `32700`, and **both score 0/1280 against the same golden** — the fused kernel truncates, `RequantShift_s32_s8_NCHW` rounds internally (`rounding = 1` in the emitted call), and the conventions cancel. |
+| Requant call arguments | verified against `RequantShift.h:105` — `(…, log2D=16, HW=40, …, rounding=1)` for block 3, i.e. `div = 65536`, `8×5 = 40`. Correct. |
+| **Spatial tiling** | the single-layer fixture forced to the **same 4-way tiling** (`--l1 20000 / 12000 / 8000`, `numTiles = {0,4}`) is still **`0 / 1280`**. |
+| Output-channel tiling | `nKo` / `bKo` are scalars, not per-tile arrays — `Cout` is not split, so the missing per-channel weight offset is not being exercised. |
 
-**Leading remaining hypothesis.** In-network, blocks 3/4 are requantised by a
-`QSTANDALONE_QCDQ_..._Quant`-derived RequantShift — *not* the original `RequantShift` node the
-single-layer fixtures exercised. Preventing the conv+requant merge changes which node performs the
-requantisation, and `_merge_conv_rq_fun` bakes `+div/2` rounding into a **constant** add when it
-merges. That path has never been covered by a single-layer test.
+### A structural observation that matters
 
-**Further evidence gathered, narrowing it:**
+**The cluster has no int8 standalone `Conv` binding** — only `PULPFPConv2DParser` / `PULPFPDWConv2DParser`.
+An attempt to force the same un-merge on the cluster fails to bind. So the un-merged
+`Conv(int8) + RequantShift` path **exists only on NE16**, and has never been checked against an
+independent implementation of the same structure: the single-layer goldens come from
+`run_onnx_graph` on that same un-merged graph. That is a weaker check than it looked.
 
-* The fused and standalone requant paths use **different rounding conventions that cancel**. The
-  generated C shows `b3_ref` (merged, cluster) carrying `rqs_add = {65468, 65476, ...}` — i.e.
-  `32700 + 32768`, the `+div/2` the merge bakes in — while `b3_plain` (NE16, un-merged) carries the
-  raw `{32700, 32708, ...}`. **Both score `0 / 1280` against the same golden**, so the fused kernel
-  truncates and needs the baked rounding, and `RequantShift_s32_s8_NCHW` rounds internally and must
-  not get it. That is self-consistent, and it means rounding is *not* the explanation.
-* The full network uses `RequantShift_s32_s8_NCHW` exactly **twice** — once per NE16 conv — the same
-  kernel that is bit-exact in isolation. So the kernel is not the variable either.
-* The harness's `0 out of 8` covers only **8 elements** of the update graph, whose fixture carries
-  `loss_plus (52,)`, `loss_minus (52,)` and `grad (13,)` among ~20 output tensors. It is far too
-  coarse to certify forward-pass equivalence, which is why it passes in both configurations.
+### Next step
 
-**Next step:** layer-probe the full network — dump block 3's int8 output under both configurations
-and diff. This is the top priority before the port can be called correct.
+Dump the encoded weight and block 3's int32 conv output from the **full network** and diff them
+against host-computed values (`weight_enc_golden.npz` already exists for the isolated case). The
+leading hypothesis is now that something environmental — buffer lifetime or aliasing of
+`weight_enc` / the int32 intermediate under full-network memory pressure — corrupts an input the
+isolated fixture never stresses.
 
 ## 6. OPEN — padded convolutions are refused
 

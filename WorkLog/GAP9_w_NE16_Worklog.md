@@ -990,3 +990,53 @@ Full write-up with reproduction commands and a file-by-file change list:
 
 Still unexplained, still the top priority: a device layer-probe of block 3's int8 output under both
 configurations.
+
+### 2026-09-14 — Session 6 (cont.): the full-network NE16 result is **WRONG** — correcting the earlier entry
+
+The previous entry said the full network "runs and passes the harness check, equivalence not
+established". **That was too generous.** The update fixture ships host reference losses, which
+settles it:
+
+| pass | NE16 | cluster | host reference |
+|---|---|---|---|
+| L+ #0 | **1.8863** | 1.2167 | **1.2167** |
+| L− #0 | **0.4563** | 0.2910 | **0.2910** |
+| L+ #3 | **2.1837** | 1.6105 | **1.5946** |
+
+The cluster tracks the reference to ~1e-5 (the known fp32 last-ulp behaviour); NE16 is **20–55 %
+off**. It is wrong.
+
+**Why the harness says `PASSED`.** `Errors: 0 out of 8` checks the **update** graph, which is driven
+by the reference `loss_plus` / `loss_minus` arrays in the fixture — not by the losses the device
+just measured. It is structurally blind to the forward pass. Future NE16 work on the full network
+must compare device losses against `speechnet_qzo12_update/outputs.npz` directly.
+
+**Bisection** (via `QW_NE16_ONLY`, a diagnostic env var in `Prepare1xKPass.py`, off by default):
+block 3 alone → 1.8192 (wrong); block 4 alone → 1.2584 (wrong); cluster only → 1.2167 (correct).
+**Both convs are independently wrong in-network.** Block 4 is the sharper clue: with only block 4 on
+NE16 the preceding blocks are all cluster, so it receives a **known-correct input** and still
+produces a wrong result — while being bit-exact in isolation.
+
+**Six hypotheses eliminated:** layout of the un-merged RequantShift (verified NCHW +
+`channels_first=1`); perturbation RNG (`tile_seed_offset = 0`, stable `node_id`); requant rounding
+(the fused path truncates with `+div/2` baked, the standalone rounds internally — verified
+`rounding = 1` in the emitted call — and both score `0/1280` on the same golden); the requant call
+arguments (checked against `RequantShift.h:105`: `log2D=16`, `HW=40` for block 3 — my initial read
+of `16` as a channel count was wrong); **spatial tiling** (the single-layer fixture forced to the
+*same* 4-way tiling at `--l1 20000/12000/8000` still scores `0/1280`); and output-channel tiling
+(`nKo`/`bKo` are scalars, `Cout` is not split).
+
+**A structural observation that matters.** The cluster has **no int8 standalone `Conv` binding** —
+only `PULPFPConv2DParser` / `PULPFPDWConv2DParser`; forcing the same un-merge on the cluster fails
+to bind. So the un-merged `Conv(int8) + RequantShift` path **exists only on NE16** and has never
+been validated against an independent implementation: the single-layer goldens come from
+`run_onnx_graph` on that same un-merged graph. That is a weaker check than it appeared, and it is
+why every isolated test can pass while the network is wrong.
+
+**Next step:** dump the encoded weight and block 3's int32 conv output from the *full* network and
+diff against host-computed values. Leading hypothesis: buffer lifetime or aliasing of `weight_enc`
+or the int32 intermediate under full-network memory pressure — something the isolated fixture never
+stresses.
+
+A second diagnostic (`QW_NOMERGE_KS`, forcing the same un-merge on the cluster) was written and then
+**removed**: it cannot work, because of the missing int8 cluster Conv binding above.
