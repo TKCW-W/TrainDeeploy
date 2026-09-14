@@ -18,7 +18,13 @@
 
 **Containers** (repos are bind-mounted; same files inside each):
 - **`agitated_hugle`** — Onnx4Deeploy at `/app/Onnx4Deeploy` (has `onnxscript`/onnxruntime-training needed for
-  export). It also sees the TrainDeeploy tree at `/app/ETH/TrainDeeploy`, so exports write fixtures there directly.
+  export). It also sees the TrainDeeploy tree at **`/app/TrainDeeploy`** — its bind mount is
+  `/Users/qiwenwu/ETH → /app`, so exports write fixtures there directly.
+  > ⚠️ **The two containers mount the same host tree at DIFFERENT prefixes.** `agitated_hugle` uses
+  > `/app/TrainDeeploy`; `traindeeploy` uses `/app/ETH/TrainDeeploy` (its mount is `/Users/qiwenwu/ETH → /app/ETH`).
+  > Passing `-o /app/ETH/TrainDeeploy/...` inside `agitated_hugle` does **not** fail — it silently creates that
+  > path in the container's own overlay filesystem, prints `✅ Export Complete!`, and produces a fixture that is
+  > invisible to the host and to `traindeeploy`. Verified 2026-09-14 (exp17).
 - **`traindeeploy`** — TrainDeeploy at `/app/ETH/TrainDeeploy` (LLVM/RISC-V toolchain + GVSoC).
 
 Enter a container with e.g. `docker exec -it agitated_hugle bash` / `docker exec -it traindeeploy bash`; every
@@ -30,11 +36,27 @@ command block below states which container it runs in.
 | Onnx4Deeploy (export) | `/app/Onnx4Deeploy` (agitated_hugle) |
 | TrainDeeploy DeeployTest | `/app/ETH/TrainDeeploy/DeeployTest` (traindeeploy) |
 | SilentWear data | `/app/SilentWear/SilentWear_data/data_raw_and_filt` |
-| Pretrained round-1 checkpoint (S01 / vocalized / fold-3) | `/app/SilentWear/SilentWear/artifacts/models/inter_session_ft/S01/vocalized/speechnet/w1400ms/model_1/leave_one_session_out_fold_3.pt` |
-| Train fixture (round *r*) | `/app/ETH/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_train_fullfrozen_b{r}_fold3` |
-| Infer fixture (round *r*, eval batch *r+1*) | `/app/ETH/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_infer_fullfrozen_b{r}_fold3` |
+| Pretrained round-1 checkpoint (S01 / vocalized / fold-3) | **`/app/SilentWear/SilentWear/artifacts_reference/`**`models/inter_session_ft/S01/vocalized/speechnet/w1400ms/model_1/leave_one_session_out_fold_3.pt` |
+| Train fixture (round *r*) | `traindeeploy: /app/ETH/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_train_fullfrozen_b{r}_fold3` · agitated_hugle: drop the `ETH/` |
+| Infer fixture (round *r*, eval batch *r+1*) | `traindeeploy: /app/ETH/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_infer_fullfrozen_b{r}_fold3` · agitated_hugle: drop the `ETH/` |
 | Carry checkpoint (device weights after round *r*) | `/tmp/carry_fullfrozen_b{r}_fold3.pt` |
 | Experiment dir (scripts, logs, results) | `/app/ETH/TrainDeeploy/DeeployTest/experiments/exp1/ondevice_sim_S01_fold3/` |
+
+> ⚠️ **Base checkpoint changed 2026-09-14 (exp17).** Everything up to and including `exp4_BP_round1` used
+> `artifacts/` — a reproduction run on the Mac that does **not** match the paper. `artifacts_reference/` is
+> the lab-machine (GPU) reproduction that **does**. The two differ in all 37 tensors (48 vs 31 epochs before
+> early stopping; best val acc 0.9139 vs 0.8972). Use `artifacts_reference/` for all new work; numbers from
+> `artifacts/` are not comparable to the paper.
+
+**Two gotchas that produce confusing failures (both cost a run in exp17):**
+1. **`pgrep -f gvsoc_launcher` matches its own shell.** The pattern appears in the command line of the very
+   process running it, so `| xargs kill -9` kills the shell (exit 137, empty log). Always bracket the first
+   letter: `pgrep -f "[g]vsoc_launcher" | xargs -r kill -9`.
+2. **`rm -rf TEST_SIRACUSA` before ANY step that switches build mode**, not just before training.
+   `DeeployTest/CMakeLists.txt:9` branches on `if(TRAINING OR MEZO_TRAINING)`, and CMake **caches** that
+   variable in `TEST_SIRACUSA/build_master`. A build tree last configured by a training run will demand
+   `TrainingNetwork.c` from an inference export that never emits it → `CMake Error … Cannot find source file`
+   on every sample, reported only as `could not parse logits`.
 
 **Recipe (S2 — full-model, frozen-BN):**
 | knob | value |
@@ -70,7 +92,7 @@ windows + per-step frozen reference losses [Option A] + updated params).
 ```bash
 cd /app/Onnx4Deeploy
 python3 Onnx4Deeploy.py -model SpeechNet -mode train \
-  -o /app/ETH/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_train_fullfrozen_b1_fold3 \
+  -o /app/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_train_fullfrozen_b1_fold3 \
   --dataset silentwear --data-path /app/SilentWear/SilentWear_data/data_raw_and_filt \
   --pretrained-weights /app/SilentWear/SilentWear/artifacts/models/inter_session_ft/S01/vocalized/speechnet/w1400ms/model_1/leave_one_session_out_fold_3.pt \
   --subject S01 --session 3 --batch 1 --condition vocalized \
@@ -96,7 +118,7 @@ Produces in that dir: `network.onnx` / `network_train.onnx` (training graph), `i
 Kill any orphan GVSoC first, then run 540 update steps with `n_accum=4`, frozen-BN, weight-dump. The
 `--l2 1500000` matches **GAP9's 1.5 MB L2** (the argmax-mask + dedup make it fit; §B).
 ```bash
-pgrep -f gvsoc_launcher | xargs -r kill -9          # kill orphan GVSoC before each run (§gotcha)
+pgrep -f "[g]vsoc_launcher" | xargs -r kill -9       # kill orphan GVSoC (BRACKET is required, see §A.0)
 cd /app/ETH/TrainDeeploy/DeeployTest && rm -rf TEST_SIRACUSA
 python3 deeployTrainingRunner_tiled_siracusa.py \
   -t Tests/Models/Training/SpeechNet/speechnet_train_fullfrozen_b1_fold3 \
@@ -132,7 +154,7 @@ batch (*r+1*) windows + their ORT-reference logits.
 ```bash
 cd /app/Onnx4Deeploy
 python3 Onnx4Deeploy.py -model SpeechNet -mode infer \
-  -o /app/ETH/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_infer_fullfrozen_b1_fold3 \
+  -o /app/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_infer_fullfrozen_b1_fold3 \
   --dataset silentwear --data-path /app/SilentWear/SilentWear_data/data_raw_and_filt \
   --pretrained-weights /tmp/carry_fullfrozen_b1_fold3.pt \
   --subject S01 --session 3 --batch 2 --condition vocalized
