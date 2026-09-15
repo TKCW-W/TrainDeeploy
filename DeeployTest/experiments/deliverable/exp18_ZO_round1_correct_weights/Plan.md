@@ -84,3 +84,41 @@ dir is already keyed on the fixture name, so `build_master` was the only shared 
   auto-derive resolves to the same dir and the runner loads the perturbed-forward graph as the update
   graph → generation fails.
 - `pgrep -f "[g]vsoc_launcher"` — bracket it, or it kills its own shell.
+
+---
+
+## 7. Incident 2026-09-15 — first ZO round destroyed at update 1566/2700
+
+The first exp18 device round was killed at **update 1566/2700 (58 %, ~7 h of simulation)** with no
+`BENCH` and no `[WDUMP]`, i.e. unrecoverable. Log preserved as
+`logs/phase3_gvsoc_zo_round1_KILLED_at_1566.log`.
+
+**Cause — launching exp19's QZO evaluation harness beside it.**
+`experiments/deliverable/exp9_QZO_round1/qzo_accuracy_eval_untiled.py` began with:
+
+```python
+if args.start == 0:
+    subprocess.run(["rm", "-rf", "TEST_SIRACUSA"], check=False)   # stale training cmake cache
+subprocess.run("pgrep -f '[g]vsoc_launcher' | xargs -r kill -9", shell=True, check=False)
+```
+
+Both lines are machine-wide: the first deletes **every** worker's build dir and generation dir, the
+second kills **every** `gvsoc_launcher` process on the box. The ZO round's GVSoC was killed and its
+`build_zo` tree deleted; the runner then reported a bare `gmake … Error 2` with no diagnostic, which
+is what an abruptly-killed simulator looks like from the build system.
+
+**Why the `PYTEST_XDIST_WORKER` isolation did not help.** That variable only controls which build dir
+the *runner* chooses (`testUtils/deeployRunner.py:219`). It is no defence against a script that
+removes the whole `TEST_SIRACUSA` tree or kills processes by name. Isolation has to hold on **both**
+sides — the writer and every other tool that touches the shared tree.
+
+**Fix** (`exp9_QZO_round1/qzo_accuracy_eval_untiled.py`, original commented in place): the wipe is
+scoped to `TEST_SIRACUSA/build_<worker>` plus this eval's own generation dir — which is all the
+stale-CMake-cache problem ever needed, since `TRAINING` is cached *per build dir* — and the kill
+matches only GVSoC processes belonging to this eval's own temp test name.
+
+**Lesson for this repo:** before starting anything next to a long device run, read the tool's startup
+block. `rm -rf TEST_SIRACUSA` and bare `pgrep gvsoc | kill -9` appear in several harnesses in this
+tree and are safe only when a single experiment owns the machine. The BP/ZO harness
+(`experiments/headonly_ondevice_finetune/speechnet_accuracy_eval_untiled.py`) does neither and was
+never a hazard.

@@ -50,9 +50,26 @@ print(f"Dataset: {N} windows, ref accuracy "
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 shutil.copy(os.path.join(INFER_DIR, "network.onnx"), os.path.join(TEMP_DIR, "network.onnx"))
+# QW (exp19): the original cleanup below was NOT concurrency-safe and destroyed a live
+#     7-hour ZO run (exp18) that was simulating in parallel:
+#         if args.start == 0:
+#             subprocess.run(["rm", "-rf", "TEST_SIRACUSA"], check=False)
+#         subprocess.run("pgrep -f '[g]vsoc_launcher' | xargs -r kill -9", shell=True, check=False)
+#     `rm -rf TEST_SIRACUSA` deletes EVERY worker's build dir and every generation dir, and the
+#     bare pgrep kills EVERY gvsoc_launcher on the machine -- including other experiments'.
+#     Both are now scoped to this eval's own worker:
+#       * the wipe targets only TEST_SIRACUSA/build_<worker> (which is all the stale-CMake-cache
+#         problem ever required -- `TRAINING` is cached per build dir, see BP_FLOW.md A.0), plus
+#         this eval's own generation dir;
+#       * the kill matches only gvsoc processes belonging to this eval's temp test name.
+#     Set PYTEST_XDIST_WORKER to give concurrent runs private build dirs
+#     (testUtils/deeployRunner.py:219). -- QW
+_worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
+_tmp_name = os.path.basename(TEMP_DIR)
 if args.start == 0:
-    subprocess.run(["rm", "-rf", "TEST_SIRACUSA"], check=False)   # stale training cmake cache
-subprocess.run("pgrep -f '[g]vsoc_launcher' | xargs -r kill -9", shell=True, check=False)
+    subprocess.run(["rm", "-rf", f"TEST_SIRACUSA/build_{_worker}"], check=False)
+    subprocess.run(["rm", "-rf", f"TEST_SIRACUSA/{TEMP_DIR}"], check=False)
+subprocess.run(f"pgrep -f '[g]vsoc.*{_tmp_name}' | xargs -r kill -9", shell=True, check=False)
 
 LOGIT_RE = re.compile(r"Logit\[(\d+)\]:\s*(-?[\d.eE+\-]+)")
 ERR_RE = re.compile(r"Errors:\s*(\d+)\s+out\s+of")
