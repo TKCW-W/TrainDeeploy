@@ -3,16 +3,16 @@
   "n_evaluated": 180,
   "n_failed": 0,
   "n_classes": 9,
-  "balanced_accuracy": 0.8833333333333334,
-  "overall_accuracy": 0.8833333333333333,
+  "balanced_accuracy": 0.9000000000000001,
+  "overall_accuracy": 0.9,
   "per_class_recall": {
     "0": 1.0,
-    "1": 0.75,
-    "2": 0.8,
-    "3": 0.85,
-    "4": 0.85,
-    "5": 0.95,
-    "6": 0.95,
+    "1": 0.95,
+    "2": 0.9,
+    "3": 0.9,
+    "4": 0.65,
+    "5": 0.9,
+    "6": 1.0,
     "7": 0.9,
     "8": 0.9
   },
@@ -28,8 +28,8 @@
     {
       "sample": 1,
       "true": 7,
-      "pred": 7,
-      "correct": true,
+      "pred": 2,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -124,16 +124,16 @@
     {
       "sample": 13,
       "true": 7,
-      "pred": 2,
-      "correct": false,
+      "pred": 7,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 14,
       "true": 3,
-      "pred": 1,
-      "correct": false,
+      "pred": 3,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -324,8 +324,8 @@
     {
       "sample": 38,
       "true": 1,
-      "pred": 4,
-      "correct": false,
+      "pred": 1,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -380,16 +380,16 @@
     {
       "sample": 45,
       "true": 7,
-      "pred": 7,
-      "correct": true,
+      "pred": 2,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 46,
       "true": 7,
-      "pred": 4,
-      "correct": false,
+      "pred": 7,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -540,8 +540,8 @@
     {
       "sample": 65,
       "true": 2,
-      "pred": 4,
-      "correct": false,
+      "pred": 2,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -668,8 +668,8 @@
     {
       "sample": 81,
       "true": 4,
-      "pred": 4,
-      "correct": true,
+      "pred": 2,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -724,8 +724,8 @@
     {
       "sample": 88,
       "true": 4,
-      "pred": 4,
-      "correct": true,
+      "pred": 2,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -756,8 +756,8 @@
     {
       "sample": 92,
       "true": 3,
-      "pred": 3,
-      "correct": true,
+      "pred": 1,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -796,8 +796,8 @@
     {
       "sample": 97,
       "true": 1,
-      "pred": 2,
-      "correct": false,
+      "pred": 1,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -900,16 +900,16 @@
     {
       "sample": 110,
       "true": 1,
-      "pred": 2,
-      "correct": false,
+      "pred": 1,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
     {
       "sample": 111,
       "true": 3,
-      "pred": 1,
-      "correct": false,
+      "pred": 3,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -956,8 +956,8 @@
     {
       "sample": 117,
       "true": 2,
-      "pred": 7,
-      "correct": false,
+      "pred": 2,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -1164,8 +1164,8 @@
     {
       "sample": 143,
       "true": 5,
-      "pred": 5,
-      "correct": true,
+      "pred": 6,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -1228,8 +1228,8 @@
     {
       "sample": 151,
       "true": 1,
-      "pred": 0,
-      "correct": false,
+      "pred": 1,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     },
@@ -1316,8 +1316,8 @@
     {
       "sample": 162,
       "true": 4,
-      "pred": 4,
-      "correct": true,
+      "pred": 2,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -1332,8 +1332,8 @@
     {
       "sample": 164,
       "true": 4,
-      "pred": 4,
-      "correct": true,
+      "pred": 2,
+      "correct": false,
       "sim_errors": 0,
       "failed": false
     },
@@ -1436,7 +1436,7 @@
     {
       "sample": 177,
       "true": 5,
-      "pred": 4,
+      "pred": 2,
       "correct": false,
       "sim_errors": 0,
       "failed": false
@@ -1452,8 +1452,8 @@
     {
       "sample": 179,
       "true": 6,
-      "pred": 5,
-      "correct": false,
+      "pred": 6,
+      "correct": true,
       "sim_errors": 0,
       "failed": false
     }
