@@ -148,3 +148,40 @@ def _selftest(repo_root: str = "..") -> None:
 if __name__ == "__main__":
     import sys
     _selftest(sys.argv[1] if len(sys.argv) > 1 else "..")
+
+
+# --------------------------------------------------------------------------------------
+# Block-0 forward chain -- needed only to produce the ACTIVATION that feeds block 1's conv,
+# so that an extracted block-1 fixture is fed real data rather than noise. -- QW
+# --------------------------------------------------------------------------------------
+
+def batchnorm_frozen(x, gamma, beta, running_mean, running_var, epsilon):
+    """TargetLibraries/PULPOpen/src/BatchNorm.c :: PULP_BatchNormInternal_fp32, g_bn_frozen_stats.
+
+    y = (x - running_mean) * 1/sqrt(running_var + eps) * gamma + beta, per channel, NCHW.
+    The ZO runner always sets `-D BN_FROZEN_STATS=ON`, so this is the branch that runs; the
+    batch-statistics branch is never taken in our flow.
+    """
+    x = x.astype(np.float32)
+    inv_std = (np.float32(1.0) / np.sqrt(running_var.astype(np.float32) + np.float32(epsilon)))
+    shape = (1, -1) + (1,) * (x.ndim - 2)
+    return ((x - running_mean.astype(np.float32).reshape(shape)) * inv_std.reshape(shape) *
+            gamma.astype(np.float32).reshape(shape) + beta.astype(np.float32).reshape(shape)).astype(np.float32)
+
+
+def relu(x):
+    return np.maximum(x, np.float32(0.0)).astype(np.float32)
+
+
+def maxpool2d(x, kernel_shape, strides):
+    """Plain NCHW max pool, no padding, ceil_mode=0 -- the block-0/1 MaxPool attributes."""
+    kh, kw = kernel_shape
+    sh, sw = strides
+    n, c, h, w = x.shape
+    h_out = (h - kh) // sh + 1
+    w_out = (w - kw) // sw + 1
+    out = np.empty((n, c, h_out, w_out), dtype = np.float32)
+    for i in range(h_out):
+        for j in range(w_out):
+            out[:, :, i, j] = x[:, :, i * sh:i * sh + kh, j * sw:j * sw + kw].max(axis = (2, 3))
+    return out

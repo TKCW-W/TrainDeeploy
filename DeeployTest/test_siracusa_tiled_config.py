@@ -24,6 +24,7 @@ L2_SINGLEBUFFER_KERNELS = {
     # setting, which reproduces the ZO network's tiling for this node exactly (single
     # buffer only -- the double-buffer dict is deliberately left alone). -- QW
     "Kernels/FP32/ZO_Conv": [128000],
+    "Kernels/FP32/ZO_Conv_Block1": [128000],
     "Kernels/FP32/GEMM/Regular": [8000],
     "Kernels/FP32/MatMul": [2000],
     "Kernels/FP32/MaxPool/Regular_2D": [2000],
@@ -60,6 +61,22 @@ L2_SINGLEBUFFER_KERNELS = {
     "Kernels/Integer/Conv/StriddedPadded_2D_RQ": [600],
     "Kernels/Integer/GEMM/Batch_RQ": [20000],
     "Kernels/Integer/Hardswish/Regular_RQ": [750],
+}
+
+# Per-kernel extra generation arguments (same shape as TRAINING_MODEL_OVERRIDES below):
+# test path -> list of flags appended to the generator's command line.
+#
+# ZO_Conv_Block1: SpeechNet block-1's conv bias is |b| < 1e-5, and testMVP.py types inputs by
+# VALUE (`minimalFloatType` walks bfloat16 -> float16 -> float32), so it is inferred as bfloat16
+# and PerturbRademacher -- which is float32-only -- then has no binding and parsing fails. The
+# ONNX declares FLOAT, but 32 Integer kernel tests declare FLOAT while holding int8/int64 data,
+# so the declared type can't simply be trusted here the way testMVPTraining.py trusts it. Pin
+# the one tensor instead. -- QW
+KERNEL_GEN_ARGS = {
+    "Kernels/FP32/ZO_Conv_Block1": [
+        "--input-type-map", "blocks_1_0_bias=float32_t",
+        "--input-offset-map", "blocks_1_0_bias=0",
+    ],
 }
 
 L2_DOUBLEBUFFER_KERNELS = {

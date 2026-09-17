@@ -35,6 +35,7 @@ from test_siracusa_neureka_tiled_config import L2_SINGLEBUFFER_KERNELS_WMEM as N
 from test_siracusa_neureka_tiled_config import L3_DOUBLEBUFFER_MODELS as NEUREKA_L3_DOUBLEBUFFER_MODELS
 from test_siracusa_neureka_tiled_config import L3_DOUBLEBUFFER_MODELS_WMEM as NEUREKA_L3_DOUBLEBUFFER_MODELS_WMEM
 from test_siracusa_neureka_tiled_config import L3_SINGLEBUFFER_MODELS as NEUREKA_L3_SINGLEBUFFER_MODELS
+from test_siracusa_tiled_config import KERNEL_GEN_ARGS as SIRACUSA_KERNEL_GEN_ARGS
 from test_siracusa_tiled_config import L2_DOUBLEBUFFER_KERNELS, L2_DOUBLEBUFFER_MODELS, L2_SINGLEBUFFER_KERNELS, \
     L2_SINGLEBUFFER_MODELS
 from test_siracusa_tiled_config import L2_SINGLEBUFFER_TRAINING_MODELS as SIRACUSA_L2_SINGLEBUFFER_TRAINING_MODELS
@@ -442,6 +443,7 @@ def test_siracusa_tiled_kernels_l2_singlebuffer(test_params, deeploy_test_dir, t
         l1 = l1,
         default_mem_level = "L2",
         double_buffer = False,
+        gen_args = SIRACUSA_KERNEL_GEN_ARGS.get(test_name),
     )
     run_and_assert_test(test_name, config, skipgen, skipsim)
 
