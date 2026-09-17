@@ -74,13 +74,24 @@ L2_SINGLEBUFFER_KERNELS = {
 # the one tensor instead. -- QW
 # Per-kernel extra CMake defines (NAME=VALUE, same form as the runner's -D).
 #
-# ZO_Conv: block-0's conv output reaches |y| ~ 2615, where one fp32 ulp is 2.44e-4 -- larger than
-# deeploytest.c's default ABSOLUTE OUTPUT_TOL of 1e-4 all by itself. Whether a given build lands
-# 0 or ~10 of 78512 elements outside it is decided by clang's -ffast-math contraction, i.e. by
-# code layout, not by correctness. 1e-2 here is still ~4e-6 RELATIVE at that magnitude.
-# ZO_Conv_Block1 needs no override: its outputs max at ~28, where an ulp is ~2e-6. -- QW
+# The ZO_Conv* fixtures are lifted out of the float-ZO training graph, so they are held to the
+# tolerance that flow uses: ZO_TOLERANCE_ABS / TRAINING_TOLERANCE_ABS default to 1e-3
+# (testUtils/codeGenerateTraining.py:191,229). deeploytest.c's own OUTPUT_TOL default is 1e-4,
+# which these fixtures inherit only by living under Tests/Kernels/.
+#
+# 1e-4 is the wrong bar for block 0 specifically: its conv output reaches |y| ~ 2615, and the
+# comparison is ABSOLUTE. On a clean tree 10 of 78512 elements miss by exactly 1.22e-4 -- one fp32
+# ulp in the [1024, 2048) binade -- i.e. the default sits just *below* one ulp. Which elements land
+# on which side is decided by clang's -ffast-math contraction, not by correctness. 1e-3 clears the
+# observed max by 8.2x and is still ~4e-7 RELATIVE at that magnitude, far stricter than 1e-3 is on
+# the scalar losses the ZO harness applies it to.
+#
+# Block 1 passes at the 1e-4 default on its own (outputs max at ~28, an ulp is ~2e-6); it is pinned
+# to the same 1e-3 so the two experiments are built identically and the comparison has no
+# confound. -- QW
 KERNEL_CMAKE_ARGS = {
-    "Kernels/FP32/ZO_Conv": ["OUTPUT_TOL=1e-2"],
+    "Kernels/FP32/ZO_Conv": ["OUTPUT_TOL=1e-3"],
+    "Kernels/FP32/ZO_Conv_Block1": ["OUTPUT_TOL=1e-3"],
 }
 
 KERNEL_GEN_ARGS = {

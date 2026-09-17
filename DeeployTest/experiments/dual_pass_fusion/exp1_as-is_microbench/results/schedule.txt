@@ -36,5 +36,5 @@
   node_1_blocks_0_blocks_0_0_Conv_data_out_ref = (float32_t *)((char *)DeeployNetwork_MEMORYARENA_L1 + 0)
   DeeployNetwork_node_1_blocks_0_blocks_0_0_Conv_buffer = (void *)((char *)DeeployNetwork_MEMORYARENA_L1 + 117712)
 
-## Instrumented build? (perf_bench_print call sites)
-  6
+## Build variant
+  OUTPUT_TOL=1e-3, --cores 8; perf_bench_print call sites: 6 (6 = instrumented build)

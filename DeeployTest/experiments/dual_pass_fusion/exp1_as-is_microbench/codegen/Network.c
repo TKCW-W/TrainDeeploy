@@ -170,8 +170,8 @@ static void _perturbrademacher_0_blocks_0_0_weight_closure(void *_perturbrademac
                                                                        [*DeeployNetwork_TILING_CODEGEN_L1_perturbrademacher_0_blocks_0_0_weight_tileIdxPtr]);
 
   // Initialize DMA futures
-  uint32_t channel_output = (uint32_t)-1;
   uint32_t channel_input = (uint32_t)-1;
+  uint32_t channel_output = (uint32_t)-1;
 
   // TILING LOOP
   for (int TILING_I = DeeployNetwork_TILING_CODEGEN_L1_perturbrademacher_0_blocks_0_0_weight_numTiles
@@ -353,8 +353,8 @@ static void _perturbrademacher_1_blocks_0_0_bias_closure(void *_perturbrademache
                                                                      [*DeeployNetwork_TILING_CODEGEN_L1_perturbrademacher_1_blocks_0_0_bias_tileIdxPtr]);
 
   // Initialize DMA futures
-  uint32_t channel_output = (uint32_t)-1;
   uint32_t channel_input = (uint32_t)-1;
+  uint32_t channel_output = (uint32_t)-1;
 
   // TILING LOOP
   for (int TILING_I = DeeployNetwork_TILING_CODEGEN_L1_perturbrademacher_1_blocks_0_0_bias_numTiles
@@ -547,8 +547,8 @@ static void _node_1_blocks_0_blocks_0_0_Conv_input_0_transpose_closure(void *_no
                    [*DeeployNetwork_TILING_CODEGEN_L1_node_1_blocks_0_blocks_0_0_Conv_input_0_transpose_tileIdxPtr]);
 
   // Initialize DMA futures
-  uint32_t channel_output = (uint32_t)-1;
   uint32_t channel_input = (uint32_t)-1;
+  uint32_t channel_output = (uint32_t)-1;
 
   // TILING LOOP
   for (int TILING_I = DeeployNetwork_TILING_CODEGEN_L1_node_1_blocks_0_blocks_0_0_Conv_input_0_transpose_numTiles
@@ -756,8 +756,8 @@ static void _node_1_blocks_0_blocks_0_0_Conv_0_blocks_0_0_weight_tensor_transpos
                        [*DeeployNetwork_TILING_CODEGEN_L1_node_1_blocks_0_blocks_0_0_Conv_0_blocks_0_0_weight_tensor_transpose_tileIdxPtr]);
 
   // Initialize DMA futures
-  uint32_t channel_output = (uint32_t)-1;
   uint32_t channel_input = (uint32_t)-1;
+  uint32_t channel_output = (uint32_t)-1;
 
   // TILING LOOP
   for (int TILING_I = DeeployNetwork_TILING_CODEGEN_L1_node_1_blocks_0_blocks_0_0_Conv_0_blocks_0_0_weight_tensor_transpose_numTiles
@@ -986,8 +986,8 @@ static void _node_1_blocks_0_blocks_0_0_Conv_closure(void *_node_1_blocks_0_bloc
   void *DeeployNetwork_node_1_blocks_0_blocks_0_0_Conv_buffer = (void *)((char *)DeeployNetwork_MEMORYARENA_L1 + 117712);
 
   // Initialize DMA futures
-  uint32_t channel_output = (uint32_t)-1;
   uint32_t channel_input = (uint32_t)-1;
+  uint32_t channel_output = (uint32_t)-1;
 
   // TILING LOOP
   for (int TILING_I = DeeployNetwork_TILING_CODEGEN_L1_node_1_blocks_0_blocks_0_0_Conv_numTiles
@@ -1226,8 +1226,8 @@ static void _node_1_blocks_0_blocks_0_0_Conv_output_0_pre_transpose_closure(void
                                                      [*DeeployNetwork_TILING_CODEGEN_L1_node_1_blocks_0_blocks_0_0_Conv_output_0_pre_transpose_tileIdxPtr]);
 
   // Initialize DMA futures
-  uint32_t channel_output = (uint32_t)-1;
   uint32_t channel_input = (uint32_t)-1;
+  uint32_t channel_output = (uint32_t)-1;
 
   // TILING LOOP
   for (int TILING_I = DeeployNetwork_TILING_CODEGEN_L1_node_1_blocks_0_blocks_0_0_Conv_output_0_pre_transpose_numTiles
