@@ -274,14 +274,19 @@ def create_config_from_args(args: argparse.Namespace,
     if not tiling:
         if getattr(args, 'profileUntiled', False):
             gen_args_list.append("--profileUntiled")
-        # Pass core count so generateNetwork.py sizes the im2col buffer correctly.
-        # Without this, generateNetwork.py defaults to n_cores=1 but the cluster
-        # launches NUM_CORES at runtime, causing cores 1..N-1 to write beyond the
-        # allocated im2col region and corrupt the L2 heap.
-        if hasattr(args, 'cores'):
-            gen_args_list.append(f"--cores={args.cores}")
-        elif hasattr(args, 'num_cores'):
-            gen_args_list.append(f"--cores={args.num_cores}")
+
+    # Pass core count so the generator sizes the im2col buffer correctly. Both
+    # generateNetwork.py and testMVP.py default to n_cores=1, but the cluster launches
+    # NUM_CORES at runtime, so cores 1..N-1 write beyond the allocated im2col region and
+    # corrupt whatever the allocator placed after it.
+    # -- QW: this used to be inside `if not tiling`, so TILED runs silently kept n_cores=1
+    # (the training/ZO paths pass --cores through trainingUtils' opt_passthrough, which is
+    # why the ZO networks were unaffected). Found via Tests/Kernels/FP32/ZO_Conv, where the
+    # 16 B (= 4*1*C*Kx*Ky) buffer was overrun by 8 cores straight into the conv bias.
+    if hasattr(args, 'cores'):
+        gen_args_list.append(f"--cores={args.cores}")
+    elif hasattr(args, 'num_cores'):
+        gen_args_list.append(f"--cores={args.num_cores}")
 
     if getattr(args, 'profileMicrobenchmark', False):
         gen_args_list.append("--profileMicrobenchmark")

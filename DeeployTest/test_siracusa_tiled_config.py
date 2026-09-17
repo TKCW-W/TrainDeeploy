@@ -19,6 +19,11 @@ L2_SINGLEBUFFER_KERNELS = {
     "Kernels/FP32/Conv/Regular_2D_Bias": [6600],
     "Kernels/FP32/Conv/Regular_2D_NoBias": [1600],
     "Kernels/FP32/Conv/Regular_2D_ZeroValuedBias": [6600],
+    # ZO prototype: SpeechNet block-0 Conv + its two PerturbRademacher nodes, lifted
+    # verbatim out of the float-ZO training graph. L1 = 128000 is the ZO runner's own
+    # setting, which reproduces the ZO network's tiling for this node exactly (single
+    # buffer only -- the double-buffer dict is deliberately left alone). -- QW
+    "Kernels/FP32/ZO_Conv": [128000],
     "Kernels/FP32/GEMM/Regular": [8000],
     "Kernels/FP32/MatMul": [2000],
     "Kernels/FP32/MaxPool/Regular_2D": [2000],
