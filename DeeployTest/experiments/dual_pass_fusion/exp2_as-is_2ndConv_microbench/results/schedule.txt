@@ -16,6 +16,11 @@
   CODEGEN_L1_node_5_blocks_1_blocks_1_0_Conv_numTiles[2] = {0, 2}
   CODEGEN_L1_node_5_blocks_1_blocks_1_0_Conv_output_0_pre_transpose_numTiles[2] = {0, 2}
 
+## Channel split across conv tiles (bias bytes = 4 B per output channel)
+  node_5_blocks_1_blocks_1_0_Conv_weight_cumByteOffset[2] = {0, 7680}
+  node_5_blocks_1_blocks_1_0_Conv_bias_cumByteOffset[2] = {0, 60}
+  node_5_blocks_1_blocks_1_0_Conv_data_out_cumByteOffset[2] = {0, 60}
+
 ## Conv kernel invocation (H, W, C, w, F_total, P, Q, SP, SQ, bias, has_bias, dst, pads..., ctx)
       PULP_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
           ref_DeeployNetwork_TILING_CODEGEN_L1_node_5_blocks_1_blocks_1_0_Conv_data_out_ref_DeeployNetwork_TILING_CODEGEN_L1_node_5_blocks_1_blocks_1_0_Conv_data_in_ref,
@@ -30,3 +35,6 @@
   node_5_blocks_1_blocks_1_0_Conv_bias_ref = (float32_t *)((char *)DeeployNetwork_MEMORYARENA_L1 + 124672)
   node_5_blocks_1_blocks_1_0_Conv_data_out_ref = (float32_t *)((char *)DeeployNetwork_MEMORYARENA_L1 + 0)
   DeeployNetwork_node_5_blocks_1_blocks_1_0_Conv_buffer = (void *)((char *)DeeployNetwork_MEMORYARENA_L1 + 120576)
+
+## Instrumented build? (perf_bench_print call sites)
+  6

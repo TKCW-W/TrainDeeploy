@@ -72,6 +72,17 @@ L2_SINGLEBUFFER_KERNELS = {
 # ONNX declares FLOAT, but 32 Integer kernel tests declare FLOAT while holding int8/int64 data,
 # so the declared type can't simply be trusted here the way testMVPTraining.py trusts it. Pin
 # the one tensor instead. -- QW
+# Per-kernel extra CMake defines (NAME=VALUE, same form as the runner's -D).
+#
+# ZO_Conv: block-0's conv output reaches |y| ~ 2615, where one fp32 ulp is 2.44e-4 -- larger than
+# deeploytest.c's default ABSOLUTE OUTPUT_TOL of 1e-4 all by itself. Whether a given build lands
+# 0 or ~10 of 78512 elements outside it is decided by clang's -ffast-math contraction, i.e. by
+# code layout, not by correctness. 1e-2 here is still ~4e-6 RELATIVE at that magnitude.
+# ZO_Conv_Block1 needs no override: its outputs max at ~28, where an ulp is ~2e-6. -- QW
+KERNEL_CMAKE_ARGS = {
+    "Kernels/FP32/ZO_Conv": ["OUTPUT_TOL=1e-2"],
+}
+
 KERNEL_GEN_ARGS = {
     "Kernels/FP32/ZO_Conv_Block1": [
         "--input-type-map", "blocks_1_0_bias=float32_t",

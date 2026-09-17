@@ -35,6 +35,7 @@ from test_siracusa_neureka_tiled_config import L2_SINGLEBUFFER_KERNELS_WMEM as N
 from test_siracusa_neureka_tiled_config import L3_DOUBLEBUFFER_MODELS as NEUREKA_L3_DOUBLEBUFFER_MODELS
 from test_siracusa_neureka_tiled_config import L3_DOUBLEBUFFER_MODELS_WMEM as NEUREKA_L3_DOUBLEBUFFER_MODELS_WMEM
 from test_siracusa_neureka_tiled_config import L3_SINGLEBUFFER_MODELS as NEUREKA_L3_SINGLEBUFFER_MODELS
+from test_siracusa_tiled_config import KERNEL_CMAKE_ARGS as SIRACUSA_KERNEL_CMAKE_ARGS
 from test_siracusa_tiled_config import KERNEL_GEN_ARGS as SIRACUSA_KERNEL_GEN_ARGS
 from test_siracusa_tiled_config import L2_DOUBLEBUFFER_KERNELS, L2_DOUBLEBUFFER_MODELS, L2_SINGLEBUFFER_KERNELS, \
     L2_SINGLEBUFFER_MODELS
@@ -437,7 +438,7 @@ def test_siracusa_tiled_kernels_l2_singlebuffer(test_params, deeploy_test_dir, t
         deeploy_test_dir = deeploy_test_dir,
         toolchain = toolchain,
         toolchain_dir = toolchain_dir,
-        cmake_args = cmake_args,
+        cmake_args = list(cmake_args) + SIRACUSA_KERNEL_CMAKE_ARGS.get(test_name, []),
         tiling = True,
         cores = SIRACUSA_DEFAULT_CORES,
         l1 = l1,

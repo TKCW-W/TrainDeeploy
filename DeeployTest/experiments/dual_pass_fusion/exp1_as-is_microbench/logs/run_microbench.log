@@ -199,7 +199,7 @@ clang-15: [0;1;35mwarning: [0m[1margument unused during compilation: '-nostar
 [1mBuild Configuration:[0m
   Toolchain           : LLVM
   Toolchain Directory : /app/install/llvm
-  CMake Arguments     : -DNUM_CORES=8
+  CMake Arguments     : -DOUTPUT_TOL=1e-2 -DNUM_CORES=8
 
 [1mRuntime Configuration:[0m
   Verbosity Level     : 0
