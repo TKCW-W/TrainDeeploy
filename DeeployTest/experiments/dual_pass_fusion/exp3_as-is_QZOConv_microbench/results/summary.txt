@@ -1,0 +1,16 @@
+# exp3 summary numbers (derived)
+
+whole fixture (run_plain)      : 858,185 cycles = 2.319 ms @ 370 MHz
+sum of instrumented blocks     : 814,686 (94.9 %)   DMA/tiling outside blocks: 43,499 (5.1 %)
+conv node (_MERGE_CONVRQ_PASS_0): 664,646 cycles (77.4 % of runtime), 411,343 instr, IPC 0.619
+MACs                           : 314,048   cluster MAC/cycle = 0.473
+I-cache misses in conv         : 151362 = 22.8 % of its cycles   (fp32 ZO_Conv: 2,893 = 0.04 %)
+load stalls in conv            : 35495 = 5.3 %   TCDM contention: 0
+
+pulp_nn_conv_i8_i8_i8 work split (from the kernel, dim_out_y=701, dim_out_x=14, NUM_CORES=8):
+  extra_chunk=1 and dim_out_x>1 -> Log2Core=log2(4), 4 row-groups x 2 column-sections
+  row groups: [176, 176, 176, 173]  -> all 8 cores active, balance 98.3 %
+  core 0: 176 rows x 7 cols = 1,232 px of 9,814 (12.6 %), all 8 channels -> 39,424 MACs
+  core-0 instr per core-0 MAC   : 10.43
+
+vs exp1 (fp32 ZO_Conv, same layer): whole 8,226,975 -> 858,185 = 9.59x ; conv 7,306,842 -> 664,646 = 10.99x ; cluster MAC/cycle 0.043 -> 0.473 = 11.0x

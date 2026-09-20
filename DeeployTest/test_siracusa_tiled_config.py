@@ -25,6 +25,9 @@ L2_SINGLEBUFFER_KERNELS = {
     # buffer only -- the double-buffer dict is deliberately left alone). -- QW
     "Kernels/FP32/ZO_Conv": [128000],
     "Kernels/FP32/ZO_Conv_Block1": [128000],
+    # QZO prototype: block-0 QUANTIZED conv (Conv + RequantShift -> fused RequantizedConv) with
+    # its two RQSPerturbRademacher nodes, lifted verbatim from speechnet_qzo19_train. -- QW
+    "Kernels/Integer/QZO_Conv": [128000],
     "Kernels/FP32/GEMM/Regular": [8000],
     "Kernels/FP32/MatMul": [2000],
     "Kernels/FP32/MaxPool/Regular_2D": [2000],
@@ -95,6 +98,13 @@ KERNEL_CMAKE_ARGS = {
 }
 
 KERNEL_GEN_ARGS = {
+    # QZO_Conv: the requant bias is int32 but every entry is 32768, which value inference types as
+    # uint16_t -- and the RQSPerturbRademacher_i32 / RequantizedConv bindings want int32_t. Pin it.
+    # Output is int8, compared EXACTLY by deeploytest.c's integer path: no OUTPUT_TOL needed. -- QW
+    "Kernels/Integer/QZO_Conv": [
+        "--input-type-map", "blocks.0.conv.bias_rqsadd=int32_t",
+        "--input-offset-map", "blocks.0.conv.bias_rqsadd=0",
+    ],
     "Kernels/FP32/ZO_Conv_Block1": [
         "--input-type-map", "blocks_1_0_bias=float32_t",
         "--input-offset-map", "blocks_1_0_bias=0",
