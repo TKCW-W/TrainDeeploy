@@ -627,3 +627,24 @@ PULPRQSPerturbRademacherBindings = [  # -- QW
     NodeBinding(_RQSPerturbZOChecker([PointerClass(int32_t), PointerClass(int32_t)], [PointerClass(int32_t)]),
                 _RQSPRT32.referenceTemplate, ForkTransformer),
 ]
+
+# -- QW (dual_pass_fusion exp5): fused dual-pass QZO conv. Six int inputs (in, W, mul, add, wmul, bmul),
+#    one int8 output carrying A+ then A- on the channel axis. Reuses PULPConvChecker (n_levels/signed). -- QW
+from Deeploy.Targets.PULPOpen.Templates import DualConvTemplate as _DualConvTemplate  # -- QW
+PULPDualConv2DBindings = [  # -- QW
+    NodeBinding(
+        PULPConvChecker([PointerClass(int8_t), PointerClass(int8_t), PointerClass(int32_t), PointerClass(int32_t),
+                         PointerClass(int32_t), PointerClass(int32_t)], [PointerClass(int8_t)]),
+        _DualConvTemplate.referenceTemplate, ForkTransformer)
+]
+
+# -- QW (dual_pass_fusion exp5a): single-pass control kernel with DualConv's structure, bound to the ordinary
+#    RequantizedConv (int8 in / int8 out / int8 weight only). Same checker and transformer as PULPRQSConv2DBindings;
+#    only the template (and thus the kernel) differs. Selected via the Conv2DMapper line in Platform.py. -- QW
+from Deeploy.Targets.PULPOpen.Templates import FlatConvTemplate as _FlatConvTemplate  # -- QW
+PULPRQSConv2DFlatBindings = [  # -- QW
+    NodeBinding(
+        PULPConvChecker([PointerClass(int8_t), PointerClass(int8_t), PointerClass(int32_t), PointerClass(int32_t),
+                         PointerClass(int32_t)], [PointerClass(int8_t)]), _FlatConvTemplate.referenceTemplate,
+        ForkTransformer)
+]

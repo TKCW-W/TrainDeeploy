@@ -28,6 +28,8 @@ L2_SINGLEBUFFER_KERNELS = {
     # QZO prototype: block-0 QUANTIZED conv (Conv + RequantShift -> fused RequantizedConv) with
     # its two RQSPerturbRademacher nodes, lifted verbatim from speechnet_qzo19_train. -- QW
     "Kernels/Integer/QZO_Conv": [128000],
+    # QW exp5: the FUSED dual-pass version of QZO_Conv (one node, both eps signs, 2*ch_out output). -- QW
+    "Kernels/Integer/QZO_DualConv": [128000],
     "Kernels/FP32/GEMM/Regular": [8000],
     "Kernels/FP32/MatMul": [2000],
     "Kernels/FP32/MaxPool/Regular_2D": [2000],
@@ -102,6 +104,10 @@ KERNEL_GEN_ARGS = {
     # uint16_t -- and the RQSPerturbRademacher_i32 / RequantizedConv bindings want int32_t. Pin it.
     # Output is int8, compared EXACTLY by deeploytest.c's integer path: no OUTPUT_TOL needed. -- QW
     "Kernels/Integer/QZO_Conv": [
+        "--input-type-map", "blocks.0.conv.bias_rqsadd=int32_t",
+        "--input-offset-map", "blocks.0.conv.bias_rqsadd=0",
+    ],
+    "Kernels/Integer/QZO_DualConv": [  # -- QW exp5: same int32 pin for the unperturbed requant add
         "--input-type-map", "blocks.0.conv.bias_rqsadd=int32_t",
         "--input-offset-map", "blocks.0.conv.bias_rqsadd=0",
     ],

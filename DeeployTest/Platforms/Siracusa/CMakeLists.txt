@@ -5,6 +5,10 @@ set(ProjectId ${TESTNAME})
 
 option(TRAINING "Use training harness instead of inference harness" OFF)
 option(MEZO_TRAINING "Use MeZO (ZO) training harness instead of inference/BP harness" OFF)  # QW -- QW
+# QW (dual_pass_fusion exp4): standalone instruction-scheduling microbenchmark. Replaces the harness
+#     source only; the generated network is still linked but never invoked, so any tiny kernel test
+#     can serve as the build vehicle. -- QW
+option(DUALPASS_BENCH "Use the dual-pass interleaving microbenchmark harness" OFF)  # QW -- QW
 
 # QW: MeZO and BP training are mutually exclusive; MEZO takes precedence if both set. -- QW
 if(MEZO_TRAINING AND TRAINING)  # QW -- QW
@@ -23,7 +27,13 @@ set(ZO_LR "3e-6f" CACHE STRING "MeZO learning rate")           # QW -- QW
 set(ZO_Q "1" CACHE STRING "MeZO number of random directions per step")  # QW -- QW
 set(ZO_SEED "0" CACHE STRING "MeZO base seed (informational)") # QW -- QW
 
-if(MEZO_TRAINING)  # QW: MeZO (ZO) harness — parallel branch alongside BP TRAINING -- QW
+if(DUALPASS_BENCH)  # QW exp4: scheduling microbenchmark; own main(), does not call the network -- QW
+    file(GLOB_RECURSE SOURCES
+        src/CycleCounter.c
+        src/dualpass_bench.c
+    )
+    set(NETWORK_LIB network)
+elseif(MEZO_TRAINING)  # QW: MeZO (ZO) harness — parallel branch alongside BP TRAINING -- QW
     file(GLOB_RECURSE SOURCES
         src/CycleCounter.c
         src/deeploymezotest.c

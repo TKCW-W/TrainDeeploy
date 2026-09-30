@@ -92,7 +92,13 @@ RQGELU_int8_Mapper = NodeMapper(RQSiGELUParser(), PULPiRQSGELUTilingReadyBinding
 Conv1DMapper = NodeMapper(PULPConv1DParser(), PULPRQSConv1DTilingReadyBindings)
 DWConv1DMapper = NodeMapper(PULPDWConv1DParser(), [PULPDWConv1DBinding])
 FPConv2DMapper = NodeMapper(PULPFPConv2DParser(), PULPConv2DTilingReadyBindings)
-Conv2DMapper = NodeMapper(PULPConv2DParser(), PULPRQSConv2DTilingReadyBindings)
+# -- QW (dual_pass_fusion exp5a): KERNEL SWITCH for every int8 RequantizedConv on this target.
+#    default  = pulp_nn_conv_i8_i8_i8 (PULPRQSConv2DTilingReadyBindings)
+#    exp5a    = PULP_FlatConv2d_i8_i8_i8_HWC, the single-pass control kernel (PULPRQSConv2DFlatTilingReadyBindings)
+#    To switch, comment/uncomment the two lines below. See DeeployTest/experiments/dual_pass_fusion/exp5a_breakdown. -- QW
+from Deeploy.Targets.PULPOpen.Tiler import PULPRQSConv2DFlatTilingReadyBindings  # -- QW exp5a
+Conv2DMapper = NodeMapper(PULPConv2DParser(), PULPRQSConv2DTilingReadyBindings)        # default: pulp-nn  -- QW exp5a
+# Conv2DMapper = NodeMapper(PULPConv2DParser(), PULPRQSConv2DFlatTilingReadyBindings)  # exp5a: flat kernel -- QW exp5a
 FPDWConv2DMapper = NodeMapper(PULPFPDWConv2DParser(), PULPDWConv2DTilingReadyBindings)
 DWConv2DMapper = NodeMapper(PULPDWConv2DParser(), PULPRQSDWConv2DTilingReadyBindings)
 GEMMMapper = NodeMapper(PULPGEMMParser(), PULPRQSGEMMTilingReadyBindings)
@@ -143,6 +149,11 @@ from Deeploy.Targets.Generic.Parsers import RQSPerturbRademacherParser as _RQSPR
 from Deeploy.Targets.Generic.Layers import RQSPerturbRademacherLayer as _RQSPRLayer  # -- QW
 from Deeploy.Targets.PULPOpen.Tiler import PULPRQSPerturbRademacherTilingReadyBindings as _RQSPRTRB  # -- QW
 RQSPerturbRademacherMapper = NodeMapper(_RQSPRParser(), _RQSPRTRB)  # -- QW
+# -- QW (dual_pass_fusion exp5): fused dual-pass QZO conv (RequantizedDualConv)
+from Deeploy.Targets.PULPOpen.Parsers import PULPDualConv2DParser as _PULPDualConv2DParser  # -- QW
+from Deeploy.Targets.PULPOpen.Layers import PULPDualConvLayer as _PULPDualConvLayer  # -- QW
+from Deeploy.Targets.PULPOpen.Tiler import PULPDualConv2DTilingReadyBindings as _PULPDualConv2DTRB  # -- QW
+DualConv2DMapper = NodeMapper(_PULPDualConv2DParser(), _PULPDualConv2DTRB)  # -- QW
 from Deeploy.Targets.PULPOpen.Tiler import PULPQuantTilingReadyBindings, PULPDequantTilingReadyBindings  # -- QW
 QuantMapper = NodeMapper(QuantParser(), PULPQuantTilingReadyBindings)      # -- QW (tiling-ready for mixed quant graph)
 DequantMapper = NodeMapper(DequantParser(), PULPDequantTilingReadyBindings)  # -- QW
@@ -162,6 +173,7 @@ PULPMapping = {
     'ConvGradW': ConvGradWLayer([PWConvGradW2DMapper, DwConvGradWMapper, ConvGradWMapper]),
     'ConvGradB': ConvGradBLayer([ConvGradBMapper]),
     'RequantizedConv': PULPRQSConvLayer([Conv2DMapper, DWConv2DMapper, Conv1DMapper, DWConv1DMapper]),
+    'RequantizedDualConv': _PULPDualConvLayer([DualConv2DMapper]),  # -- QW (dual_pass_fusion exp5)
     'RequantizedGemm': PULPRQSGEMMLayer([MatrixVecMapper, TallGEMMMapper, GEMMMapper]),
     'Gemm': GEMMLayer([FloatGEMMMapper, GEMMDequantMapper]),
     'Gelu': GELULayer([GELUMapper]),

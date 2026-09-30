@@ -260,3 +260,15 @@ PULPRQSPerturbRademacherTilingReadyBindings = TilingReadyNodeBindings(nodeBindin
 from Deeploy.Targets.PULPOpen.Bindings import BasicQuantBindings as _BQB2, BasicDequantBindings as _BDB2  # -- QW
 PULPQuantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings=_BQB2, tileConstraint=UnaryTileConstraint())  # -- QW
 PULPDequantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings=_BDB2, tileConstraint=UnaryTileConstraint())  # -- QW
+
+# -- QW (dual_pass_fusion exp5): tiling-ready binding for the fused dual-pass QZO conv -- QW
+from Deeploy.Targets.PULPOpen.Bindings import PULPDualConv2DBindings as _PULPDualConv2DBindings  # -- QW
+from Deeploy.Targets.PULPOpen.TileConstraints.DualConvTileConstraint import DualConv2DTileConstraint as _DualConv2DTC  # -- QW
+PULPDualConv2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _PULPDualConv2DBindings,  # -- QW
+                                                            tileConstraint = _DualConv2DTC())  # -- QW
+
+# -- QW (dual_pass_fusion exp5a): single-pass control kernel on the ordinary RequantizedConv; same tile constraint
+#    as pulp-nn's binding (RQConv2DTileConstraint), so the tiling is identical -- only the kernel call differs. -- QW
+from Deeploy.Targets.PULPOpen.Bindings import PULPRQSConv2DFlatBindings as _PULPRQSConv2DFlatBindings  # -- QW
+PULPRQSConv2DFlatTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _PULPRQSConv2DFlatBindings,  # -- QW
+                                                               tileConstraint = RQConv2DTileConstraint())  # -- QW

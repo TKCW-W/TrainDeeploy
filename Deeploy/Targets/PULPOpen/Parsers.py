@@ -669,3 +669,60 @@ class PULPConvGradXWB2DParser(Conv2DGradXWBParser):
             self.operatorRepresentation['padding_x_right'] = int(self.operatorRepresentation['pads'][3])
             return newCtxt, True
         return ctxt, False
+
+
+class PULPDualConv2DParser(RQSConv2DParser):  # -- QW (dual_pass_fusion exp5)
+    """`RequantizedDualConv`: the fused dual-pass QZO conv.
+
+    Inputs: data_in, weight (UNPERTURBED int8), mul, add (UNPERTURBED int32), wmul, bmul (the two
+    RQSPerturbRademacher multipliers). Output: int8 with 2*ch_out channels (A+ then A-).
+    Attributes: the Conv/RequantShift set (`shift`, `div`, `n_levels`, `signed`) plus the two perturb
+    nodes' `seed`/`idx`/`div` as seed_w/idx_w/div_w and seed_b/idx_b/div_b.
+    """
+
+    def __init__(self, noBiasHoisting = True):
+        super().__init__(noBiasHoisting)
+
+    def parseNode(self, node: gs.Node) -> (bool):
+        if not super().parseNode(node):
+            return False
+        r = self.operatorRepresentation
+        pads = r['pads']
+        ok = all([
+            r['group'] == 1,
+            pads[0] == pads[2],
+            pads[1] == pads[3],
+            len(node.inputs) == 6,
+            'shift' in node.attrs,
+            all(a in node.attrs for a in ('seed_w', 'idx_w', 'div_w', 'seed_b', 'idx_b', 'div_b')),
+        ])
+        if not ok:
+            return False
+        r['dim_kernel_x'] = int(r['kernel_shape'][0])
+        r['dim_kernel_y'] = int(r['kernel_shape'][1])
+        r['dilation_x'] = int(r['dilations'][0])
+        r['dilation_y'] = int(r['dilations'][1])
+        r['padding_y_top'] = int(pads[0])
+        r['padding_x_left'] = int(pads[1])
+        r['padding_y_bottom'] = int(pads[2])
+        r['padding_x_right'] = int(pads[3])
+        r['stride_x'] = int(r['strides'][0])
+        r['stride_y'] = int(r['strides'][1])
+        r['seed_w'] = int(node.attrs['seed_w'])
+        r['idx_w'] = int(node.attrs['idx_w'])
+        r['log2D_w'] = int(math.log2(int(node.attrs['div_w'])))
+        r['seed_b'] = int(node.attrs['seed_b'])
+        r['idx_b'] = int(node.attrs['idx_b'])
+        r['log2D_b'] = int(math.log2(int(node.attrs['div_b'])))
+        return True
+
+    def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        newCtxt, ret = super().parseNodeCtxt(ctxt, node, channels_first)
+        if ret:
+            for idx, name in enumerate(['data_in', 'weight', 'mul', 'add', 'wmul', 'bmul']):
+                self.operatorRepresentation[name] = ctxt.lookup(node.inputs[idx].name).name
+            # per-pass output channels == weight rows; the tensor's ch_im_out is twice that
+            self.operatorRepresentation['ch_out_pass'] = newCtxt.lookup(self.operatorRepresentation['weight']).shape[0]
+            return newCtxt, True
+        return ctxt, False

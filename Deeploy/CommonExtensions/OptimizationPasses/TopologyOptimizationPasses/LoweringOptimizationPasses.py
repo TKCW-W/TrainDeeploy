@@ -252,7 +252,7 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
         tensorIn = node.inputs[0]
         tensorOut = node.outputs[0]
 
-        if node.op in ["RequantizedConv", "Conv"]:
+        if node.op in ["RequantizedConv", "Conv", "RequantizedDualConv"]:  # QW exp5: +RequantizedDualConv -- QW
             # QW (exp16a): this infers the SPATIAL rank from the WEIGHT's rank, which assumes the
             #     weight is still the logical NCHW [cout, cin, *spatial] tensor. That holds for
             #     every ordinary conv, and for NE16 convs whose weight is encoded LATER by
@@ -287,7 +287,7 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
         permuteOut = _transformLayoutPermutation(len(tensorOut.shape), spatialDims, channels_first)
         graph.nodes.append(_prependTranspose(tensorOut, node, permuteOut))
 
-        if node.op in ["Conv", "RequantizedConv"]:
+        if node.op in ["Conv", "RequantizedConv", "RequantizedDualConv"]:  # QW exp5: +RequantizedDualConv (inputs[1:] = weight, mul, add, wmul, bmul) -- QW
             # QW (exp16a): a PRE-ENCODED NE16 weight is already in the accelerator's bit-serial
             #     layout -- it is NOT a logical [cout, cin, *spatial] tensor and must never be
             #     layout-permuted. Skip input[1] for such nodes; mul/add/shift still get handled.
@@ -410,7 +410,7 @@ class NCHWtoNHWCMaxPoolGradMaskPass(ReplaceSequentialPatternPass):
 class NCHWtoNHWCConvPass(ReplaceSequentialPatternPass):
 
     def __init__(self, default_channels_first: bool = True):
-        graph = _singleNodePattern(op = "Conv|RequantizedConv")
+        graph = _singleNodePattern(op = "Conv|RequantizedConv|RequantizedDualConv")  # QW exp5 -- QW
         name = "_NCHW_TO_NHWC_CONV_PASS"
         super().__init__(graph, partial(_NCHWtoNHWC_fun, default_channels_first = default_channels_first), name,
                          NonBranchingMatcher(regex_op = True))
