@@ -128,6 +128,23 @@ GAP9_NE16WeightEncodeMapper = NodeMapper(NE16WeightEncodeParser(), NE16WeightEnc
 from Deeploy.Targets.NE16.WeightEncode import NE16SignedInputBiasLayer, NE16SignedInputBiasParser  # -- QW
 from Deeploy.Targets.NE16.Tiler import NE16SignedInputBiasTilingReadyBindings  # -- QW
 GAP9_NE16SignedInputBiasMapper = NodeMapper(NE16SignedInputBiasParser(), NE16SignedInputBiasTilingReadyBindings)  # -- QW
+# -- QW (dual_pass_fusion exp6): NE16Im2ColU8 -- the cluster half of the GAP9 SDK's im2col route for 1xK convs
+#     (the NE16 half is the ordinary pointwise path). Runs on the cluster cores, so it lives in GAP9Mapping.
+from Deeploy.Targets.NE16.Im2Col import NE16Im2ColU8Layer, NE16Im2ColU8Parser  # -- QW
+from Deeploy.Targets.NE16.Tiler import NE16Im2ColU8TilingReadyBindings  # -- QW
+GAP9_NE16Im2ColU8Mapper = NodeMapper(NE16Im2ColU8Parser(), NE16Im2ColU8TilingReadyBindings)  # -- QW
+# -- QW (dual_pass_fusion exp6): exp5's fused dual-pass cluster conv on GAP9 too (baseline C_cl). Same PULP
+#     parser / tiling-ready bindings as PULPOpen/Platform.py -- the kernel is plain cluster C. -- QW
+from Deeploy.Targets.PULPOpen.Parsers import PULPDualConv2DParser as _PULPDualConv2DParser  # -- QW
+from Deeploy.Targets.PULPOpen.Layers import PULPDualConvLayer as _PULPDualConvLayer  # -- QW
+from Deeploy.Targets.PULPOpen.Tiler import PULPDualConv2DTilingReadyBindings as _PULPDualConv2DTRB  # -- QW
+GAP9_DualConv2DMapper = NodeMapper(_PULPDualConv2DParser(), _PULPDualConv2DTRB)  # -- QW
+# -- QW (dual_pass_fusion exp6, task 2): fused-pass preparation for NE16 (cluster-side), see NE16/DualPrep.py
+from Deeploy.Targets.NE16.DualPrep import NE16DualBiasLayer, NE16DualBiasParser, NE16DualPerturbEncodeLayer, \
+    NE16DualPerturbEncodeParser  # -- QW
+from Deeploy.Targets.NE16.Tiler import NE16DualBiasTilingReadyBindings, NE16DualPerturbEncodeTilingReadyBindings  # -- QW
+GAP9_NE16DualPerturbEncodeMapper = NodeMapper(NE16DualPerturbEncodeParser(), NE16DualPerturbEncodeTilingReadyBindings)  # -- QW
+GAP9_NE16DualBiasMapper = NodeMapper(NE16DualBiasParser(), NE16DualBiasTilingReadyBindings)  # -- QW
 
 # GAP9-specific mapping using ClDma
 GAP9Mapping = {
@@ -219,7 +236,15 @@ GAP9Mapping = {
     'NE16WeightEncode':
         NE16WeightEncodeLayer([GAP9_NE16WeightEncodeMapper]),  # -- QW (exp16c: on-device NE16 weight encode)
     'NE16SignedInputBias':
-        NE16SignedInputBiasLayer([GAP9_NE16SignedInputBiasMapper])  # -- QW (exp16c: BLOCKER 3 correction)
+        NE16SignedInputBiasLayer([GAP9_NE16SignedInputBiasMapper]),  # -- QW (exp16c: BLOCKER 3 correction)
+    'NE16Im2ColU8':
+        NE16Im2ColU8Layer([GAP9_NE16Im2ColU8Mapper]),  # -- QW (exp6: column buffer for the NE16 im2col route)
+    'RequantizedDualConv':
+        _PULPDualConvLayer([GAP9_DualConv2DMapper]),  # -- QW (exp6: exp5's fused cluster kernel, baseline C_cl)
+    'NE16DualPerturbEncode':
+        NE16DualPerturbEncodeLayer([GAP9_NE16DualPerturbEncodeMapper]),  # -- QW (exp6 task 2)
+    'NE16DualBias':
+        NE16DualBiasLayer([GAP9_NE16DualBiasMapper]),  # -- QW (exp6 task 2)
 }
 
 
@@ -292,7 +317,7 @@ class GAP9StructBuffer(StructBuffer):
     deallocTemplate = NodeTemplate("")
 
 
-_includeList = ["pmsis.h", "DeeployGAP9Math.h", "pulp_nn_kernels.h", "DeeployMchan.h"]
+_includeList = ["pmsis.h", "DeeployGAP9Math.h", "pulp_nn_kernels.h", "DeeployMchan.h", "perf_utils.h"]  # -- QW (exp6): --profileMicrobenchmark templates need perf_stats_t; header is GAP9-aware
 
 
 class GAP9ClusterEngine(DeploymentEngine):

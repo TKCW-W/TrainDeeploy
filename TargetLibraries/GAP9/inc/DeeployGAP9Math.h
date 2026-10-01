@@ -30,6 +30,20 @@
 //    PULPOpen/inc is PUBLIC on deeploygap9, so these resolve. -- QW
 #include "kernel/RandomNoise.h"
 #include "kernel/ZORuntime.h"
+#include "kernel/Im2ColU8.h" // -- QW (dual_pass_fusion exp6): NE16 im2col route, kernel in ../PULPOpen/src
+#include "kernel/DualConv.h" // -- QW (exp6): exp5 fused cluster kernel on GAP9 (baseline C_cl); without this
+                             //    prototype the call was implicit-int and crashed (float arg promoted) -- QW
+#include "kernel/FlatConv.h" // -- QW (exp6)
+
+/* -- QW (dual_pass_fusion exp6, task 2): cluster-side preparation for the FUSED dual-pass conv on NE16.
+ * Implementation and derivation: TargetLibraries/GAP9/src/NE16DualPrep.c */
+void PULP_NE16DualPerturbEncode(const int8_t *pW, const int32_t *pWMul, uint8_t *pWEnc, int8_t *pScratch,
+                                uint32_t seed_w_base, uint32_t tile_seed_xor, uint32_t log2D_w,
+                                float eps_scale, uint32_t num_cores, uint32_t ch_out, uint32_t K);
+void PULP_NE16DualBias(const int8_t *pW, const int32_t *pWMul, const int32_t *pAdd, const int32_t *pBMul,
+                       const int32_t *pMul, int32_t *pAddOut, int8_t *pScratch, uint32_t seed_w_base,
+                       uint32_t seed_b_base, uint32_t tile_seed_xor, uint32_t log2D_w, uint32_t log2D_b,
+                       float eps_scale, uint32_t num_cores, uint32_t ch_out, uint32_t K, int32_t input_offset);
 
 /* -- QW (exp16c / blocker 1b): device-side NE16 bit-serial weight encoder. Declared here (rather
  * than in a pulp-nnx header) so TargetLibraries/third_party/pulp-nnx stays pristine -- this is a

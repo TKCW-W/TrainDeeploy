@@ -10,6 +10,7 @@ the PMSIS standard cl_dma API for better portability and cleaner code.
 
 import itertools
 
+from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPMicrobenchmark import PULPMicrobenchmark  # -- QW (exp6)
 from Deeploy.AbstractDataTypes import PointerClass
 from Deeploy.CommonExtensions.CodeTransformationPasses.MemoryAllocation import ArgumentStructGeneration, \
     MemoryManagementGeneration, MemoryPassthroughGeneration
@@ -64,6 +65,7 @@ GAP9Transformer = CodeTransformation([
     MemoryManagementGeneration("L2"),
     MemoryManagementGeneration("L3.*"),
     MemoryManagementGeneration(),
+    PULPMicrobenchmark(),  # -- QW (exp6): per-node counters, as in PULPOpen's ForkTransformer
 ])
 
 # GAP9-specific cluster transformer using cl_dma.h API
@@ -83,6 +85,7 @@ GAP9ClusterTransformer = CodeTransformation([
     MemoryManagementGeneration("L2"),
     MemoryManagementGeneration("L3.*"),
     MemoryManagementGeneration(),
+    PULPMicrobenchmark(),  # -- QW (exp6)
 ])
 
 # Simple transformer for non-tiling cases

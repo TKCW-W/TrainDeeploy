@@ -106,9 +106,50 @@ static inline void perf_bench_read(perf_stats_t *stats) {
   stats->tcdm_cont = pi_perf_read(PI_PERF_TCDM_CONT);
 }
 
+// -- QW (dual_pass_fusion exp6): on GAP9's GVSoC a CLUSTER core's printf never reaches stdout (only the
+//    fabric controller's does), so --profileMicrobenchmark printed nothing there. perf_bench_print now
+//    ALSO appends (label, stats) to a global table (PerfRecords.c, L2, visible to every core), and
+//    perf_bench_dump_records() replays the table -- the GAP9 harness calls it from main() after the
+//    cluster task returns. On Siracusa the cluster prints as before and the harness does not dump. -- QW
+#define PERF_MAX_RECORDS 64
+// The core that executes RunNetwork() (and therefore the --profileMicrobenchmark wrappers): core 0 on
+// Siracusa/PULPOpen, the cluster MASTER core (ARCHI_CLUSTER_MASTER_CORE == 8) on GAP9, whose
+// pi_cluster_send_task_to_cl runs the task on the 9th core and forks the 8 workers from there. -- QW
+#ifndef PERF_MASTER_CORE
+#ifdef ARCHI_CLUSTER_MASTER_CORE
+#define PERF_MASTER_CORE ARCHI_CLUSTER_MASTER_CORE
+#else
+#define PERF_MASTER_CORE 0
+#endif
+#endif
+typedef struct {
+  const char *label;
+  perf_stats_t stats;
+} perf_record_t;
+extern perf_record_t perf_records[PERF_MAX_RECORDS];
+extern uint32_t perf_record_count;
+
+static inline void perf_print_stats(const char *label, const perf_stats_t *stats);
+
+static inline void perf_bench_dump_records(void) {
+  for (uint32_t i = 0; i < perf_record_count; i++)
+    perf_print_stats(perf_records[i].label, &perf_records[i].stats);
+}
+
 // Print performance statistics (core 0 only to avoid clutter)
 static inline void perf_bench_print(const char *label, perf_stats_t *stats) {
-  if (pi_core_id() == 0) {
+  if (pi_core_id() == PERF_MASTER_CORE) {
+    if (perf_record_count < PERF_MAX_RECORDS) {
+      perf_records[perf_record_count].label = label;
+      perf_records[perf_record_count].stats = *stats;
+      perf_record_count++;
+    }
+    perf_print_stats(label, stats);
+  }
+}
+
+static inline void perf_print_stats(const char *label, const perf_stats_t *stats) {
+  {
     printf("\n=== Performance Statistics: %s ===\n", label);
     printf("Cycles:              %10u\n", stats->cycles);
     printf("Instructions:        %10u\n", stats->instr);

@@ -8,6 +8,7 @@
 
 #include "CycleCounter.h"
 #include "Network.h"
+#include "perf_utils.h" // -- QW (exp6): perf_bench_dump_records
 #include "dory_mem.h"
 #include "pmsis.h"
 #include "testinputs.h"
@@ -141,6 +142,10 @@ int main(void) {
 #ifdef POWER_MEASUREMENT
   WRITE_GPIO(0);
 #endif
+
+  // -- QW (exp6): cluster printf is invisible on GAP9 GVSoC; replay the per-node counters from the FC.
+  printf("[perf] records=%u\r\n", (unsigned)perf_record_count);
+  perf_bench_dump_records();
 
 #ifndef CI
   printf("Output:\r\n");

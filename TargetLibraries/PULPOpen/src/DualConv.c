@@ -60,90 +60,9 @@
 
 typedef signed char dc_v4s __attribute__((vector_size(4)));
 
-static inline uint32_t dc_xorshift32(uint32_t s) {
-  s ^= s << 13;
-  s ^= s >> 17;
-  s ^= s << 5;
-  return s;
-}
-
-/* The perturb nodes' per-core split: chunk = ceil-ish(size / NUM_CORES) as
- * (size >> log2(NUM_CORES)) + (size % NUM_CORES != 0), clamped to size. */
-static inline void dc_chunk(uint32_t size, uint32_t num_cores, uint32_t core_id, uint32_t *start,
-                            uint32_t *local) {
-  uint32_t log2c = 0;
-  while ((1u << (log2c + 1u)) <= num_cores)
-    log2c++;
-  uint32_t chunk = (size >> log2c) + ((size & (num_cores - 1u)) != 0u);
-  uint32_t s = chunk * core_id;
-  if (s > size)
-    s = size;
-  uint32_t e = s + chunk;
-  if (e > size)
-    e = size;
-  *start = s;
-  *local = e - s;
-}
-
-/* int8 weight: both signs from one stream, clamped to [-127, 127] like ApplyPerturbQuantRademacher_CHW. */
-static void dc_perturb_i8(const int8_t *w, int8_t *wp, int8_t *wm, const int32_t *M,
-                          uint32_t channel_width, uint32_t seed, uint32_t start, uint32_t local,
-                          uint32_t S, float32_t eps_scale) {
-  uint32_t rng = seed * 1664525u + 1013904223u;
-  const int32_t rounding = (S > 0u) ? (int32_t)(1u << (S - 1u)) : 0; // round to nearest, e.g., S = 15, then rounding ? 2^14
-  uint32_t i = start;
-  const uint32_t end = start + local;
-  while (i < end) {
-    rng = dc_xorshift32(rng); /* one 32-bit draw per (up to) 32 elements, LSB first */
-    uint32_t bits = rng;
-    uint32_t n = end - i;
-    if (n > 32u)
-      n = 32u;
-    for (uint32_t k = 0; k < n; k++, i++) {
-      const int32_t r = (bits & 1u) ? 1 : -1;
-      int32_t m = M[i / channel_width]; //i = {0,1,2,3}, core 0, output channel 0, same m (weights scale per output channel)
-      if (eps_scale != 1.0f)
-        m = (int32_t)lrintf((float32_t)m * eps_scale);
-      /* QW: form r*m ONCE and derive the -eps noise as (rounding - prod), never as (-r)*m. The PULP
-       *     clang-15 build mis-evaluated `-r * m` here (r from a select) as +m for r=+1, giving
-       *     W- = W + q on every tap; native clang was correct. Verified on device (exp5). -- QW */
-      const int32_t prod = r * m;
-      const int32_t nqp = (prod + rounding) >> (int32_t)S;     /* +eps: sgn = +1 */
-      const int32_t nqm = (rounding - prod) >> (int32_t)S;     /* -eps: sgn = -1 (device convention) */
-      const int32_t v = (int32_t)w[i];
-      wp[i] = (int8_t)CLAMP(v + nqp, -127, 127);
-      wm[i] = (int8_t)CLAMP(v + nqm, -127, 127);
-      bits >>= 1;
-    }
-  }
-}
-
-/* int32 requant-add: same stream shape, NO clamp, like ApplyPerturbQuantRademacher_i32. */
-static void dc_perturb_i32(const int32_t *b, int32_t *bp, int32_t *bm, const int32_t *M,
-                           uint32_t channel_width, uint32_t seed, uint32_t start, uint32_t local,
-                           uint32_t S, float32_t eps_scale) {
-  uint32_t rng = seed * 1664525u + 1013904223u;
-  const int32_t rounding = (S > 0u) ? (int32_t)(1u << (S - 1u)) : 0;
-  uint32_t i = start;
-  const uint32_t end = start + local;
-  while (i < end) {
-    rng = dc_xorshift32(rng);
-    uint32_t bits = rng;
-    uint32_t n = end - i;
-    if (n > 32u)
-      n = 32u;
-    for (uint32_t k = 0; k < n; k++, i++) {
-      const int32_t r = (bits & 1u) ? 1 : -1;
-      int32_t m = M[i / channel_width];
-      if (eps_scale != 1.0f)
-        m = (int32_t)lrintf((float32_t)m * eps_scale);
-      const int32_t prod = r * m;                                /* same reason as in dc_perturb_i8 */
-      bp[i] = b[i] + ((prod + rounding) >> (int32_t)S);
-      bm[i] = b[i] + ((rounding - prod) >> (int32_t)S);
-      bits >>= 1;
-    }
-  }
-}
+/* QW (exp6): dc_xorshift32 / dc_chunk / dc_perturb_i8 / dc_perturb_i32 moved VERBATIM to
+ * inc/kernel/DualPerturb.h so the NE16 fused path (GAP9) shares them. -- QW */
+#include "kernel/DualPerturb.h"
 
 void PULP_DualConv2d_i8_i8_i8_HWC(
     const int8_t *pIn, const int8_t *pWeight, const int32_t *pMul, const int32_t *pAdd,

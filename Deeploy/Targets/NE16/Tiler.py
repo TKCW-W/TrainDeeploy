@@ -49,3 +49,19 @@ from Deeploy.Targets.NE16.TileConstraints.NE16WeightEncodeConstraint import NE16
 from Deeploy.Targets.NE16.WeightEncode import NE16SignedInputBiasBindings as _NE16SIBB  # -- QW
 NE16SignedInputBiasTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _NE16SIBB,
                                                                  tileConstraint = NE16SignedInputBiasTileConstraint())  # -- QW
+
+# -- QW (dual_pass_fusion exp6): column buffer for the SDK im2col route. Untiled (see the constraint).
+from Deeploy.Targets.NE16.TileConstraints.NE16Im2ColConstraint import NE16Im2ColU8TileConstraint  # -- QW
+from Deeploy.Targets.NE16.Im2Col import NE16Im2ColU8Bindings as _NE16I2CB  # -- QW
+NE16Im2ColU8TilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _NE16I2CB,
+                                                          tileConstraint = NE16Im2ColU8TileConstraint())  # -- QW
+
+# -- QW (dual_pass_fusion exp6, task 2): fused-pass preparation nodes, untiled (tiny per-step tensors).
+from Deeploy.Targets.NE16.TileConstraints.NE16Im2ColConstraint import NE16DualBiasTileConstraint, \
+    NE16DualPerturbEncodeTileConstraint  # -- QW
+from Deeploy.Targets.NE16.DualPrep import NE16DualBiasBindings as _NE16DBB, \
+    NE16DualPerturbEncodeBindings as _NE16DPEB  # -- QW
+NE16DualPerturbEncodeTilingReadyBindings = TilingReadyNodeBindings(
+    nodeBindings = _NE16DPEB, tileConstraint = NE16DualPerturbEncodeTileConstraint())  # -- QW
+NE16DualBiasTilingReadyBindings = TilingReadyNodeBindings(
+    nodeBindings = _NE16DBB, tileConstraint = NE16DualBiasTileConstraint())  # -- QW

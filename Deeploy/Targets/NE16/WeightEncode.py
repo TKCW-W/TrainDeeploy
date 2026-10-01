@@ -66,6 +66,16 @@ class NE16WeightEncodeParser(NodeParser):
             return ctxt, False
         cout, cin, kh, kw = shape
         taps = int(node.attrs['ne16_taps'])
+        # QW (dual_pass_fusion exp6): `ne16_fold=1` folds the kernel taps INTO the input channels --
+        #     the (cout, cin, H, W) weight is encoded as a 1x1 weight with cin*H*W input channels.
+        #     Memory order is unchanged (cout-major, then ci, ky, kx), so the C kernel needs no change:
+        #     with taps = 1 it reads src[co*cin' + ci'] for ci' in 0..cin*H*W. This is the weight half
+        #     of the GAP9 SDK's im2col route (Ker_MM_Conv1DSmallv2_NE16); the column buffer built by
+        #     NE16Im2ColU8 uses the same (ci, ky, kx) order. Requires ne16_taps == 1. -- QW
+        if int(node.attrs.get('ne16_fold', 0)) == 1:
+            if taps != 1:
+                return ctxt, False
+            cin, kh, kw = cin * kh * kw, 1, 1
         if kh * kw != taps:
             return ctxt, False
 

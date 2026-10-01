@@ -28,6 +28,7 @@
 #include "kernel/ConvGrad.h"
 #include "kernel/DualConv.h" // -- QW (dual_pass_fusion exp5)
 #include "kernel/FlatConv.h" // -- QW (dual_pass_fusion exp5a)
+#include "kernel/Im2ColU8.h" // -- QW (dual_pass_fusion exp6)
 #include "kernel/GELU.h"
 #include "kernel/Layernorm.h"
 #include "kernel/Matmul.h"
