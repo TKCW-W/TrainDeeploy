@@ -42,12 +42,12 @@ void PULP_FlatConv2d_i8_i8_i8_HWC(const int8_t *pIn, int8_t *pScratch, int8_t *p
                                   uint16_t pad_x_left, uint16_t pad_x_right, uint16_t stride_x,
                                   uint16_t stride_y) {
   const uint32_t core_id = pi_core_id();
-  const uint32_t K = (uint32_t)ch_in * dim_kernel_x * dim_kernel_y;
-  const uint32_t Kpad = (K + 3u) & ~3u;
+  const uint32_t K = (uint32_t)ch_in * dim_kernel_x * dim_kernel_y; // block 0, (1,1,4), K=4
+  const uint32_t Kpad = (K + 3u) & ~3u; //rounds K up to multiple of 4, because sdotsp4 reads 4 bytes at a time, patch four bytes at a time 
   int8_t *patch = pScratch + core_id * Kpad;
 
   for (uint32_t k = K; k < Kpad; k++)
-    patch[k] = 0; /* zero tail: the vector loop may read up to Kpad */
+    patch[k] = 0; 
 
   /* ---------------- one pass over the pixels, flattened index ------------------------------- */
   const uint32_t total = (uint32_t)dim_out_y * dim_out_x;
@@ -59,7 +59,7 @@ void PULP_FlatConv2d_i8_i8_i8_HWC(const int8_t *pIn, int8_t *pScratch, int8_t *p
   if (p1 > total)
     p1 = total;
   uint32_t oy = p0 / dim_out_x;
-  uint32_t ox = p0 - oy * dim_out_x;
+  uint32_t ox = p0 - oy * dim_out_x; //start index of the output pixel for this core
 
   for (uint32_t p = p0; p < p1; p++) {
     /* gather the receptive field once */
