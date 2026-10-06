@@ -90,15 +90,29 @@ for l in open(trace):
     m = re.match(r"^\d+: (\d+): .* M ([0-9a-f]{8}) ", l)
     if m: seq.append((int(m.group(1)), int(m.group(2), 16)))
 
+# Two gaps that belong to neither category they fall on by address:
+#  * the epilogue's `lui` -> the barrier-register `lw`: the core sleeps in the end-of-tile barrier
+#    until the slowest core arrives (GVSoC stamps the blocking `lw` when it completes, so the wait
+#    appears as the gap after the `lui`), so that gap is "end-of-tile barrier wait";
+#  * `ret` of tile k -> kernel entry of tile k+1: the inter-tile DMA / sequencing, outside the kernel.
+EXIT  = {"FlatConv": (0x1c00f4ec, 0x1c00f4f0), "DualConv": (0x1c00f7c8, 0x1c00f7cc)}  # (epilogue lui, barrier lw)
+ENTRY = {"FlatConv": (0x1c00f52c, 0x1c00f1b0), "DualConv": (0x1c00f808, 0x1c00f0e8)}  # (ret, kernel start)
+
 def tally(catfn):
     cyc, cnt = defaultdict(int), defaultdict(int)
     for i, (t, pc) in enumerate(seq):
-        cost = seq[i + 1][0] - t if i + 1 < len(seq) else 1
-        c = catfn(pc); cyc[c] += cost; cnt[c] += 1
+        nxt = seq[i + 1] if i + 1 < len(seq) else None
+        cost = nxt[0] - t if nxt else 1
+        c = catfn(pc)
+        if nxt and (pc, nxt[1]) == EXIT.get(kind) and cost > 1:
+            cyc[c] += 1; cnt[c] += 1; cyc["end-of-tile barrier wait"] += cost - 1; continue
+        if nxt and (pc, nxt[1]) == ENTRY.get(kind) and cost > 1:
+            cyc[c] += 1; cnt[c] += 1; cyc["inter-tile gap (outside kernel)"] += cost - 1; continue
+        cyc[c] += cost; cnt[c] += 1
     return cyc, cnt
 
 order = ["setup (per tile)", "phase 1: perturb W (per tile)", "phase 1: perturb b (per tile)", "phase 1: barrier (per tile)", "pixel-loop control", "gather", "channel-loop control", "dot product",
-         "requant + store", "epilogue (barrier + restore)"]
+         "requant + store", "epilogue (barrier + restore)", "end-of-tile barrier wait", "inter-tile gap (outside kernel)"]
 span = seq[-1][0] - seq[0][0] + 1
 print(f"{kind}: {len(seq)} instructions, span {span} cycles ({pixels} pixel(s) on core 0)\n")
 for title, fn in (("BY ADDRESS RANGE", cat_by_addr), ("BY C SOURCE LINE (cross-check)", cat_by_line)):
