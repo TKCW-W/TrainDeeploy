@@ -13,6 +13,9 @@ from collections import defaultdict
 
 trace, dis, kind = sys.argv[1], sys.argv[2], sys.argv[3]
 pixels = int(sys.argv[4]) if len(sys.argv) > 4 else 1
+# optional: shift every address-range / EXIT / ENTRY constant by this many bytes (same code at another address) -- QW
+import os
+OFF = int(os.environ.get("ADDR_OFFSET", "0"), 0)
 
 # --- categories by address range (inclusive), read off bin/QZO_Conv.s / QZO_DualConv.s ------------
 ADDR = {
@@ -72,7 +75,7 @@ for l in open(dis, errors = "ignore"):
 
 def cat_by_addr(pc):
     for a, b, name in ADDR.get(kind, []):
-        if a <= pc <= b: return name
+        if a + OFF <= pc <= b + OFF: return name
     return "outside kernel"
 
 def cat_by_line(pc):
@@ -104,9 +107,9 @@ def tally(catfn):
         nxt = seq[i + 1] if i + 1 < len(seq) else None
         cost = nxt[0] - t if nxt else 1
         c = catfn(pc)
-        if nxt and (pc, nxt[1]) == EXIT.get(kind) and cost > 1:
+        if nxt and (pc - OFF, nxt[1] - OFF) == EXIT.get(kind) and cost > 1:
             cyc[c] += 1; cnt[c] += 1; cyc["end-of-tile barrier wait"] += cost - 1; continue
-        if nxt and (pc, nxt[1]) == ENTRY.get(kind) and cost > 1:
+        if nxt and (pc - OFF, nxt[1] - OFF) == ENTRY.get(kind) and cost > 1:
             cyc[c] += 1; cnt[c] += 1; cyc["inter-tile gap (outside kernel)"] += cost - 1; continue
         cyc[c] += cost; cnt[c] += 1
     return cyc, cnt
