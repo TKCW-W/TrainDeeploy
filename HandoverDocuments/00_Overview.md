@@ -72,7 +72,10 @@ The tree `SilentWear/SilentWear/artifacts/` is a stale Mac reproduction: all 37 
 stopped 17 epochs earlier. Everything measured on it before 2026-09-14 is **not paper-comparable**.
 The correct-weight device results are `TrainDeeploy/DeeployTest/experiments/deliverable/exp17_BP_round1_correct_weights`,
 `exp18_ZO_round1_correct_weights`, `exp19_QZO_round1_correct_weights` and `exp20_QZO_ffast_math`; every older accuracy figure in the tree carries a stale-weights caveat in this handover.
-Calibration for QZO must be regenerated whenever the weights change.
+Calibration for QZO must be regenerated whenever the weights change. The current activation calibration
+is the pooled absolute percentile at **99.9**
+(`TrainDeeploy/SpeechNet_Test/calibration/pooled_999_fold3_ref.json`); exp19's device round used 99.99
+(`pooled_9999_fold3_ref.json`, kept for reproducing exp19). Why 99.9 and how to regenerate: guide 03 §3.
 
 ## 3. Standing working rules
 
@@ -252,7 +255,7 @@ Device (`TrainDeeploy/DeeployTest/experiments/deliverable/`):
 | `TrainDeeploy/DeeployTest/experiments/deliverable/exp11_bitexact_SCE/` (main files: logs/sce_probe_tol0.log.gz), `TrainDeeploy/DeeployTest/experiments/deliverable/exp11_bitexact_SCE_verif/` (main files: compare.py, logs/device_to891.log.gz) | last residual and its causal proof | picolibc `expf`/`logf`; 1-ulp shared scalar at step 884 | — | CURRENT |
 | `TrainDeeploy/DeeployTest/experiments/deliverable/exp12_QZO_clean_round_1/` (main files: logs/round1_gvsoc_ffastmath.log.gz, results/pytorch_ref.json) | clean-room round 1 with ffast-math | device 88.33 % = host executor | stale | SUPERSEDED by exp19 |
 | `TrainDeeploy/DeeployTest/experiments/deliverable/exp13_QZO_GAP9_single_step/` (main files: logs/gap9_PASS_l1_110000_stacksL2.log) | GAP9 port | passes 0/8; `--l1 110000` + slave stacks to L2 | — | CURRENT |
-| `TrainDeeploy/DeeployTest/experiments/deliverable/exp19_QZO_round1_correct_weights/` (main files: results/eval_b2_results.json, logs/phase3_gvsoc_qzo_round1.log.gz, fixture/pooled_9999_fold3_ref.json) | QZO round 1 on the correct weights, calibration regenerated | device 85.00 %, host executor 85.56 %, PyTorch 87.78 %; 89.5 G cycles | ref | CURRENT |
+| `TrainDeeploy/DeeployTest/experiments/deliverable/exp19_QZO_round1_correct_weights/` (main files: results/eval_b2_results.json, logs/phase3_gvsoc_qzo_round1.log.gz, fixture/pooled_9999_fold3_ref.json) | QZO round 1 on the correct weights, calibration regenerated | device 85.00 %, host executor 85.56 %, PyTorch 87.78 %; 89.5 G cycles. Calibrated at pooled@99.99; the current setting is 99.9 (guide 03 §3). | ref | CURRENT |
 | `TrainDeeploy/DeeployTest/experiments/deliverable/exp20_QZO_ffast_math/` (main files: results/summary.txt) | cost of strict fp32 | +3.84 % per step (8,695,234 → 9,029,363 cycles); strict fp32 stays an opt-in debugging mode; the default build keeps `-ffast-math` | ref | CURRENT (newest) |
 
 Host (`Onnx4Deeploy/QZO_exp/`):
@@ -260,7 +263,7 @@ Host (`Onnx4Deeploy/QZO_exp/`):
 | path | goal | result | status |
 |---|---|---|---|
 | `Onnx4Deeploy/QZO_exp/` (the folder as a whole; tracked scripts in its `exp1/` … `exp13/` subfolders) | the locked QZO design and iterations 1–20 up to bit-exact device validation | five bugs B1–B5 found and fixed (listed in guide 03) | CURRENT |
-| `Onnx4Deeploy/QZO_exp/exp_calibration/` (main files: results.json, calib_pooled.py, run_study.py) | is calibration the cause of the stall? | pooled percentile 99.99 over 1800 windows gives 85.6 % zero-shot; calibration does not move the stall | CURRENT |
+| `Onnx4Deeploy/QZO_exp/exp_calibration/` (main files: results.json, calib_pooled.py, run_study.py) | is calibration the cause of the stall? | pooled percentile 99.99 over 1800 windows gives 85.6 % zero-shot; calibration does not move the stall (stale weights). On the correct weights a host sweep favours 99.9 (guide 03 §3). | CURRENT |
 | `Onnx4Deeploy/QZO_exp/exp3_lr1e-5_stability/` (main files: results.json, run_all.py) | lr 1e-5 across folds | −4.86 pt on fold 2 | CURRENT (caveat) |
 | `Onnx4Deeploy/QZO_exp/exp4_ceiling/` (main files: results.json, run_ceiling.py) | force every update to ≥1 LSB | un-stalls and destroys accuracy (51.67 %) | CURRENT (negative) |
 | `Onnx4Deeploy/QZO_exp/exp5_A_vs_B/` (main files: matched_z_losses.json, matched_z_check.py) | fake-quant vs integer datapath | device is not the problem | SUPERSEDED by exp10 |

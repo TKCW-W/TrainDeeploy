@@ -61,15 +61,19 @@
    outputs loss_plus    single [0.00336818]  round1 first [0.00336818]  equal=True
    outputs loss_minus   single [0.04362458]  round1 first [0.04362458]  equal=True
 
-== prefix: QZO single step vs exp19 round 1 (train graph)
-   single /app/TrainDeeploy/SpeechNet_Test/speechnet_train_QZO_single_step
-   round1 /app/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_qzo19_train
-   network.onnx                 identical (bytes)
-   inputs.npz arr_* (window 0 + initial weights): 24/24 equal to round 1
-   single-step meta {'meta_data_size': [1], 'meta_n_batches': [1], 'meta_n_accum': [1]}; extra windows 0
-   outputs loss_plus    single [0.02333396]  round1 first [0.02333396]  equal=True
-   outputs loss_minus   single [0.02255885]  round1 first [0.02255885]  equal=True
-   update graph vs exp19: identical (bytes)
+== calibration-only difference: QZO single step (pooled@99.9) vs exp19 round 1 (pooled@99.99)
+   new /app/TrainDeeploy/SpeechNet_Test/speechnet_train_QZO_single_step
+   old /app/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_qzo19_train
+   graph inputs/outputs equal: True; node count 66 vs 66; op sequence equal: True
+   initializers differing: 10/25 -> ['QSTANDALONE_QCDQ_/blocks_0_conv_output_quant_1/Clip_Quant_mul_pc', 'QSTANDALONE_QCDQ_/blocks_1_conv_output_quant_1/Clip_Quant_mul_pc', 'QSTANDALONE_QCDQ_/blocks_2_conv_output_quant_1/Clip_Quant_mul_pc', 'QSTANDALONE_QCDQ_/blocks_3_conv_output_quant_1/Clip_Quant_mul_pc', 'QSTANDALONE_QCDQ_/blocks_4_conv_output_quant_1/Clip_Quant_mul_pc', 'blocks.0.conv.bias_rqsadd_pmul', 'blocks.1.conv.bias_rqsadd_pmul', 'blocks.2.conv.bias_rqsadd_pmul', 'blocks.3.conv.bias_rqsadd_pmul', 'blocks.4.conv.bias_rqsadd_pmul']
+   inputs.npz arr_* (window 0 + initial weights): 23/24 equal
+
+== calibration-only difference: QZO single-step update graph vs exp19
+   new /app/TrainDeeploy/SpeechNet_Test/speechnet_update_QZO_single_step
+   old /app/TrainDeeploy/DeeployTest/Tests/Models/Training/SpeechNet/speechnet_qzo19_update
+   graph inputs/outputs equal: True; node count 22 vs 22; op sequence equal: True
+   initializers differing: 5/10 -> ['blocks.0.conv.bias_rqsadd_pmul', 'blocks.1.conv.bias_rqsadd_pmul', 'blocks.2.conv.bias_rqsadd_pmul', 'blocks.3.conv.bias_rqsadd_pmul', 'blocks.4.conv.bias_rqsadd_pmul']
+   inputs.npz arr_* (window 0 + initial weights): 23/24 equal
 
 == identity: kernel speechnet_unfused_b0_cluster
    new /app/TrainDeeploy/SpeechNet_Test/speechnet_unfused_b0_cluster

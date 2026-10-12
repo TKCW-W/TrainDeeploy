@@ -24,7 +24,23 @@ against the fixture the original experiment ran on (`scripts/crosscheck.py`, res
 |---|---|---|---|---|
 | BP | 3e-4 (SGD, accumulation SUMS) | 4 | 40 epochs = 540 steps = 2160 forward+backward | full model, frozen BN statistics, MaxPool argmax mask |
 | ZO (MeZO, fp32) | 3e-6 | 4 | 200 epochs = 2700 steps = 21,600 forwards | ε 0.01, Rademacher, seed 42, q 1 |
-| QZO (int8 convs) | 1e-5 | 4 | not generated here (see below) | ε 0.01, pooled@99.99 calibration in `calibration/` |
+| QZO (int8 convs) | 1e-5 | 4 | not generated here (see below) | ε 0.01; activation calibration pooled@99.9 (`calibration/pooled_999_fold3_ref.json`, see below) |
+
+## QZO activation calibration
+
+`calibration/` holds the per-site activation thresholds that the QZO export bakes in
+(`QZO_POOLED_THRESHOLDS`): the absolute-value percentile of each quantizer's input, pooled over the 1800
+fold-3 pretraining windows; scale = threshold / 128. Generate with `scripts/calibrate_pooled.py`.
+
+| file | percentile | use |
+|---|---|---|
+| `pooled_999_fold3_ref.json` | 99.9 | **current** setting, used by the QZO single-step fixture and by every new QZO export |
+| `pooled_9999_fold3_ref.json` | 99.99 | the calibration of exp19's device round (85.00 %); only to reproduce exp19 |
+
+99.9 is current because, on the correct weights, a host sweep gave the best fine-tuned accuracy there
+(S01: mean of batches 2–5 86.39 at 99.9 vs 85.56 at 99.99; four subjects 75.73 vs 75.56, one seed) and
+because the ECO host simulation the device work will be compared with uses 99.9. Details in
+`HandoverDocuments/03_QZO_Guide.md` §3. The two files differ at all 12 sites (block-0 input threshold 1309 vs 2854).
 
 ## Naming
 
@@ -47,7 +63,7 @@ for the block-0 convolution kernels.
 | 3 | ZO, Siracusa, round 1 | `speechnet_train_ZO_round1`, `speechnet_update_ZO_round1`; eval `speechnet_infer_ZO_round1` | `-mode zo-train` / `-mode infer` | `speechnet_zo_{train,update,infer}_b1_fold3_ref` (exp18) | every file byte-identical |
 | 4 | ZO, Siracusa, single step | `speechnet_train_ZO_single_step`, `speechnet_update_ZO_single_step` | `-mode zo-train --n-steps 1 --n-accum 1` | round 1 above | same graphs, weights, window; L+ 0.00336818 and L− 0.04362458 equal round 1's first pair |
 | 5 | QZO, Siracusa, round 1 | **not generated** | — | — | dropped on request: the host reference takes ~3 h and the round-1 QZO recipe will change with ECO. The exp19 fixture `speechnet_qzo19_{train,update}` remains available. |
-| 6 | QZO, Siracusa, single step | `speechnet_train_QZO_single_step`, `speechnet_update_QZO_single_step` | `-mode q-zo-train --n-steps 1 --n-accum 1` with `calibration/pooled_9999_fold3_ref.json` | `speechnet_qzo19_{train,update}` (exp19 round 1) | train and update graphs byte-identical, same weights and window; L+ 0.02333396 and L− 0.02255885 equal exp19's first pair |
+| 6 | QZO, Siracusa, single step | `speechnet_train_QZO_single_step`, `speechnet_update_QZO_single_step` | `-mode q-zo-train --n-steps 1 --n-accum 1` with `calibration/pooled_999_fold3_ref.json` (pooled@99.9) | `speechnet_qzo19_{train,update}` (exp19 round 1, pooled@99.99) | same graph structure, initial weights and first window; only the calibration-dependent constants differ (output-quant and bias-perturbation multipliers, classifier bias). Reference L+ 0.038565, L− 0.023022 |
 | 7 | fused block-0 conv, Siracusa cluster | `speechnet_fused_b0_cluster` | hand-built, `DeeployTest/experiments/dual_pass_fusion/build_dual_conv_fixture.py` (exp5) | `Tests/Kernels/Integer/QZO_DualConv` | byte-identical copy |
 | 8 | fused block-0 conv, GAP9 cluster | `speechnet_fused_b0_cluster` (same graph as 7) | as 7 | as 7 | as 7 |
 | 9 | fused block-0 conv, GAP9 NE16 | `speechnet_fused_b0_NE16` | `build_ne16_dual_fixture.py` (exp6 task 2) | `Tests/Kernels/Integer/QZO_DualConv_NE16` | byte-identical copy |
@@ -77,7 +93,7 @@ Short fixtures were run on GVSoC from this location (`scripts/run_smoke_siracusa
 | `speechnet_unfused_b0_NE16` | GAP9 NE16 | 0/78,512 errors, 379,969 cycles | exp6 B: 379,969 |
 | `speechnet_fused_b0_NE16` | GAP9 NE16 | 0/157,024 errors, 541,345 cycles | exp6 C: 541,345 |
 | `speechnet_train_ZO_single_step` | Siracusa | 0/2 errors, device loss pair = host reference (diff 0.000000), 35,634,779 cycles | exp3_ZO: 35,643,810 (stale weights) |
-| `speechnet_train_QZO_single_step` | Siracusa | 0/2 errors, diff 0.000000, 8,311,241 cycles | exp10/exp20: 8.3–8.7 M |
+| `speechnet_train_QZO_single_step` | Siracusa | 0/2 errors, diff 0.000000, 8,311,633 cycles (pooled@99.9) | exp10/exp20: 8.3–8.7 M |
 | `speechnet_train_BP_single_step` | Siracusa | 0/1 errors, device loss = host reference (0.011451, diff 0.000000), 32,693,752 cycles | exp2a: 32,708,926 (stale weights) |
 
 Note on the GAP9 unfused run: its generated code differs from exp6's only in the L1 offsets of two

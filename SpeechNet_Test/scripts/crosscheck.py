@@ -99,6 +99,21 @@ def prefix(name, single, round1, loss_keys):
             print(f"   outputs {k}: missing (single has {So.files[:8]}...)")
 
 
+def calib_diff(name, new, old):
+    """Same structure / weights / data; report which constants differ (expected: calibration only)."""
+    print(f"\n== calibration-only difference: {name}\n   new {new}\n   old {old}")
+    _, na, ia, ioa = graph_signature(new / "network.onnx")
+    _, nb, ib, iob = graph_signature(old / "network.onnx")
+    print(f"   graph inputs/outputs equal: {ioa == iob}; node count {len(na)} vs {len(nb)}; "
+          f"op sequence equal: {[n[0] for n in na] == [n[0] for n in nb]}")
+    diff = sorted(k for k in ia if k in ib and not np.array_equal(ia[k], ib[k]))
+    print(f"   initializers differing: {len(diff)}/{len(ia)} -> {diff}")
+    S, R = np.load(new / "inputs.npz"), np.load(old / "inputs.npz")
+    base = sorted(k for k in S.files if k.startswith("arr_"))
+    same = [k for k in base if k in R.files and np.array_equal(S[k], R[k])]
+    print(f"   inputs.npz arr_* (window 0 + initial weights): {len(same)}/{len(base)} equal")
+
+
 if __name__ == "__main__":
     want = set(sys.argv[1:])
     run = lambda k: not want or k in want
@@ -113,10 +128,12 @@ if __name__ == "__main__":
         identity("ZO round 1 infer (batch 2, exp18 device weights)", NEW / "speechnet_infer_ZO_round1", OLD / "speechnet_zo_infer_b1_fold3_ref")
         prefix("ZO single step vs round 1", NEW / "speechnet_train_ZO_single_step", NEW / "speechnet_train_ZO_round1", ["loss_plus", "loss_minus"])
     if run("qzo"):
-        # QZO round 1 is not regenerated (dropped 2026-10-12); the single step is checked against exp19's
-        # round-1 fixture, which has the same weights, calibration and window pool.
-        prefix("QZO single step vs exp19 round 1 (train graph)", NEW / "speechnet_train_QZO_single_step", OLD / "speechnet_qzo19_train", ["loss_plus", "loss_minus"])
-        print(f"   update graph vs exp19: {cmp_onnx(NEW / 'speechnet_update_QZO_single_step/network.onnx', OLD / 'speechnet_qzo19_update/network.onnx')}")
+        # QZO round 1 is not regenerated (dropped 2026-10-12). The single step uses the 99.9 calibration,
+        # exp19 used 99.99: same graph structure, same weights and window, only the calibration-dependent
+        # constants (Quant/Dequant scales, requant mul/add) may differ.
+        calib_diff("QZO single step (pooled@99.9) vs exp19 round 1 (pooled@99.99)",
+                   NEW / "speechnet_train_QZO_single_step", OLD / "speechnet_qzo19_train")
+        calib_diff("QZO single-step update graph vs exp19", NEW / "speechnet_update_QZO_single_step", OLD / "speechnet_qzo19_update")
     if run("kernels"):
         for new, old in (("speechnet_unfused_b0_cluster", "QZO_Conv"), ("speechnet_fused_b0_cluster", "QZO_DualConv"),
                          ("speechnet_unfused_b0_NE16", "QZO_Conv_NE16"), ("speechnet_fused_b0_NE16", "QZO_DualConv_NE16")):

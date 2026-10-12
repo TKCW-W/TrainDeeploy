@@ -1,7 +1,7 @@
 [Deeploy] Test path /app/ETH/TrainDeeploy/SpeechNet_Test/speechnet_train_QZO_single_step is outside base directory. Using /app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step
 onnxruntime cpuid_info warning: Unknown CPU vendor. cpuinfo_vendor value: 0
-[0;93m2026-10-12 15:37:37.616338346 [W:onnxruntime:, unsqueeze_elimination.cc:23 Apply] UnsqueezeElimination cannot remove node Unsqueeze_1[m
-[0;93m2026-10-12 15:37:37.616374554 [W:onnxruntime:, unsqueeze_elimination.cc:23 Apply] UnsqueezeElimination cannot remove node Unsqueeze[m
+[0;93m2026-10-12 16:55:07.198243093 [W:onnxruntime:, unsqueeze_elimination.cc:23 Apply] UnsqueezeElimination cannot remove node Unsqueeze_1[m
+[0;93m2026-10-12 16:55:07.198281551 [W:onnxruntime:, unsqueeze_elimination.cc:23 Apply] UnsqueezeElimination cannot remove node Unsqueeze[m
 [TiledOptimizerNetwork] Generated OptimizerNetwork.c/h in /app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step
 -- Building for platform 'Siracusa'
 -- ============================= Project Configuration ============================
@@ -1219,154 +1219,154 @@ In file included from /app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/perf_utils.h:183:66: [0m[0;1;35mwarning: [0m[1mimplicit conversion from 'const unsigned int' to 'float' may lose precision [-Wimplicit-int-float-conversion][0m
            stats->st_ext > 0 ? (float)stats->st_ext_cyc / stats->st_ext : 0.0f);
 [0;1;32m                                                        ~ ~~~~~~~^~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:293:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:294:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int8_t *)&DeeployOptNetwork_TILING_CODEGEN_L1_rqsp_upd_blocks0convweight_int8_data_in_ref[rqsp_upd_blocks0convweight_int8_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:94:59: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
 [0;1;32m                                                          ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:282:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks0convweight_int8_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:283:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks0convweight_int8_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_upd_blocks0convweight_int8_channel_start_offset = rqsp_upd_blocks0convweight_int8_chunk_start % 4;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:486:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:487:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int32_t *)&DeeployOptNetwork_TILING_CODEGEN_L1_rqsp_upd_blocks0convbias_rqsadd_data_in_ref[rqsp_upd_blocks0convbias_rqsadd_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:115:60: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
 [0;1;32m                                                           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:476:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks0convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:477:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks0convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_upd_blocks0convbias_rqsadd_channel_start_offset = rqsp_upd_blocks0convbias_rqsadd_chunk_start % 1;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:680:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:681:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int8_t *)&DeeployOptNetwork_TILING_CODEGEN_L1_rqsp_upd_blocks1convweight_int8_data_in_ref[rqsp_upd_blocks1convweight_int8_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:94:59: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
 [0;1;32m                                                          ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:669:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks1convweight_int8_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:670:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks1convweight_int8_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_upd_blocks1convweight_int8_channel_start_offset = rqsp_upd_blocks1convweight_int8_chunk_start % 128;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:873:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:874:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int32_t *)&DeeployOptNetwork_TILING_CODEGEN_L1_rqsp_upd_blocks1convbias_rqsadd_data_in_ref[rqsp_upd_blocks1convbias_rqsadd_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:115:60: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
 [0;1;32m                                                           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:863:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks1convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:864:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks1convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_upd_blocks1convbias_rqsadd_channel_start_offset = rqsp_upd_blocks1convbias_rqsadd_chunk_start % 1;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1067:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1068:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int8_t *)&DeeployOptNetwork_TILING_CODEGEN_L1_rqsp_upd_blocks2convweight_int8_data_in_ref[rqsp_upd_blocks2convweight_int8_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:94:59: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
 [0;1;32m                                                          ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1056:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks2convweight_int8_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1057:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks2convweight_int8_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_upd_blocks2convweight_int8_channel_start_offset = rqsp_upd_blocks2convweight_int8_chunk_start % 128;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1260:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1261:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int32_t *)&DeeployOptNetwork_TILING_CODEGEN_L1_rqsp_upd_blocks2convbias_rqsadd_data_in_ref[rqsp_upd_blocks2convbias_rqsadd_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:115:60: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
 [0;1;32m                                                           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1250:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks2convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1251:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks2convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_upd_blocks2convbias_rqsadd_channel_start_offset = rqsp_upd_blocks2convbias_rqsadd_chunk_start % 1;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1454:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1455:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int8_t *)&DeeployOptNetwork_TILING_CODEGEN_L1_rqsp_upd_blocks3convweight_int8_data_in_ref[rqsp_upd_blocks3convweight_int8_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:94:59: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
 [0;1;32m                                                          ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1443:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks3convweight_int8_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1444:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks3convweight_int8_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_upd_blocks3convweight_int8_channel_start_offset = rqsp_upd_blocks3convweight_int8_chunk_start % 112;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1647:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1648:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int32_t *)&DeeployOptNetwork_TILING_CODEGEN_L1_rqsp_upd_blocks3convbias_rqsadd_data_in_ref[rqsp_upd_blocks3convbias_rqsadd_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:115:60: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
 [0;1;32m                                                           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1637:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks3convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1638:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks3convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_upd_blocks3convbias_rqsadd_channel_start_offset = rqsp_upd_blocks3convbias_rqsadd_chunk_start % 1;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1841:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1842:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int8_t *)&DeeployOptNetwork_TILING_CODEGEN_L1_rqsp_upd_blocks4convweight_int8_data_in_ref[rqsp_upd_blocks4convweight_int8_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:94:59: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
 [0;1;32m                                                          ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1830:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks4convweight_int8_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:1831:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks4convweight_int8_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_upd_blocks4convweight_int8_channel_start_offset = rqsp_upd_blocks4convweight_int8_chunk_start % 224;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:2034:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:2035:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int32_t *)&DeeployOptNetwork_TILING_CODEGEN_L1_rqsp_upd_blocks4convbias_rqsadd_data_in_ref[rqsp_upd_blocks4convbias_rqsadd_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:115:60: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
 [0;1;32m                                                           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:2024:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks4convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:2025:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_upd_blocks4convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_upd_blocks4convbias_rqsadd_channel_start_offset = rqsp_upd_blocks4convbias_rqsadd_chunk_start % 1;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4405:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4406:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_input_0 = (float32_t *)DeeployNetwork_input_12;   /* shared with TrainingNetwork */
 [0;1;32m                            ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4406:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4407:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_input_1 = (float32_t *)DeeployNetwork_input_17;   /* shared with TrainingNetwork */
 [0;1;32m                            ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4407:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4408:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_input_2 = (float32_t *)DeeployNetwork_input_13;   /* shared with TrainingNetwork */
 [0;1;32m                            ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4408:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4409:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_input_3 = (float32_t *)DeeployNetwork_input_18;   /* shared with TrainingNetwork */
 [0;1;32m                            ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4409:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4410:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_input_4 = (float32_t *)DeeployNetwork_input_14;   /* shared with TrainingNetwork */
 [0;1;32m                            ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4410:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4411:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_input_5 = (float32_t *)DeeployNetwork_input_19;   /* shared with TrainingNetwork */
 [0;1;32m                            ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4411:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4412:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_input_6 = (float32_t *)DeeployNetwork_input_15;   /* shared with TrainingNetwork */
 [0;1;32m                            ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4412:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4413:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_input_7 = (float32_t *)DeeployNetwork_input_20;   /* shared with TrainingNetwork */
 [0;1;32m                            ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4413:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4414:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_input_8 = (float32_t *)DeeployNetwork_input_16;   /* shared with TrainingNetwork */
 [0;1;32m                            ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4414:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4415:29: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_input_9 = (float32_t *)DeeployNetwork_input_21;   /* shared with TrainingNetwork */
 [0;1;32m                            ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4427:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4428:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_output_0 = (float32_t *)DeeployNetwork_input_12;  /* in-place, shared with TrainingNetwork */
 [0;1;32m                             ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4428:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4429:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_output_1 = (float32_t *)DeeployNetwork_input_17;  /* in-place, shared with TrainingNetwork */
 [0;1;32m                             ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4429:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4430:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_output_2 = (float32_t *)DeeployNetwork_input_13;  /* in-place, shared with TrainingNetwork */
 [0;1;32m                             ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4430:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4431:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_output_3 = (float32_t *)DeeployNetwork_input_18;  /* in-place, shared with TrainingNetwork */
 [0;1;32m                             ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4431:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4432:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_output_4 = (float32_t *)DeeployNetwork_input_14;  /* in-place, shared with TrainingNetwork */
 [0;1;32m                             ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4432:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4433:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_output_5 = (float32_t *)DeeployNetwork_input_19;  /* in-place, shared with TrainingNetwork */
 [0;1;32m                             ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4433:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4434:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_output_6 = (float32_t *)DeeployNetwork_input_15;  /* in-place, shared with TrainingNetwork */
 [0;1;32m                             ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4434:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4435:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_output_7 = (float32_t *)DeeployNetwork_input_20;  /* in-place, shared with TrainingNetwork */
 [0;1;32m                             ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4435:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4436:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int8_t *' (aka 'signed char *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_output_8 = (float32_t *)DeeployNetwork_input_16;  /* in-place, shared with TrainingNetwork */
 [0;1;32m                             ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4436:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/OptimizerNetwork.c:4437:30: [0m[0;1;35mwarning: [0m[1mincompatible pointer types assigning to 'int32_t *' (aka 'int *') from 'float32_t *' (aka 'float *') [-Wincompatible-pointer-types][0m
   DeeployOptNetwork_output_9 = (float32_t *)DeeployNetwork_input_21;  /* in-place, shared with TrainingNetwork */
 [0;1;32m                             ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m57 warnings generated.
@@ -1424,162 +1424,162 @@ In file included from /app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/perf_utils.h:183:66: [0m[0;1;35mwarning: [0m[1mimplicit conversion from 'const unsigned int' to 'float' may lose precision [-Wimplicit-int-float-conversion][0m
            stats->st_ext > 0 ? (float)stats->st_ext_cyc / stats->st_ext : 0.0f);
 [0;1;32m                                                        ~ ~~~~~~~^~~~~~
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:1263:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:1264:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int8_t *)&DeeployNetwork_TILING_CODEGEN_L1_rqsp_blocks0convweight_int8_data_in_ref[rqsp_blocks0convweight_int8_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:94:59: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
 [0;1;32m                                                          ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:1252:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks0convweight_int8_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:1253:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks0convweight_int8_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_blocks0convweight_int8_channel_start_offset = rqsp_blocks0convweight_int8_chunk_start % 4;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:1673:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:1674:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int8_t *)&DeeployNetwork_TILING_CODEGEN_L1_rqsp_blocks1convweight_int8_data_in_ref[rqsp_blocks1convweight_int8_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:94:59: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
 [0;1;32m                                                          ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:1662:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks1convweight_int8_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:1663:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks1convweight_int8_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_blocks1convweight_int8_channel_start_offset = rqsp_blocks1convweight_int8_chunk_start % 128;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2083:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2084:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int8_t *)&DeeployNetwork_TILING_CODEGEN_L1_rqsp_blocks2convweight_int8_data_in_ref[rqsp_blocks2convweight_int8_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:94:59: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
 [0;1;32m                                                          ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2072:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks2convweight_int8_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2073:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks2convweight_int8_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_blocks2convweight_int8_channel_start_offset = rqsp_blocks2convweight_int8_chunk_start % 128;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2493:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2494:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int8_t *)&DeeployNetwork_TILING_CODEGEN_L1_rqsp_blocks3convweight_int8_data_in_ref[rqsp_blocks3convweight_int8_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:94:59: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
 [0;1;32m                                                          ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2482:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks3convweight_int8_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2483:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks3convweight_int8_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_blocks3convweight_int8_channel_start_offset = rqsp_blocks3convweight_int8_chunk_start % 112;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2903:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2904:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int8_t *' (aka 'const signed char *') to parameter of type 'int8_t *' (aka 'signed char *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int8_t *)&DeeployNetwork_TILING_CODEGEN_L1_rqsp_blocks4convweight_int8_data_in_ref[rqsp_blocks4convweight_int8_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:94:59: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_CHW(int8_t *__restrict__ pweights,
 [0;1;32m                                                          ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2892:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks4convweight_int8_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:2893:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks4convweight_int8_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_blocks4convweight_int8_channel_start_offset = rqsp_blocks4convweight_int8_chunk_start % 224;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:3312:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:3313:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int32_t *)&DeeployNetwork_TILING_CODEGEN_L1_rqsp_blocks0convbias_rqsadd_data_in_ref[rqsp_blocks0convbias_rqsadd_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:115:60: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
 [0;1;32m                                                           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:3302:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks0convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:3303:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks0convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_blocks0convbias_rqsadd_channel_start_offset = rqsp_blocks0convbias_rqsadd_chunk_start % 1;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:4767:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Relu_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:4768:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Relu_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
   PULP_Relu_fp32_fp32(DeeployNetwork_TILING_CODEGEN_L1_reluRelu_data_in_ref, DeeployNetwork_TILING_CODEGEN_L1_reluRelu_data_out_ref,
 [0;1;32m  ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:5971:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:5972:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int32_t *)&DeeployNetwork_TILING_CODEGEN_L1_rqsp_blocks1convbias_rqsadd_data_in_ref[rqsp_blocks1convbias_rqsadd_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:115:60: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
 [0;1;32m                                                           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:5961:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks1convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:5962:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks1convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_blocks1convbias_rqsadd_channel_start_offset = rqsp_blocks1convbias_rqsadd_chunk_start % 1;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:7377:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Relu_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:7378:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Relu_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
   PULP_Relu_fp32_fp32(DeeployNetwork_TILING_CODEGEN_L1_relu_1Relu_data_in_ref, DeeployNetwork_TILING_CODEGEN_L1_relu_1Relu_data_out_ref,
 [0;1;32m  ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:8584:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:8585:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int32_t *)&DeeployNetwork_TILING_CODEGEN_L1_rqsp_blocks2convbias_rqsadd_data_in_ref[rqsp_blocks2convbias_rqsadd_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:115:60: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
 [0;1;32m                                                           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:8574:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks2convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:8575:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks2convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_blocks2convbias_rqsadd_channel_start_offset = rqsp_blocks2convbias_rqsadd_chunk_start % 1;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:9932:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Relu_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:9933:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Relu_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
   PULP_Relu_fp32_fp32(DeeployNetwork_TILING_CODEGEN_L1_relu_2Relu_data_in_ref, DeeployNetwork_TILING_CODEGEN_L1_relu_2Relu_data_out_ref, 5152);
 [0;1;32m  ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:11088:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:11089:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int32_t *)&DeeployNetwork_TILING_CODEGEN_L1_rqsp_blocks3convbias_rqsadd_data_in_ref[rqsp_blocks3convbias_rqsadd_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:115:60: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
 [0;1;32m                                                           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:11078:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks3convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:11079:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks3convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_blocks3convbias_rqsadd_channel_start_offset = rqsp_blocks3convbias_rqsadd_chunk_start % 1;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:12436:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Relu_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:12437:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Relu_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
   PULP_Relu_fp32_fp32(DeeployNetwork_TILING_CODEGEN_L1_relu_3Relu_data_in_ref, DeeployNetwork_TILING_CODEGEN_L1_relu_3Relu_data_out_ref, 1280);
 [0;1;32m  ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:13016:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:13017:7: [0m[0;1;35mwarning: [0m[1mpassing 'const int32_t *' (aka 'const int *') to parameter of type 'int32_t *' (aka 'int *') discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers][0m
       (const int32_t *)&DeeployNetwork_TILING_CODEGEN_L1_rqsp_blocks4convbias_rqsadd_data_in_ref[rqsp_blocks4convbias_rqsadd_chunk_start],
 [0;1;32m      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [0m[1m/app/ETH/TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/RandomNoise.h:115:60: [0m[0;1;30mnote: [0mpassing argument to parameter 'pweights' here[0m
 void ApplyPerturbQuantRademacher_i32(int32_t *__restrict__ pweights,
 [0;1;32m                                                           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:13006:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks4convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:13007:12: [0m[0;1;35mwarning: [0m[1munused variable 'rqsp_blocks4convbias_rqsadd_channel_start_offset' [-Wunused-variable][0m
   uint32_t rqsp_blocks4convbias_rqsadd_channel_start_offset = rqsp_blocks4convbias_rqsadd_chunk_start % 1;
 [0;1;32m           ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:14363:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Relu_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:14364:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Relu_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
   PULP_Relu_fp32_fp32(DeeployNetwork_TILING_CODEGEN_L1_relu_4Relu_data_in_ref, DeeployNetwork_TILING_CODEGEN_L1_relu_4Relu_data_out_ref, 320);
 [0;1;32m  ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:14508:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_GlobalAveragePool_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:14509:3: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_GlobalAveragePool_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
   PULP_GlobalAveragePool_fp32(DeeployNetwork_TILING_CODEGEN_L1_global_poolGlobalAveragePool_data_in_ref,
 [0;1;32m  ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15001:5: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Gemm_fp32_fp32_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15002:5: [0m[0;1;35mwarning: [0m[1mimplicit declaration of function 'PULP_Gemm_fp32_fp32_fp32_fp32' is invalid in C99 [-Wimplicit-function-declaration][0m
     PULP_Gemm_fp32_fp32_fp32_fp32(
 [0;1;32m    ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15403:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_1BatchNormalization_rv_tensor' [-Wunused-variable][0m
-  float32_t *DeeployNetwork_bn_1BatchNormalization_rv_tensor;
-[0;1;32m             ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15463:9: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork__MERGE_CONVRQ_PASS_3_buffer' [-Wunused-variable][0m
-  void *DeeployNetwork__MERGE_CONVRQ_PASS_3_buffer;
-[0;1;32m        ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15464:9: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork__MERGE_CONVRQ_PASS_4_buffer' [-Wunused-variable][0m
-  void *DeeployNetwork__MERGE_CONVRQ_PASS_4_buffer;
-[0;1;32m        ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15402:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_1BatchNormalization_rm_tensor' [-Wunused-variable][0m
-  float32_t *DeeployNetwork_bn_1BatchNormalization_rm_tensor;
-[0;1;32m             ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15460:9: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork__MERGE_CONVRQ_PASS_0_buffer' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15461:9: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork__MERGE_CONVRQ_PASS_0_buffer' [-Wunused-variable][0m
   void *DeeployNetwork__MERGE_CONVRQ_PASS_0_buffer;
 [0;1;32m        ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15461:9: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork__MERGE_CONVRQ_PASS_1_buffer' [-Wunused-variable][0m
-  void *DeeployNetwork__MERGE_CONVRQ_PASS_1_buffer;
-[0;1;32m        ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15451:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_4BatchNormalization_rv_tensor' [-Wunused-variable][0m
-  float32_t *DeeployNetwork_bn_4BatchNormalization_rv_tensor;
-[0;1;32m             ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15436:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_3BatchNormalization_rm_tensor' [-Wunused-variable][0m
-  float32_t *DeeployNetwork_bn_3BatchNormalization_rm_tensor;
-[0;1;32m             ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15437:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_3BatchNormalization_rv_tensor' [-Wunused-variable][0m
-  float32_t *DeeployNetwork_bn_3BatchNormalization_rv_tensor;
-[0;1;32m             ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15419:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_2BatchNormalization_rm_tensor' [-Wunused-variable][0m
-  float32_t *DeeployNetwork_bn_2BatchNormalization_rm_tensor;
-[0;1;32m             ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15385:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bnBatchNormalization_rm_tensor' [-Wunused-variable][0m
-  float32_t *DeeployNetwork_bnBatchNormalization_rm_tensor;
-[0;1;32m             ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15386:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bnBatchNormalization_rv_tensor' [-Wunused-variable][0m
-  float32_t *DeeployNetwork_bnBatchNormalization_rv_tensor;
-[0;1;32m             ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15450:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_4BatchNormalization_rm_tensor' [-Wunused-variable][0m
-  float32_t *DeeployNetwork_bn_4BatchNormalization_rm_tensor;
-[0;1;32m             ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15420:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_2BatchNormalization_rv_tensor' [-Wunused-variable][0m
-  float32_t *DeeployNetwork_bn_2BatchNormalization_rv_tensor;
-[0;1;32m             ^
-[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15462:9: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork__MERGE_CONVRQ_PASS_2_buffer' [-Wunused-variable][0m
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15463:9: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork__MERGE_CONVRQ_PASS_2_buffer' [-Wunused-variable][0m
   void *DeeployNetwork__MERGE_CONVRQ_PASS_2_buffer;
 [0;1;32m        ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15462:9: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork__MERGE_CONVRQ_PASS_1_buffer' [-Wunused-variable][0m
+  void *DeeployNetwork__MERGE_CONVRQ_PASS_1_buffer;
+[0;1;32m        ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15465:9: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork__MERGE_CONVRQ_PASS_4_buffer' [-Wunused-variable][0m
+  void *DeeployNetwork__MERGE_CONVRQ_PASS_4_buffer;
+[0;1;32m        ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15464:9: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork__MERGE_CONVRQ_PASS_3_buffer' [-Wunused-variable][0m
+  void *DeeployNetwork__MERGE_CONVRQ_PASS_3_buffer;
+[0;1;32m        ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15438:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_3BatchNormalization_rv_tensor' [-Wunused-variable][0m
+  float32_t *DeeployNetwork_bn_3BatchNormalization_rv_tensor;
+[0;1;32m             ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15437:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_3BatchNormalization_rm_tensor' [-Wunused-variable][0m
+  float32_t *DeeployNetwork_bn_3BatchNormalization_rm_tensor;
+[0;1;32m             ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15403:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_1BatchNormalization_rm_tensor' [-Wunused-variable][0m
+  float32_t *DeeployNetwork_bn_1BatchNormalization_rm_tensor;
+[0;1;32m             ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15404:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_1BatchNormalization_rv_tensor' [-Wunused-variable][0m
+  float32_t *DeeployNetwork_bn_1BatchNormalization_rv_tensor;
+[0;1;32m             ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15421:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_2BatchNormalization_rv_tensor' [-Wunused-variable][0m
+  float32_t *DeeployNetwork_bn_2BatchNormalization_rv_tensor;
+[0;1;32m             ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15420:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_2BatchNormalization_rm_tensor' [-Wunused-variable][0m
+  float32_t *DeeployNetwork_bn_2BatchNormalization_rm_tensor;
+[0;1;32m             ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15451:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_4BatchNormalization_rm_tensor' [-Wunused-variable][0m
+  float32_t *DeeployNetwork_bn_4BatchNormalization_rm_tensor;
+[0;1;32m             ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15452:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bn_4BatchNormalization_rv_tensor' [-Wunused-variable][0m
+  float32_t *DeeployNetwork_bn_4BatchNormalization_rv_tensor;
+[0;1;32m             ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15386:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bnBatchNormalization_rm_tensor' [-Wunused-variable][0m
+  float32_t *DeeployNetwork_bnBatchNormalization_rm_tensor;
+[0;1;32m             ^
+[0m[1m/app/ETH/TrainDeeploy/DeeployTest/TEST_SIRACUSA/speechnet_train_QZO_single_step/TrainingNetwork.c:15387:14: [0m[0;1;35mwarning: [0m[1munused variable 'DeeployNetwork_bnBatchNormalization_rv_tensor' [-Wunused-variable][0m
+  float32_t *DeeployNetwork_bnBatchNormalization_rv_tensor;
+[0;1;32m             ^
 [0m59 warnings generated.
 [100%] Built target training_network
 [100%] Building C object DeeployTest/Platforms/Siracusa/CMakeFiles/speechnet_train_QZO_single_step.dir/src/CycleCounter.c.obj
@@ -1798,17 +1798,17 @@ Starting ZO training (1 update steps x 1 accum steps)...
 [BN_FROZEN_STATS] training BN uses frozen running statistics (train==inference)
 update 1/1  accum 1/1  (mini-batch 0)  seed_base=0
 [PHASE] +eps forward START
-[PHASE] +eps forward DONE (4155919 cyc)
-[PHASE] +eps loss read OK: lp_bits=0x3cbf2700
+[PHASE] +eps forward DONE (4155877 cyc)
+[PHASE] +eps loss read OK: lp_bits=0x3d1df680
 [PHASE] -eps forward START
-[PHASE] -eps forward DONE (4155322 cyc)
-[PHASE] -eps loss read OK: lm_bits=0x3cb8cd00
+[PHASE] -eps forward DONE (4155756 cyc)
+[PHASE] -eps loss read OK: lm_bits=0x3cbc9900
 [PHASE] update (zo_update) START
-[PHASE] update (zo_update) DONE (322084 cyc)
-[loss+ 0] computed=0.023334  ref=0.023334  diff=0.000000  TOL=0.001000
-[loss- 0] computed=0.022559  ref=0.022559  diff=0.000000  TOL=0.001000
+[PHASE] update (zo_update) DONE (321816 cyc)
+[loss+ 0] computed=0.038565  ref=0.038565  diff=0.000000  TOL=0.001000
+[loss- 0] computed=0.023022  ref=0.023022  diff=0.000000  TOL=0.001000
 Errors: 0 out of 2
-BENCH train_cycles_hi=0 train_cycles_lo=8311241 opt_cycles_hi=0 opt_cycles_lo=322084
+BENCH train_cycles_hi=0 train_cycles_lo=8311633 opt_cycles_hi=0 opt_cycles_lo=321816
 [100%] Built target gvsoc_speechnet_train_QZO_single_step
 
 [92m✓ Test speechnet_train_QZO_single_step PASSED - No errors found[0m
