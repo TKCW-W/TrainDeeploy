@@ -68,3 +68,13 @@ CHANGELOG_GEN.md
 .cache/
 
 CLAUDE.mdDeeployTest/frozenbn_grid.log
+
+# -- QW 2026-10-12: private progress notes (kept locally, not shared). Shared documentation is
+#    HandoverDocuments/ and SpeechNet_Test/README.md; logs, results and scripts stay tracked.
+/WorkLog/
+/BP_FLOW.md
+/SoC_miniproject.md
+/ZO_FINDING.md
+/ZO_TECHNICAL_REPORT.md
+/docs/codebase_workflow_guide.md
+/DeeployTest/experiments/**/*.md
