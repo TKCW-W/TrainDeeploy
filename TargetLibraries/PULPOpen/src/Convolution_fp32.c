@@ -114,11 +114,33 @@ void PULP_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
   int8_t core_id = pi_core_id();
   int8_t log2Core = LOG2(NUM_CORES);
 
+  // Compute the output dimensions
+  uint32_t H_out = (H + pad_top + pad_bottom - P) / SP + 1;
+  uint32_t W_out = (W + pad_left + pad_right - Q) / SQ + 1;
+  uint32_t kernel_size = P * Q * C;
+
   // Compute the chunk size for each core
   uint16_t ch_out_chunk =
       (F_total >> log2Core) + ((F_total & (NUM_CORES - 1)) != 0);
   uint16_t ch_out_start = MIN(ch_out_chunk * core_id, F_total);
   uint16_t ch_out_stop = MIN(ch_out_start + ch_out_chunk, F_total);
+  uint32_t h_out_start = 0;
+  uint32_t h_out_stop = H_out;
+
+  // RW 2026-10-12: with fewer output channels than cores (e.g. SpeechNet block 0, F = 8 split by the
+  // tiler into 1-2 channels per tile) the channel split leaves most cores idle and every active core
+  // rebuilds the same im2col rows. Split output rows instead; each core computes all F_total channels.
+  // Per-output summation order is unchanged, so results are bit-identical to the channel split.
+  if (F_total < NUM_CORES) {
+    uint32_t h_chunk = (H_out + NUM_CORES - 1) / NUM_CORES;
+    ch_out_start = 0;
+    ch_out_stop = F_total;
+    h_out_start = MIN(h_chunk * core_id, H_out);
+    h_out_stop = MIN(h_out_start + h_chunk, H_out);
+    if (h_out_start == h_out_stop) {
+      return;
+    }
+  }
   uint16_t ch_out_count = ch_out_stop - ch_out_start;
 
   if (ch_out_count == 0) {
@@ -131,14 +153,9 @@ void PULP_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
   uint32_t im2col_size_per_core = C * P * Q;
   float32_t *im2col_buffer = pContextBuffer + core_id * im2col_size_per_core;
 
-  // Compute the output dimensions
-  uint32_t H_out = (H + pad_top + pad_bottom - P) / SP + 1;
-  uint32_t W_out = (W + pad_left + pad_right - Q) / SQ + 1;
-  uint32_t kernel_size = P * Q * C;
-
   // Compute the output
   if (has_bias) {
-    for (uint32_t h_out = 0; h_out < H_out; h_out++) {
+    for (uint32_t h_out = h_out_start; h_out < h_out_stop; h_out++) {
       for (uint32_t w_out = 0; w_out < W_out; w_out++) {
         int32_t h_in_start = h_out * SP - pad_top;
         int32_t w_in_start = w_out * SQ - pad_left;
@@ -177,7 +194,7 @@ void PULP_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
       }
     }
   } else {
-    for (uint32_t h_out = 0; h_out < H_out; h_out++) {
+    for (uint32_t h_out = h_out_start; h_out < h_out_stop; h_out++) {
       for (uint32_t w_out = 0; w_out < W_out; w_out++) {
         int32_t h_in_start = h_out * SP - pad_top;
         int32_t w_in_start = w_out * SQ - pad_left;

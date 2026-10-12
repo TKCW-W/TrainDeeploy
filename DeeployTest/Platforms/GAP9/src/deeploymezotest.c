@@ -73,7 +73,9 @@
 //    fns are void(uint32_t,uint32_t). Wrap them, supplying core_id / n_cores from pmsis
 //    (mirrors the stock GAP9 deeploytest.c InitNetworkWrapper pattern). -- QW
 static void InitTrainingNetworkWrapper(void *args)  { (void)args; InitTrainingNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
-static void RunTrainingNetworkWrapper(void *args)   { (void)args; RunTrainingNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
+// RW: start the cluster core's own perf counter so --profileTiling's per-node getCycles() (read on the
+//     cluster) is not 0 on GAP9; the FC-side ResetTimer/StartTimer around the dispatch is unaffected.
+static void RunTrainingNetworkWrapper(void *args)   { (void)args; ResetTimer(); StartTimer(); RunTrainingNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
 static void InitOptimizerNetworkWrapper(void *args) { (void)args; InitOptimizerNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
 static void RunOptimizerNetworkWrapper(void *args)  { (void)args; RunOptimizerNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
 
