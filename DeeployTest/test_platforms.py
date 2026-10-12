@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
+
 import pytest
 # Import platform-specific test configurations
 from test_chimera_config import KERNEL_TESTS as CHIMERA_KERNEL_TESTS
@@ -46,6 +48,9 @@ from test_siracusa_tiled_config import L3_SINGLEBUFFER_TRAINING_MODELS as SIRACU
 from test_siracusa_tiled_config import \
     L3_SINGLEBUFFER_TRAINING_PROMOTE_MODELS as SIRACUSA_L3_SINGLEBUFFER_TRAINING_PROMOTE_MODELS
 from test_siracusa_tiled_config import TRAINING_MODEL_OVERRIDES as SIRACUSA_TRAINING_MODEL_OVERRIDES
+from test_siracusa_tiled_config import QZO_BLOCK0_GEN_ARGS as SIRACUSA_QZO_BLOCK0_GEN_ARGS  # -- QW
+from test_siracusa_tiled_config import QZO_BLOCK0_KERNEL_TESTS as SIRACUSA_QZO_BLOCK0_KERNEL_TESTS  # -- QW
+from test_siracusa_tiled_config import ZO_SINGLE_STEP_TESTS as SIRACUSA_ZO_SINGLE_STEP_TESTS  # -- QW
 from test_snitch_config import DEFAULT_NUM_CORES as SNITCH_DEFAULT_NUM_CORES
 from test_snitch_config import KERNEL_TESTS as SNITCH_KERNEL_TESTS
 from test_snitch_config import MODEL_TESTS as SNITCH_MODEL_TESTS
@@ -417,6 +422,80 @@ def test_siracusa_tiled_training_l3_singlebuffer(test_params, deeploy_test_dir, 
         training_tolerance = overrides.get("tolerance"),
     )
     run_and_assert_test(test_name, config, skipgen, skipsim)
+
+
+# -- QW 2026-10-12: SpeechNet single-step CI gates on Siracusa (fixtures in TrainDeeploy/SpeechNet_Test).
+#    MeZO (float ZO and QZO): one antithetic forward pair + one update through the MEZO_TRAINING harness,
+#    the same configuration as deeployMezoRunner_tiled_siracusa.py --n-steps 1 --n-accum 1. Pass = both
+#    losses equal the host reference (Errors: 0 out of 2).
+@pytest.mark.siracusa_tiled
+@pytest.mark.zo_training
+@pytest.mark.parametrize("test_name", list(SIRACUSA_ZO_SINGLE_STEP_TESTS), ids = list(SIRACUSA_ZO_SINGLE_STEP_TESTS))
+def test_siracusa_tiled_zo_single_step(test_name, deeploy_test_dir, toolchain, toolchain_dir, cmake_args, skipgen,
+                                       skipsim) -> None:
+    p = SIRACUSA_ZO_SINGLE_STEP_TESTS[test_name]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "Siracusa",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = list(cmake_args) + ["BN_FROZEN_STATS=ON"],  # BatchNormInternal uses frozen stats
+        tiling = True,
+        cores = SIRACUSA_DEFAULT_CORES,
+        l1 = p["l1"],
+        l2 = p["l2"],
+        default_mem_level = "L2",
+        test_dir = p["train_dir"],
+    )
+    config.mezo = True
+    config.n_train_steps = 1
+    config.n_accum_steps = 1
+    config.training_num_data_inputs = 2  # input + label; a one-window fixture cannot be auto-detected
+    config.optimizer_dir = os.path.abspath(os.path.join(deeploy_test_dir, p["update_dir"]))
+    config.zo_eps = p["eps"]
+    config.zo_lr = p["lr"]
+    config.zo_q = 1
+    config.zo_seed = p["seed"]
+    run_and_assert_test(test_name,
+                        config,
+                        skipgen,
+                        skipsim,
+                        report_metric = {"lr": p["lr"]},
+                        metric_section = "SpeechNet single-step cycles (Siracusa)")
+
+
+#    Block-0 QZO conv kernels (fused DualConv and unfused pulp-nn), exact int8 compare of the output.
+@pytest.mark.siracusa_tiled
+@pytest.mark.qzo_block0
+@pytest.mark.parametrize("test_name",
+                         list(SIRACUSA_QZO_BLOCK0_KERNEL_TESTS),
+                         ids = list(SIRACUSA_QZO_BLOCK0_KERNEL_TESTS))
+def test_siracusa_tiled_qzo_block0_kernels(test_name, deeploy_test_dir, toolchain, toolchain_dir, cmake_args, skipgen,
+                                           skipsim) -> None:
+    config = create_test_config(
+        test_name = test_name,
+        platform = "Siracusa",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = cmake_args,
+        tiling = True,
+        cores = SIRACUSA_DEFAULT_CORES,
+        l1 = 128000,
+        l2 = 1500000,
+        default_mem_level = "L2",
+        gen_args = list(SIRACUSA_QZO_BLOCK0_GEN_ARGS),
+        test_dir = SIRACUSA_QZO_BLOCK0_KERNEL_TESTS[test_name],
+    )
+    run_and_assert_test(test_name,
+                        config,
+                        skipgen,
+                        skipsim,
+                        report_metric = {"kernel": "fused" if "fused_b0" in test_name and "unfused" not in test_name else "unfused"},
+                        metric_section = "SpeechNet block-0 QZO conv cycles (Siracusa)")
 
 
 @pytest.mark.siracusa_tiled

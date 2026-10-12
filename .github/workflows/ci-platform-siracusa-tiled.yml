@@ -64,3 +64,21 @@ jobs:
       runner: ${{ needs.select-env.outputs.runner }}
       docker-image: ${{ needs.select-env.outputs.image }}
       pytest-marker: "promote and training"
+
+  # -- QW: SpeechNet MeZO single step (float ZO + quantized ZO), fixtures in SpeechNet_Test/
+  siracusa-speechnet-zo-single-step:
+    needs: select-env
+    uses: ./.github/workflows/_runner-siracusa-tiled.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-marker: "zo_training"
+
+  # -- QW: SpeechNet block-0 QZO conv kernels on the cluster (fused DualConv + unfused pulp-nn)
+  siracusa-speechnet-qzo-block0-kernels:
+    needs: select-env
+    uses: ./.github/workflows/_runner-siracusa-tiled.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-marker: "qzo_block0"

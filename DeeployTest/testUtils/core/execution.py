@@ -116,6 +116,9 @@ def configure_cmake(config: DeeployTestConfig) -> None:
 
     if getattr(config, 'mezo', False):  # QW: append MeZO (ZO) cmake flags -- QW
         add_mezo_cmake_flags(cmd, config)  # -- QW
+    else:  # -- QW: reset it explicitly (like -DTRAINING=OFF): CMake caches -D flags, so a MeZO build in the
+        #    same build dir would otherwise leave MEZO_TRAINING=ON for the next inference/kernel test. -- QW
+        cmd.append("-DMEZO_TRAINING=OFF")  # -- QW
 
     # Last argument is the source directory
     script_dir = Path(__file__).parent.parent.parent

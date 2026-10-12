@@ -88,6 +88,30 @@ were not run (hours each); they are byte-identical to the fixtures exp17 and exp
 The BP single step needs `--num-data-inputs 2`: the BP runner infers the per-window input count from
 the second window's entries, which a one-window fixture does not have.
 
+## CI gates
+
+Every push runs four of these fixtures on Siracusa in GitHub Actions (workflow `CI • Siracusa (Tiled)`,
+jobs `siracusa-speechnet-zo-single-step` and `siracusa-speechnet-qzo-block0-kernels`):
+
+| pytest id | fixture | pass condition |
+|---|---|---|
+| `SpeechNet_ZO_single_step` | `speechnet_{train,update}_ZO_single_step` | both losses equal the host reference (`Errors: 0 out of 2`) |
+| `SpeechNet_QZO_single_step` | `speechnet_{train,update}_QZO_single_step` | same |
+| `SpeechNet_unfused_b0_cluster` | `speechnet_unfused_b0_cluster` | int8 output exact (`Errors: 0 out of 78512`) |
+| `SpeechNet_fused_b0_cluster` | `speechnet_fused_b0_cluster` | int8 output exact (`Errors: 0 out of 157024`) |
+
+The cycle counts are written to the workflow run summary but do not gate: the tiler's randomised
+placement moves them by up to about 1.5 % between builds. The test lists are `ZO_SINGLE_STEP_TESTS` and
+`QZO_BLOCK0_KERNEL_TESTS` in `DeeployTest/test_siracusa_tiled_config.py`, the tests
+`test_siracusa_tiled_zo_single_step` / `test_siracusa_tiled_qzo_block0_kernels` in
+`DeeployTest/test_platforms.py`. Run them locally (container `traindeeploy`, in `DeeployTest/`):
+
+```bash
+python3 -m pytest test_platforms.py -v -m "siracusa_tiled and (zo_training or qzo_block0)"
+```
+
+Local result 2026-10-12: 4 passed (`logs/ci_local_pytest.log`). GAP9 is not in CI.
+
 ## How to run each experiment
 
 Containers and conventions as in `HandoverDocuments/00_Overview.md`. Kill orphaned simulators first

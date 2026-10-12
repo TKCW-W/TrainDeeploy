@@ -270,3 +270,43 @@ L3_SINGLEBUFFER_PROMOTE_MODELS = {
     "Models/CCT/FP32/CCT_2_32_32_128": [(128000, "greedy-score", True),],
     "Models/MLPerf/AnomalyDetection": [(128000, "cycle-aware", True),],
 }
+
+# -- QW 2026-10-12: SpeechNet single-step CI gates. Fixtures live in TrainDeeploy/SpeechNet_Test (see its
+#    README); paths are relative to DeeployTest/. Each entry reproduces the command-line smoke run that
+#    passed on GVSoC (SpeechNet_Test/logs/smoke/siracusa_*.log), with the cycle count it gave.
+#
+#    MeZO single step: one antithetic forward pair (L+, L-) + one update, compared exactly with the
+#    host reference (Errors: 0 out of 2). lr / eps / seed must match the values baked at export.
+ZO_SINGLE_STEP_TESTS = {
+    "SpeechNet_ZO_single_step": {  # float ZO, lr 3e-6; smoke run: 35,634,779 train cycles
+        "train_dir": "../SpeechNet_Test/speechnet_train_ZO_single_step",
+        "update_dir": "../SpeechNet_Test/speechnet_update_ZO_single_step",
+        "lr": 3e-6,
+        "eps": 0.01,
+        "seed": 42,
+        "l1": 128000,
+        "l2": 2000000,
+    },
+    "SpeechNet_QZO_single_step": {  # quantized ZO, lr 1e-5; smoke run: 8,311,241 train cycles
+        "train_dir": "../SpeechNet_Test/speechnet_train_QZO_single_step",
+        "update_dir": "../SpeechNet_Test/speechnet_update_QZO_single_step",
+        "lr": 1e-5,
+        "eps": 0.01,
+        "seed": 42,
+        "l1": 128000,
+        "l2": 2000000,
+    },
+}
+
+#    Block-0 QZO conv kernels on the cluster (exact int8 compare). The requant add of block 0 is int32
+#    but every entry is 32768, which value inference would type as uint16_t: pin it (as for
+#    Kernels/Integer/QZO_Conv above). fused = both eps-passes in one kernel (DualConv), unfused = one
+#    pass through pulp-nn (the deployed path). Smoke runs: 858,185 (unfused) / 910,763 (fused) cycles.
+QZO_BLOCK0_KERNEL_TESTS = {
+    "SpeechNet_unfused_b0_cluster": "../SpeechNet_Test/speechnet_unfused_b0_cluster",
+    "SpeechNet_fused_b0_cluster": "../SpeechNet_Test/speechnet_fused_b0_cluster",
+}
+QZO_BLOCK0_GEN_ARGS = [
+    "--input-type-map", "blocks.0.conv.bias_rqsadd=int32_t",
+    "--input-offset-map", "blocks.0.conv.bias_rqsadd=0",
+]
