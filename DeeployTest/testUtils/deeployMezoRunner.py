@@ -102,6 +102,9 @@ def main(tiling_enabled: bool = True, default_platform: str = 'Siracusa', defaul
     parser.add_argument('--enable-3x3', action = 'store_true', default = False, dest = 'enable_3x3',
                         help = 'GAP9_w_NE16 only: let NE16 claim 3x3 and depthwise convolutions\n')
 
+    parser.add_argument('--optimizer-l1', type = int, default = None, dest = 'optimizer_l1',
+                        help = 'L1 budget of the zo_update graph (default: --l1). Both L1 arenas are allocated\n'
+                        'at init, so on GAP9 train + update must fit the ~123 KB usable L1. -- RW\n')
     args = parser.parse_args()
 
     platform = default_platform
@@ -179,6 +182,7 @@ def main(tiling_enabled: bool = True, default_platform: str = 'Siracusa', defaul
         zo_lr = args.lr,  # -- QW
         zo_q = args.q,  # -- QW
         zo_seed = args.seed,  # -- QW
+        optimizer_l1 = args.optimizer_l1,  # -- RW
     )
 
     print_configuration(config)

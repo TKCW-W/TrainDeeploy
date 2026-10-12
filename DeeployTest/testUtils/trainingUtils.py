@@ -418,6 +418,8 @@ def run_zo_codegen(config, script_dir: Path) -> None:  # -- QW
         f"--training-dir={train_dir}",  # -- QW  match prepped train graph names
     ]  # -- QW
     upd_cmd.extend(arg for arg in config.gen_args if any(arg.startswith(p) for p in opt_passthrough))  # -- QW
+    if getattr(config, "optimizer_l1", None):  # -- RW  separate L1 budget for the update graph
+        upd_cmd = [a for a in upd_cmd if not a.startswith("--l1")] + [f"--l1={config.optimizer_l1}"]  # -- RW
     if not any(arg.startswith("--defaultMemLevel") for arg in upd_cmd):  # -- QW
         upd_cmd.append("--defaultMemLevel=L2")  # -- QW
     if config.verbose > 0:  # -- QW

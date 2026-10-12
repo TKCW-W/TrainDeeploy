@@ -27,7 +27,39 @@ target_compile_options(deeploygap9 PRIVATE
   -Wno-sign-compare
   -Wno-type-limits
   -Wno-attributes
+  -Wno-maybe-uninitialized  # RW: -O3 flags perf_stats_t in RandomNoise.c profiling (benign)
 )
+
+# RW 2026-10-12 (ported from runwangdl/TrainDeeploy devel, #34): the GAP9 SDK injects -Os globally,
+# which compiles the compute kernels for size; Siracusa builds them at -O3. Compile the perf-critical
+# kernel files at -O3 (set_source_files_properties appends last, so it wins over the SDK's -Os).
+# SpeechNet ZO/QZO additions: BN, pooling, ReLU, perturbation (RandomNoise*), Quant/Requant, DualConv/FlatConv.
+set(_KERNEL_O3_FILES
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Convolution_fp32.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/DWConvolution_fp32.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/ConvGrad.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/DWConvGrad.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/PWConvGrad.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Gemm.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Matmul.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Softmax.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/BatchNorm.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/AvgPool.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/MaxPool.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/GlobalAveragePool.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Relu.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/RandomNoise.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/RandomNoiseQuant.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/RequantShift.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/UniformRequantShift.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/DualConv.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/FlatConv.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Im2ColU8.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/third_party/pulp-trainlib/lib/sources/pulp_matmul_fp32.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/third_party/pulp-trainlib/lib/sources/pulp_conv2d_fp32.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/third_party/pulp-trainlib/lib/sources/pulp_im2col_fp32.c
+)
+set_source_files_properties(${_KERNEL_O3_FILES} PROPERTIES COMPILE_OPTIONS "-O3")
 
 target_link_libraries(deeploygap9 PUBLIC pmsis)
 
