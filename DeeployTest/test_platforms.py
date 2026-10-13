@@ -16,6 +16,8 @@ from test_gap9_config import MODEL_TESTS as GAP9_MODEL_TESTS
 from test_gap9_config import TRAIN_KERNEL_TESTS as GAP9_TRAIN_KERNEL_TESTS
 from test_gap9_config import TRAINING_TESTS as GAP9_TRAINING_TESTS
 from test_gap9_tiled_config import DEFAULT_CORES as GAP9_TILED_DEFAULT_CORES
+from test_gap9_tiled_config import SPEECHNET_BP_SINGLE_STEP as GAP9_SPEECHNET_BP  # RW
+from test_gap9_tiled_config import SPEECHNET_MEZO_TESTS as GAP9_SPEECHNET_MEZO_TESTS  # RW
 from test_gap9_tiled_config import L2_DOUBLEBUFFER_KERNELS as GAP9_L2_DOUBLEBUFFER_KERNELS
 from test_gap9_tiled_config import L2_DOUBLEBUFFER_MODELS as GAP9_L2_DOUBLEBUFFER_MODELS
 from test_gap9_tiled_config import L2_SINGLEBUFFER_KERNELS as GAP9_L2_SINGLEBUFFER_KERNELS
@@ -1762,3 +1764,67 @@ def test_gap9_tiled_training_promote_l3_doublebuffer(test_params, deeploy_test_d
         gen_args = overrides.get("gen_args"),
     )
     run_and_assert_test(test_name, config, skipgen, skipsim, metric_section = "GAP9 L3 training promote+DB cycles")
+
+
+# RW 2026-10-13: SpeechNet fine-tuning gates on GAP9 (see SPEECHNET_MEZO_TESTS in test_gap9_tiled_config.py).
+@pytest.mark.gap9_tiled
+@pytest.mark.speechnet_gap9
+@pytest.mark.parametrize("test_name", list(GAP9_SPEECHNET_MEZO_TESTS), ids = list(GAP9_SPEECHNET_MEZO_TESTS))
+def test_gap9_tiled_speechnet_mezo(test_name, deeploy_test_dir, toolchain, toolchain_dir, cmake_args, skipgen,
+                                   skipsim) -> None:
+    p = GAP9_SPEECHNET_MEZO_TESTS[test_name]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "GAP9",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = list(cmake_args) + [f"NUM_CORES={GAP9_TILED_DEFAULT_CORES}", "BN_FROZEN_STATS=ON"] + p["defines"],
+        tiling = True,
+        cores = GAP9_TILED_DEFAULT_CORES,
+        l1 = p["l1"],
+        l2 = p["l2"],
+        default_mem_level = "L2",
+        test_dir = p["train_dir"],
+    )
+    config.mezo = True
+    config.n_train_steps = p["n_steps"]
+    config.n_accum_steps = 1
+    config.training_num_data_inputs = 2
+    config.optimizer_dir = os.path.abspath(os.path.join(deeploy_test_dir, p["update_dir"]))
+    config.zo_eps = 0.01
+    config.zo_lr = p["lr"]
+    config.zo_q = 1
+    config.zo_seed = 42
+    run_and_assert_test(test_name, config, skipgen, skipsim, report_metric = {"lr": p["lr"]},
+                        metric_section = "SpeechNet MeZO cycles (GAP9)")
+
+
+@pytest.mark.gap9_tiled
+@pytest.mark.speechnet_gap9
+def test_gap9_tiled_speechnet_bp_single_step(deeploy_test_dir, toolchain, toolchain_dir, cmake_args, skipgen,
+                                             skipsim) -> None:
+    p = GAP9_SPEECHNET_BP
+    config = create_test_config(
+        test_name = "SpeechNet_BP_single_step",
+        platform = "GAP9",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = list(cmake_args) + [f"NUM_CORES={GAP9_TILED_DEFAULT_CORES}"] + p["defines"],
+        tiling = True,
+        cores = GAP9_TILED_DEFAULT_CORES,
+        l1 = p["l1"],
+        l2 = p["l2"],
+        default_mem_level = "L3",
+        double_buffer = True,
+        training = True,
+        training_num_data_inputs = 2,
+        promote_to_l2 = True,
+        promote_to_l2_strategy = "traffic-per-peak",
+        promote_to_l2_headroom = p["promote_headroom"],
+        test_dir = p["test_dir"],
+    )
+    run_and_assert_test("SpeechNet_BP_single_step", config, skipgen, skipsim)

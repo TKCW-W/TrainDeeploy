@@ -390,3 +390,40 @@ TRAINING_MODEL_OVERRIDES = {
         "conv_channels_first": True,  # CHW convs; NHWC-transpose tiling is infeasible
     },
 }
+
+
+# RW 2026-10-13: SpeechNet (SilentWear) fine-tuning on GAP9, the gates for the GAP9 port. Fixtures in
+# ../SpeechNet_Test/ (Qiwen's handover set). Every MeZO test also checks the trained weights bit for bit:
+# ZO_EXPECT_WSUM is the harness hash of all 22 trainable tensors after the last update (a missing or wrong
+# update cannot pass on the loss tolerance alone, see the [WCHK] note in deeploymezotest.c).
+#   ZO / QZO: one step, both losses == host reference (Errors 0 out of 2), weights after the update.
+#   QZO+ECO: 5 steps at lr 3e-3 so that ~13.5k int8/int32 weights move; the expected hash is the run that a
+#   numpy replay of the ECO update matched bit for bit (AI_AGENT/SilentWearZO/eco/emulate_eco.py). The run
+#   also writes the weights to flash (ZO_PERSIST) and fails if the read-back does not verify.
+SPEECHNET_MEZO_TESTS = {
+    "SpeechNet_ZO_single_step": {
+        "train_dir": "../SpeechNet_Test/speechnet_train_ZO_single_step",
+        "update_dir": "../SpeechNet_Test/speechnet_update_ZO_single_step",
+        "lr": 3e-6, "n_steps": 1, "l1": 114000, "l2": 1500000,
+        "defines": ["ZO_EXPECT_WSUM=0xc14819e6"],
+    },
+    "SpeechNet_QZO_single_step": {
+        "train_dir": "../SpeechNet_Test/speechnet_train_QZO_single_step",
+        "update_dir": "../SpeechNet_Test/speechnet_update_QZO_single_step",
+        "lr": 1e-5, "n_steps": 1, "l1": 114000, "l2": 1500000,
+        "defines": ["ZO_EXPECT_WSUM=0x97e57471"],
+    },
+    "SpeechNet_QZO_ECO_5steps": {
+        "train_dir": "../SpeechNet_Test/speechnet_train_QZO_single_step",
+        "update_dir": "../SpeechNet_Test/speechnet_update_QZO_single_step",
+        "lr": 3e-3, "n_steps": 5, "l1": 114000, "l2": 1500000,
+        "defines": ["ZO_ECO=ON", "ZO_PERSIST=ON", "ZO_EXPECT_WSUM=0x6706ea8a"],
+    },
+}
+
+# BP single step, full model, frozen BN stats, L3 + double buffer + traffic-per-peak promotion to L2.
+SPEECHNET_BP_SINGLE_STEP = {
+    "test_dir": "../SpeechNet_Test/speechnet_train_BP_single_step",
+    "l1": 122000, "l2": 1400000, "promote_headroom": 131072,
+    "defines": ["BN_FROZEN_STATS=ON", "CC_STACK_SIZE=4096"],
+}

@@ -123,6 +123,9 @@ if(MEZO_TRAINING)  # QW: MeZO (ZO) compile-time defines — parallel block along
     if(MEZO_STACKS_L2)  # RW: old behaviour -- cluster slave stacks in an L2 buffer (default: L1)
         target_compile_definitions(${ProjectId} PRIVATE MEZO_STACKS_L2)
     endif()
+    if(ZO_EXPECT_WSUM)  # RW 2026-10-13: CI gate -- expected hash of the trained weights
+        target_compile_definitions(${ProjectId} PRIVATE ZO_EXPECT_WSUM=${ZO_EXPECT_WSUM})
+    endif()
     if(ZO_PERSIST)  # RW 2026-10-13: write the trained weights to a reserved flash region
         target_compile_definitions(${ProjectId} PRIVATE ZO_PERSIST)
     endif()

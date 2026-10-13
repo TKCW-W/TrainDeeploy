@@ -397,7 +397,7 @@ static void zop_xfer(uint32_t wi, uint8_t *stage, int to_net) {
 #endif
 
 #if defined(ZO_PERSIST) && defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
-static uint32_t g_zop_steps_before = 0, g_zop_round = 1;
+static uint32_t g_zop_steps_before = 0, g_zop_round = 1, g_zop_fail = 0;
 static int zop_save(uint32_t steps_done) {
   struct pi_device *fl = get_flash_ptr();
   uint32_t payload; zop_hdr_t h = {ZOP_MAGIC, 1u, TRAINING_NUM_WEIGHT_INPUTS, 0, 0, 0, 0, 0};
@@ -405,7 +405,7 @@ static int zop_save(uint32_t steps_done) {
   h.steps_total = g_zop_steps_before + steps_done; h.round = g_zop_round;
   uint32_t tot = sizeof(h) + payload;
   uint8_t *img = (uint8_t *)pi_l2_malloc(tot);
-  if (!img) { printf("[ZOP] save: no L2 for %u B\r\n", (unsigned)tot); return -1; }
+  if (!img) { printf("[ZOP] save: no L2 for %u B\r\n", (unsigned)tot); g_zop_fail = 1; return -1; }
   memset(img, 0, tot);
   uint32_t off = sizeof(h);
   for (uint32_t wi = 0; wi < (uint32_t)TRAINING_NUM_WEIGHT_INPUTS; wi++) {
@@ -424,6 +424,7 @@ static int zop_save(uint32_t steps_done) {
   printf("[ZOP] saved round %u (%u steps total) %u B at flash 0x%08x crc %08x: %s\r\n", (unsigned)h.round,
          (unsigned)h.steps_total, (unsigned)tot, (unsigned)a, (unsigned)h.crc, ok ? "verified" : "VERIFY FAILED");
   pi_l2_free(img, tot);
+  g_zop_fail = !ok;
   return ok ? 0 : -1;
 }
 #endif
@@ -826,6 +827,20 @@ int main(void) {                 // -- QW
       loss_err_count += 1u;                                                                    // RW
     }                                                                                          // RW
   }                                                                                            // RW
+#endif
+#if defined(ZO_EXPECT_WSUM) && defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+  {  // RW 2026-10-13: CI gate on the trained weights (hash of all trainable tensors after the last update)
+    uint32_t w = wchk_all();
+    printf("[WSUM] final 0x%08x expected 0x%08x: %s\r\n", (unsigned)w, (unsigned)(ZO_EXPECT_WSUM),
+           w == (uint32_t)(ZO_EXPECT_WSUM) ? "ok" : "MISMATCH");
+    if (w != (uint32_t)(ZO_EXPECT_WSUM)) loss_err_count += 1u;
+  }
+#endif
+#if defined(ZO_PERSIST) && defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+  if (g_zop_fail) {  // RW: the flash write-back did not verify
+    printf("[ZOP] FAIL: saved weights did not verify\r\n");
+    loss_err_count += 1u;
+  }
 #endif
   uint32_t total_checks = 2u * total_loss_checks;          // -- QW
   printf("Errors: %u out of %u\r\n", (unsigned)loss_err_count,  // -- QW
