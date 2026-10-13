@@ -302,6 +302,40 @@ static void dump_zo_weights(uint32_t step) {  // -- QW
 }                                                                          // -- QW
 #endif /* DUMP_WEIGHTS -- QW */
 
+/* RW 2026-10-13: weight-update self-check (FPU-free, FC only). A ZO round once reported "Errors: 0 out of
+ * 21600" with every weight bit-identical to the pretrained one (the loss tolerance cannot see a missing
+ * update: lr 3e-6 moves the losses by < 1e-3). wchk_hash() hashes the raw bits of one trainable tensor;
+ * main() records the hashes before training, prints "[WSUM s=..]" every ZO_WCHK_EVERY updates and
+ * "[WCHK] changed k/N" at the end, and counts a run in which no tensor changed as an error.
+ * (QZO int8 conv weights may legitimately stay put below 1 LSB, so only "none changed" fails.) */
+#ifndef ZO_WCHK_EVERY
+#define ZO_WCHK_EVERY 100
+#endif
+#if defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+static uint32_t g_wchk0[TRAINING_NUM_WEIGHT_INPUTS];
+static uint32_t wchk_hash(uint32_t wi) {
+  uint32_t idx = (uint32_t)TRAINING_NUM_DATA_INPUTS + wi;
+  uint32_t n = DeeployNetwork_inputs_bytes[idx] / 4u;
+  void *buf = DeeployNetwork_inputs[idx];
+  uint32_t h = 2166136261u;
+  for (uint32_t k = 0; k < n; k++) {
+    uint32_t word;
+    if (IS_L2(buf)) {
+      word = ((const uint32_t *)buf)[k];
+    } else {
+      ram_read(&word, (uint8_t *)buf + 4u * k, 4u);
+    }
+    h = (h ^ word) * 16777619u;
+  }
+  return h;
+}
+static uint32_t wchk_all(void) {
+  uint32_t h = 0;
+  for (uint32_t wi = 0; wi < (uint32_t)TRAINING_NUM_WEIGHT_INPUTS; wi++) h = h * 31u + wchk_hash(wi);
+  return h;
+}
+#endif
+
 int main(void) {                 // -- QW
 
   ZTRACE("=== GAP9 MeZO (ZO) Training Harness ===\r\n");  // -- QW (ported from Siracusa)
@@ -410,6 +444,10 @@ int main(void) {                 // -- QW
          "(train==inference)\n");     // -- QW
 #endif                                // -- QW
 
+#if defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+  for (uint32_t wi = 0; wi < (uint32_t)TRAINING_NUM_WEIGHT_INPUTS; wi++) g_wchk0[wi] = wchk_hash(wi);  // RW
+  printf("[WSUM s=init] 0x%08x\r\n", (unsigned)wchk_all());                                            // RW
+#endif
   for (uint32_t update_step = 0; update_step < N_TRAIN_STEPS; update_step++) {  // -- QW
 
     uint32_t acc_bits = 0u;  // -- QW  raw bits of the FP accumulator (0 == 0.0f); FC never does FP
@@ -527,6 +565,10 @@ int main(void) {                 // -- QW
     ZTRACE("[PHASE] update (zo_update) DONE (%u cyc)\r\n", (unsigned)getCycles());  // -- QW
     g_opt_cycles_acc += getCycles();                            // -- QW
     perturb_eps_use_override = 0u;   // -- QW  restore neutral default
+#if defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+    if ((update_step + 1u) % ZO_WCHK_EVERY == 0u || update_step + 1u == (uint32_t)N_TRAIN_STEPS)        // RW
+      printf("[WSUM s=%u] 0x%08x\r\n", (unsigned)update_step, (unsigned)wchk_all());                   // RW
+#endif
 
 #if defined(DUMP_WEIGHTS) && defined(DUMP_STEP_LO) && defined(DUMP_STEP_HI)
     /* QW exp11_bitexact_SCE_verif: dump weights AFTER each update in the window
@@ -579,6 +621,18 @@ int main(void) {                 // -- QW
   pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);             // -- QW
 
   uint32_t loss_err_count = err_plus + err_minus;          // -- QW
+#if defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+  {                                                                                            // RW
+    uint32_t changed = 0;                                                                      // RW
+    for (uint32_t wi = 0; wi < (uint32_t)TRAINING_NUM_WEIGHT_INPUTS; wi++) changed += (wchk_hash(wi) != g_wchk0[wi]);
+    printf("[WCHK] changed %u/%u trainable tensors after %u updates\r\n", (unsigned)changed,      // RW
+           (unsigned)TRAINING_NUM_WEIGHT_INPUTS, (unsigned)N_TRAIN_STEPS);                     // RW
+    if (N_TRAIN_STEPS > 0 && changed == 0) {                                                   // RW
+      printf("[WCHK] FAIL: no trainable tensor changed -- the update did not run\r\n");        // RW
+      loss_err_count += 1u;                                                                    // RW
+    }                                                                                          // RW
+  }                                                                                            // RW
+#endif
   uint32_t total_checks = 2u * total_loss_checks;          // -- QW
   printf("Errors: %u out of %u\r\n", (unsigned)loss_err_count,  // -- QW
          (unsigned)total_checks);                          // -- QW
