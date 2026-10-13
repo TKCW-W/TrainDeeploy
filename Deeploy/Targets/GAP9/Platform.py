@@ -183,6 +183,11 @@ from Deeploy.Targets.NE16.DualPrep import NE16DualBiasLayer, NE16DualBiasParser,
 from Deeploy.Targets.NE16.Tiler import NE16DualBiasTilingReadyBindings, NE16DualPerturbEncodeTilingReadyBindings  # -- QW
 GAP9_NE16DualPerturbEncodeMapper = NodeMapper(NE16DualPerturbEncodeParser(), NE16DualPerturbEncodeTilingReadyBindings)  # -- QW
 GAP9_NE16DualBiasMapper = NodeMapper(NE16DualBiasParser(), NE16DualBiasTilingReadyBindings)  # -- QW
+# RW merge 2026-10-13: Qiwen's argmax-mask MaxPool backward (exp3) on GAP9 too, same PULP tiling-ready bindings.
+from Deeploy.Targets.PULPOpen.Tiler import PULPMaxPoolArgmaxTilingReadyBindings as _PULPMaxPoolArgmaxTRB, \
+    PULPMaxPoolGradMaskTilingReadyBindings as _PULPMaxPoolGradMaskTRB
+GAP9_MaxPoolArgmaxMapper = NodeMapper(MaxPool2DParser(), _PULPMaxPoolArgmaxTRB)
+GAP9_MaxPoolGradMaskMapper = NodeMapper(MaxPoolGradParser(), _PULPMaxPoolGradMaskTRB)
 
 # GAP9-specific mapping using ClDma
 GAP9Mapping = {
@@ -309,6 +314,10 @@ GAP9Mapping = {
         NE16DualPerturbEncodeLayer([GAP9_NE16DualPerturbEncodeMapper]),  # -- QW (exp6 task 2)
     'NE16DualBias':
         NE16DualBiasLayer([GAP9_NE16DualBiasMapper]),  # -- QW (exp6 task 2)
+    'MaxPoolArgmax':
+        MaxPoolLayer([GAP9_MaxPoolArgmaxMapper]),  # RW merge
+    'MaxPoolGradMask':
+        MaxPoolGradLayer([GAP9_MaxPoolGradMaskMapper]),  # RW merge
 }
 
 

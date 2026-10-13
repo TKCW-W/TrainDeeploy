@@ -75,6 +75,12 @@
 static void InitTrainingNetworkWrapper(void *args)  { (void)args; InitTrainingNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
 // RW: start the cluster core's own perf counter so --profileTiling's per-node getCycles() (read on the
 //     cluster) is not 0 on GAP9; the FC-side ResetTimer/StartTimer around the dispatch is unaffected.
+#ifdef TRAINING_TESTDATA_L3
+// RW merge 2026-10-13: devel's generator moves the baked windows/labels/initial weights to L3
+// (testinputs.h: LoadTestDataL3, cl_ram_malloc + load_file_to_ram on the cluster). Without this call
+// every testDataVector / testInitWeights pointer stays 0 and the copies below silently skip.
+static void LoadTestDataL3Wrapper(void *args) { (void)args; LoadTestDataL3(); }
+#endif
 static void RunTrainingNetworkWrapper(void *args)   { (void)args; ResetTimer(); StartTimer(); RunTrainingNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
 static void InitOptimizerNetworkWrapper(void *args) { (void)args; InitOptimizerNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
 static void RunOptimizerNetworkWrapper(void *args)  { (void)args; RunOptimizerNetwork(pi_core_id(), pi_cl_cluster_nb_cores()); }
@@ -302,6 +308,12 @@ int main(void) {                 // -- QW
   pi_cluster_task_stacks(&cluster_task, cluster_slave_stacks, SLAVESTACKSIZE);             // -- QW
   pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);    // -- QW
   ZTRACE("[PHASE] InitTrainingNetwork done\r\n");             // -- QW
+#ifdef TRAINING_TESTDATA_L3
+  pi_cluster_task(&cluster_task, LoadTestDataL3Wrapper, NULL);                            // RW merge
+  pi_cluster_task_stacks(&cluster_task, cluster_slave_stacks, SLAVESTACKSIZE);            // RW merge
+  pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);                                // RW merge
+  ZTRACE("[PHASE] LoadTestDataL3 done\r\n");                                             // RW merge
+#endif
 
   /* ------------------------------------------------------------------
    * Init optimizer network (zo_update). Shares the training weight
