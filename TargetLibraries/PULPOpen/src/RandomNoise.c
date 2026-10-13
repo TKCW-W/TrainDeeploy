@@ -353,9 +353,11 @@ void ApplyRademacherPerturbation(const float32_t *pweights,
     // -- QW
     const float32_t *src = pweights;                                          // -- QW
     long off = (long)((const char *)pweights_dest - (const char *)pweights);  // -- QW
-    float32_t tmp[128];                                                       // -- QW  only tiny overlapping tiles use this
-    if (off > 0 && off < 128) {                                              // -- QW
-        uint32_t n = size < 128u ? size : 128u;                              // -- QW
+    // RW 2026-10-13: was tmp[128] (512 B of every slave stack, the deepest frame of the ZO graph). The overlap
+    // only occurs for tiles < 32 elements (offset < 128 B), so a core's chunk never exceeds 32 elements.
+    float32_t tmp[32];                                                        // -- QW (RW: 128 -> 32)
+    if (off > 0 && off < 128 && size <= 32u) {                               // -- QW (RW: + size bound)
+        uint32_t n = size;                                                   // -- QW (RW: size <= 32)
         for (uint32_t k = 0; k < n; k++) tmp[k] = pweights[k];               // -- QW  read chunk into private temp
         pi_cl_team_barrier(0);                                               // -- QW  all reads done before any write
         src = tmp;                                                           // -- QW  perturb from the temp copy
@@ -411,6 +413,7 @@ void ApplySequentialRademacherPerturbation(const float32_t *__restrict__ pweight
     int8_t core_id = pi_core_id();
     int8_t log2Core = LOG2(NUM_CORES);
 
+#ifdef ZO_PERTURB_PERF  // RW 2026-10-13: 3 perf_stats_t + a 100 B label lived on every slave stack
     perf_stats_t perf_start, perf_end, perf_total;
 
     // Initialize and start performance counters (only core 0)
@@ -420,6 +423,7 @@ void ApplySequentialRademacherPerturbation(const float32_t *__restrict__ pweight
         perf_bench_read(&perf_start);
 
     }
+#endif
     uint32_t rng_state = (seed * 1664525u) + 1013904223u;
     if (dir == 0) epsilon *= -1.0f;
     uint32_t n_full = size & ~3u;
@@ -453,6 +457,7 @@ void ApplySequentialRademacherPerturbation(const float32_t *__restrict__ pweight
         pweights_dest[i] = pweights[i] + ((rng_state & 1u) ? epsilon : -epsilon);
     }
     
+#ifdef ZO_PERTURB_PERF
     if (core_id == 0) {
         perf_bench_stop();
         perf_bench_read(&perf_end);
@@ -463,6 +468,7 @@ void ApplySequentialRademacherPerturbation(const float32_t *__restrict__ pweight
                 seed, size);
         perf_bench_print(label, &perf_total);
     }
+#endif
 }
 
 void GenEggrollPerturbation(float32_t *__restrict__ p_dest,

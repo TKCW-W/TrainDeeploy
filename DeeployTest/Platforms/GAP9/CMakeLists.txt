@@ -112,8 +112,8 @@ if(MEZO_TRAINING)  # QW: MeZO (ZO) compile-time defines — parallel block along
     if(BN_FROZEN_STATS)  # QW: passthrough frozen-stat BN training -- QW
         target_compile_definitions(${ProjectId} PRIVATE BN_FROZEN_STATS)  # -- QW
     endif()  # -- QW
-    if(MEZO_STACKS_L1)  # RW: keep the cluster slave stacks in L1 (SDK default) instead of the L2 buffer
-        target_compile_definitions(${ProjectId} PRIVATE MEZO_STACKS_L1)
+    if(MEZO_STACKS_L2)  # RW: old behaviour -- cluster slave stacks in an L2 buffer (default: L1)
+        target_compile_definitions(${ProjectId} PRIVATE MEZO_STACKS_L2)
     endif()
 elseif(TRAINING)
     target_compile_definitions(${ProjectId} PRIVATE

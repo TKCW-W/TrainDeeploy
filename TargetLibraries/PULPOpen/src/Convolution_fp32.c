@@ -271,6 +271,7 @@ static inline void Conv2d_1ch_fp32_HWC_rows(const float32_t *in, const float32_t
   conv1ch_rows(&a);
 }
 
+/* RW 2026-10-13: previous channel-split version kept for reference (comment out, do not delete)
 void PULP_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
     const float32_t *__restrict__ pSrcA, uint32_t H, uint32_t W, uint32_t C,
     const float32_t *__restrict__ pSrcB, uint32_t F_total, uint32_t P,
@@ -410,6 +411,99 @@ void PULP_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
       }
     }
   }
+}
+*/
+
+// RW 2026-10-13: the im2col conv now splits OUTPUT PIXELS (flattened h*W_out + w) across the cores and each core
+// computes all F_total channels. The old output-channel split made every core rebuild the same im2col row for
+// every pixel (8x redundant gather), and left cores idle whenever a tile carried fewer than 8 channels (the
+// tiler cuts SpeechNet's F=8/16 convs to 1..16 channels per tile). Per output the dot product is unchanged
+// (k = 0..kernel_size-1 over the same im2col row), so results are bit-identical to the channel split.
+// The work is in a separate noinline function so the single-channel path (conv1ch_rows) does not stack its
+// frame on top of this one (slave stacks live in L1 and are sized to the deepest call chain).
+typedef struct {
+  const float32_t *in;
+  const float32_t *w;
+  const float32_t *bias;
+  float32_t *out;
+  float32_t *im2col;
+  int32_t H, W, C, F, P, Q, SP, SQ, pad_top, pad_left, W_out, p0, p1;
+} conv_im2col_args_t;
+
+static void __attribute__((noinline)) conv_im2col_pixels(const conv_im2col_args_t *a) {
+  const int32_t H = a->H, W = a->W, C = a->C, F = a->F, P = a->P, Q = a->Q, W_out = a->W_out;
+  const int32_t K = P * Q * C;
+  float32_t *col = a->im2col;
+  int32_t h_out = a->p0 / W_out, w_out = a->p0 % W_out;
+  for (int32_t pix = a->p0; pix < a->p1; pix++) {
+    const int32_t h_in0 = h_out * a->SP - a->pad_top;
+    const int32_t w_in0 = w_out * a->SQ - a->pad_left;
+    float32_t *dst = col;
+    for (int32_t p = 0; p < P; p++) {
+      const int32_t h_in = h_in0 + p;
+      for (int32_t q = 0; q < Q; q++) {
+        const int32_t w_in = w_in0 + q;
+        if (h_in >= 0 && h_in < H && w_in >= 0 && w_in < W) {
+          const float32_t *src = a->in + (h_in * W + w_in) * C;
+          for (int32_t c = 0; c < C; c++) dst[c] = src[c];
+        } else {
+          for (int32_t c = 0; c < C; c++) dst[c] = 0.0f;
+        }
+        dst += C;
+      }
+    }
+    float32_t *o = a->out + pix * F;
+    const float32_t *wf = a->w;
+    for (int32_t f = 0; f < F; f++) {
+      float32_t sum = 0.0f;
+      for (int32_t k = 0; k < K; k++) sum += col[k] * wf[k];
+      o[f] = a->bias ? sum + a->bias[f] : sum;
+      wf += K;
+    }
+    if (++w_out == W_out) {
+      w_out = 0;
+      h_out++;
+    }
+  }
+}
+
+void PULP_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
+    const float32_t *__restrict__ pSrcA, uint32_t H, uint32_t W, uint32_t C,
+    const float32_t *__restrict__ pSrcB, uint32_t F_total, uint32_t P,
+    uint32_t Q, uint32_t SP, uint32_t SQ,
+    const float32_t *__restrict__ pSrcBias, const bool has_bias,
+    float32_t *__restrict__ pDstC, uint32_t pad_top, uint32_t pad_bottom,
+    uint32_t pad_left, uint32_t pad_right,
+    float32_t *__restrict__ pContextBuffer) {
+  const uint32_t core_id = pi_core_id();
+  const uint32_t H_out = (H + pad_top + pad_bottom - P) / SP + 1;
+  const uint32_t W_out = (W + pad_left + pad_right - Q) / SQ + 1;
+  const float32_t *bias = has_bias ? pSrcBias : NULL;
+
+  if (C == 1) {
+    // single input channel: direct convolution, rows split across cores
+    uint32_t h_chunk = (H_out + NUM_CORES - 1) / NUM_CORES;
+    uint32_t h0 = MIN(h_chunk * core_id, H_out);
+    uint32_t h1 = MIN(h0 + h_chunk, H_out);
+    if (h0 < h1) {
+      Conv2d_1ch_fp32_HWC_rows(pSrcA, pSrcB, bias, pDstC, H, W, F_total, P, Q, SP, SQ, pad_top, pad_left, 0,
+                               F_total, h0, h1, W_out);
+    }
+    return;
+  }
+
+  const uint32_t n_pix = H_out * W_out;
+  const uint32_t chunk = (n_pix + NUM_CORES - 1) / NUM_CORES;
+  const uint32_t p0 = MIN(chunk * core_id, n_pix);
+  const uint32_t p1 = MIN(p0 + chunk, n_pix);
+  if (p0 >= p1) {
+    return;
+  }
+  conv_im2col_args_t a = {pSrcA, pSrcB, bias, pDstC, pContextBuffer + core_id * C * P * Q,
+                          (int32_t)H, (int32_t)W, (int32_t)C, (int32_t)F_total, (int32_t)P, (int32_t)Q,
+                          (int32_t)SP, (int32_t)SQ, (int32_t)pad_top, (int32_t)pad_left, (int32_t)W_out,
+                          (int32_t)p0, (int32_t)p1};
+  conv_im2col_pixels(&a);
 }
 
 // HWC im2col convolution against an int8 weight, dequantising inside the loop.

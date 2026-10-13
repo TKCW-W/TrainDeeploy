@@ -57,11 +57,13 @@ void PULP_BatchNormInternal_fp32(
        * exactly what inference uses, so training and inference are consistent. -- QW */
       mean = running_mean[c];
       inv_std = 1.0f / sqrtf(running_var[c] + epsilon);
+#ifdef BN_DEBUG_PRINT  // RW 2026-10-13: the float printf chain needs ~600 B of slave stack
       if (g_bn_debug && core_id == 0) { /* QW: dump what the frozen kernel reads per tile -- QW */
         printf("[BN_DBG] C=%u c=%d gamma=%f beta=%f rmean=%f rvar=%f inv_std=%f x0=%f\n",
                (unsigned)C, (int)c, gamma[c], beta[c], running_mean[c], running_var[c],
                inv_std, X[(0 * C + c) * N_hw]);
       }
+#endif
     } else {
       /* ── Compute batch mean ───────────────────────────────────────────── */
       mean = 0.0f;
@@ -99,11 +101,13 @@ void PULP_BatchNormInternal_fp32(
         y_nc[hw] = (x_nc[hw] - mean) * inv_std * g + b;
       }
     }
+#ifdef BN_DEBUG_PRINT
     if (g_bn_frozen_stats && g_bn_debug && core_id == 0) { /* QW: dump BN output for first channel -- QW */
       float32_t *y0 = Y + (0 * C + c) * N_hw;
       printf("[BN_OUT] C=%u c=%d N_hw=%u y[0]=%f y[1]=%f y[last]=%f\n",
              (unsigned)C, (int)c, (unsigned)N_hw, y0[0], y0[1], y0[N_hw - 1]);
     }
+#endif
   }
 }
 

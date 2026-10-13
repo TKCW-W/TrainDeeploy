@@ -122,7 +122,10 @@ static void RunOptimizerNetworkWrapper(void *args)  { (void)args; RunOptimizerNe
 
 #define MAINSTACKSIZE 12000      // -- QW
 #ifndef SLAVESTACKSIZE           // RW: overridable (-D SLAVESTACKSIZE=N), like deeploytraintest.c
-#define SLAVESTACKSIZE 3800      // -- QW
+// RW 2026-10-13: 768 (was 3800 -- QW). Worst-case slave call chain after the stack-diet kernels: ZO 352 B
+// (conv fork -> conv dispatcher -> conv1ch_rows), QZO 560 B (prebuilt pulp_nn_conv -> pulp_nn_matmul);
+// measured with scripts/stack_depth.py. 640 also runs but leaves only 80 B of margin.
+#define SLAVESTACKSIZE 768
 #endif
 
 // -- QW: relocate the cluster slave stacks from L1 to L2. GAP9's SDK only pi_cl_l1_malloc's
@@ -131,16 +134,16 @@ static void RunOptimizerNetworkWrapper(void *args)  { (void)args; RunOptimizerNe
 //    buffer via pi_cluster_task_stacks() makes the SDK skip that L1 malloc, freeing ~30KB back
 //    to L1 (usable -> ~123KB). Size = nb_cores(=pi_cl_cluster_nb_cores(), 9 on GAP9) *
 //    slave_stack_size; over-provision to 12 cores for safety. Lives in L2 (plain .bss). -- QW
-// RW 2026-10-13: -D MEZO_STACKS_L1=ON leaves the slave stacks to the SDK (pi_cl_l1_malloc, L1). The L2
-// relocation frees ~27 KB of L1 for the tiler but every stack access then pays L2 latency; on GAP9 the
-// int8 pulp-nn block-0 conv is 3.3x slower with L2 stacks (2.91M vs 0.89M cycles).
-#ifdef MEZO_STACKS_L1
+// RW 2026-10-13: slave stacks live in L1 (SDK pi_cl_l1_malloc) by default; with SLAVESTACKSIZE=768 they cost
+// ~7 KB of L1 instead of the ~30 KB that made Qiwen move them to L2. In L2 every spill pays L2 latency (the
+// prebuilt -Os pulp-nn conv was 4.6x slower). -D MEZO_STACKS_L2=ON restores the L2 buffer.
+#ifndef MEZO_STACKS_L2
 #define MEZO_SET_STACKS(t) ((t).slave_stack_size = SLAVESTACKSIZE)
 #else
 #define MEZO_SET_STACKS(t) pi_cluster_task_stacks(&(t), cluster_slave_stacks, SLAVESTACKSIZE)
 #endif
 #define N_STACK_CORES 12                                                  // -- QW
-#ifndef MEZO_STACKS_L1
+#ifdef MEZO_STACKS_L2
 static unsigned char cluster_slave_stacks[N_STACK_CORES * SLAVESTACKSIZE] // -- QW
     __attribute__((aligned(16)));                                         // -- QW
 #endif
@@ -304,7 +307,7 @@ int main(void) {                 // -- QW
   // L1; the slave stacks already live in L2 here, so with CC_STACK_SIZE=4096 SLAVESTACKSIZE=512 (the GAP9 CI
   // configuration) the tiler gets ~122 KB of L1 instead of ~110 KB.
 #ifndef CC_STACK_SIZE
-#define CC_STACK_SIZE 8192
+#define CC_STACK_SIZE 4096
 #endif
   conf.cc_stack_size = CC_STACK_SIZE;
   pi_open_from_conf(&cluster_dev, &conf);  // -- QW
