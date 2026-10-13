@@ -118,7 +118,9 @@ def main(tiling_enabled: bool = True, default_platform: str = 'Siracusa', defaul
     worker_id = os.environ.get('PYTEST_XDIST_WORKER', 'master')
     build_dir = str(base_dir / f'TEST_{platform.upper()}' / f'build_{worker_id}')
 
-    cmake_args = [f'-DNUM_CORES={args.cores}']
+    # RW 2026-10-13: pass SIMULATOR like deeployTrainingRunner. Without it '-s board' still configured the GAP9 SDK
+    # with sdk_gvsoc.config (semihosting printf): on the EVK the first printf traps and the app hangs.
+    cmake_args = [f'-DNUM_CORES={args.cores}', f'-DSIMULATOR={simulator}']
     if args.cmake:
         cmake_args.extend(args.cmake)
 
