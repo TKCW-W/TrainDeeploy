@@ -188,8 +188,12 @@ typedef struct {                 // -- QW
 } ZOUpdateCoeffArgs;             // -- QW
 
 static void ComputeZOUpdateCoeffOnCluster(void *args) {  // -- QW
-  if (pi_core_id() != 0)         // -- QW
-    return;                      // -- QW
+  // RW 2026-10-13: guard removed (kept as comment). pi_cluster_send_task_to_cl() runs this entry once, on the
+  // cluster controller, whose pi_core_id() is 8 on GAP9: the guard always fired, so (L+ - L-) was never
+  // accumulated (ZO update coefficient 0, weights never changed) and the loss comparison never ran (vacuous
+  // "Errors: 0"). Same bug as TrainDeeploy PR #71 / AI_AGENT result_check.md appendix B.
+  // if (pi_core_id() != 0)         // -- QW
+  //   return;                      // -- QW
   ZOUpdateCoeffArgs *a = (ZOUpdateCoeffArgs *)args;       // -- QW
   float acc; memcpy(&acc, &a->acc_bits, sizeof(acc));     // -- QW  reinterpret bits->float on cluster (has FPU)
   float denom = 2.0f * (float)ZO_EPS * (float)a->n_accum; // -- QW
@@ -209,8 +213,12 @@ typedef struct {                 // -- QW
 } ZODiffArgs;                    // -- QW
 
 static void AccumulateZODiffOnCluster(void *args) {  // -- QW
-  if (pi_core_id() != 0)         // -- QW
-    return;                      // -- QW
+  // RW 2026-10-13: guard removed (kept as comment). pi_cluster_send_task_to_cl() runs this entry once, on the
+  // cluster controller, whose pi_core_id() is 8 on GAP9: the guard always fired, so (L+ - L-) was never
+  // accumulated (ZO update coefficient 0, weights never changed) and the loss comparison never ran (vacuous
+  // "Errors: 0"). Same bug as TrainDeeploy PR #71 / AI_AGENT result_check.md appendix B.
+  // if (pi_core_id() != 0)         // -- QW
+  //   return;                      // -- QW
   ZODiffArgs *a = (ZODiffArgs *)args;                // -- QW
   float lp, lm;                                      // -- QW  reinterpret on cluster (has FPU)
   memcpy(&lp, &a->lp_bits, sizeof(lp));              // -- QW
@@ -232,8 +240,12 @@ typedef struct {                 // -- QW
 } ZOLossCompareArgs;             // -- QW
 
 static void CompareLossesOnCluster(void *args) {  // -- QW
-  if (pi_core_id() != 0)         // -- QW
-    return;                      // -- QW
+  // RW 2026-10-13: guard removed (kept as comment). pi_cluster_send_task_to_cl() runs this entry once, on the
+  // cluster controller, whose pi_core_id() is 8 on GAP9: the guard always fired, so (L+ - L-) was never
+  // accumulated (ZO update coefficient 0, weights never changed) and the loss comparison never ran (vacuous
+  // "Errors: 0"). Same bug as TrainDeeploy PR #71 / AI_AGENT result_check.md appendix B.
+  // if (pi_core_id() != 0)         // -- QW
+  //   return;                      // -- QW
   ZOLossCompareArgs *a = (ZOLossCompareArgs *)args;  // -- QW
   float tol = ZO_TOLERANCE_ABS;  // -- QW  read on cluster — has FPU
   uint32_t errors = 0;           // -- QW
