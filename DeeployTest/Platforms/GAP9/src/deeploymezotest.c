@@ -69,6 +69,13 @@
 #include "testinputs.h"         // -- QW
 #include "testoutputs.h"        // -- QW
 
+// RW 2026-10-13: ZO_QUIET (see ZTRACE below) -- print only mismatching / every 500th loss comparison
+#ifdef ZO_QUIET
+#define ZO_PRINT_CMP(i, n, bad) ((bad) || (i) % 500u == 0u || (i) + 1u == (n))
+#else
+#define ZO_PRINT_CMP(i, n, bad) 1
+#endif
+
 // -- QW: GAP9 pi_cluster_task expects a void(void*) entry; the generated network Init/Run
 //    fns are void(uint32_t,uint32_t). Wrap them, supplying core_id / n_cores from pmsis
 //    (mirrors the stock GAP9 deeploytest.c InitNetworkWrapper pattern). -- QW
@@ -253,6 +260,7 @@ static void CompareLossesOnCluster(void *args) {  // -- QW
     float diff = a->computed[i] - a->reference[i];  // -- QW
     if (diff < 0.0f)             // -- QW
       diff = -diff;              // -- QW
+    if (ZO_PRINT_CMP(i, a->n, diff > tol))  // RW: ZO_QUIET prints mismatches + every 500th only
     printf("  [%s %u] computed=%.6f  ref=%.6f  diff=%.6f  TOL=%.6f\r\n", a->tag, i,  // -- QW
            (double)a->computed[i], (double)a->reference[i], (double)diff,            // -- QW
            (double)tol);         // -- QW
@@ -271,7 +279,14 @@ static void CompareLossesOnCluster(void *args) {  // -- QW
  * otherwise buffered until main() returns, so a killed run shows nothing) -- QW */
 // -- QW: GAP9 links the lightweight pmsis printf (libpmsis_printf) — no newlib stdio, so
 //    fflush/stdout (_impure_ptr) are unavailable and not needed (pmsis printf flushes itself). -- QW
+// RW 2026-10-13: -D ZO_QUIET=ON silences the per-phase trace and prints only mismatching / every 500th loss
+// comparison. On the EVK the UART (115200 baud, ~11.5 KB/s) dominated a full round: ~8 trace lines per
+// forward pair plus 2 x 10,800 comparison lines is several MB; the 2700-step compute itself is ~5 min.
+#ifdef ZO_QUIET
+#define ZTRACE(...) do { } while (0)
+#else
 #define ZTRACE(...) do { printf(__VA_ARGS__); } while (0)
+#endif
 
 #ifdef DUMP_WEIGHTS
 /* QW: on-device ZO weight extraction (mirror of deeploytraintest.c dump_weights) - whole fn added by QW -- QW

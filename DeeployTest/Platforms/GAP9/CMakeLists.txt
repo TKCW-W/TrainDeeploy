@@ -117,6 +117,9 @@ if(MEZO_TRAINING)  # QW: MeZO (ZO) compile-time defines — parallel block along
     if(BN_FROZEN_STATS)  # QW: passthrough frozen-stat BN training -- QW
         target_compile_definitions(${ProjectId} PRIVATE BN_FROZEN_STATS)  # -- QW
     endif()  # -- QW
+    if(ZO_QUIET)  # RW: quiet UART for long on-board rounds
+        target_compile_definitions(${ProjectId} PRIVATE ZO_QUIET)
+    endif()
     if(MEZO_STACKS_L2)  # RW: old behaviour -- cluster slave stacks in an L2 buffer (default: L1)
         target_compile_definitions(${ProjectId} PRIVATE MEZO_STACKS_L2)
     endif()
