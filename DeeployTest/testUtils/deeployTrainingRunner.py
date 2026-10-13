@@ -23,7 +23,10 @@ from .core.paths import get_test_paths
 from .deeployRunner import DeeployRunnerArgumentParser, print_colored_result, print_configuration
 
 
-def main(tiling_enabled: bool = False, default_platform: str = 'Siracusa', default_simulator: str = 'gvsoc'):
+def main(tiling_enabled: bool = False,
+         default_platform: str = 'Siracusa',
+         default_simulator: str = 'gvsoc',
+         parser_setup_callback = None):
     """
     Build parser, parse args, create DeeployTestConfig, and run the training test.
 
@@ -35,6 +38,10 @@ def main(tiling_enabled: bool = False, default_platform: str = 'Siracusa', defau
         Platform used when -p is not given on the command line.
     default_simulator:
         Simulator used when -s is not given on the command line.
+    parser_setup_callback:
+        Optional callback to add platform-specific arguments to the parser
+        before parsing (receives the parser). GAP9 uses this to add
+        ``--convChannelsFirst`` (channels-first forward convs for MobileNetV1).
     """
 
     parser = DeeployRunnerArgumentParser(tiling_arguments = tiling_enabled, platform_required = False)
@@ -73,6 +80,10 @@ def main(tiling_enabled: bool = False, default_platform: str = 'Siracusa', defau
         default = None,
         help = 'Absolute loss tolerance for pass/fail comparison (default: auto from generateTrainingNetwork.py)\n')
 
+    # Platform-specific arguments (e.g. GAP9's --convChannelsFirst).
+    if parser_setup_callback is not None:
+        parser_setup_callback(parser)
+
     args = parser.parse_args()
 
     platform = default_platform
@@ -86,9 +97,21 @@ def main(tiling_enabled: bool = False, default_platform: str = 'Siracusa', defau
     worker_id = os.environ.get('PYTEST_XDIST_WORKER', 'master')
     build_dir = str(base_dir / f'TEST_{platform.upper()}' / f'build_{worker_id}')
 
-    cmake_args = [f'-DNUM_CORES={args.cores}']
+    cmake_args = [f'-DNUM_CORES={args.cores}', f'-DSIMULATOR={simulator}']
     if args.cmake:
         cmake_args.extend(args.cmake)
+
+    # Mirror the inference power-collection wiring: --powerMeasurement ->
+    # -DPOWER_MEASUREMENT=ON compiles the GPIO-89 trigger in deeploytraintest.c
+    # around the training loop. Only meaningful with -s board.
+    if getattr(args, 'powerMeasurement', False):
+        cmake_args.append('-DPOWER_MEASUREMENT=ON')
+        if hasattr(args, 'freqFC'):
+            cmake_args.append(f'-DFREQ_FC={args.freqFC}')
+        if hasattr(args, 'freqCL'):
+            cmake_args.append(f'-DFREQ_CL={args.freqCL}')
+        if hasattr(args, 'freqPE'):
+            cmake_args.append(f'-DFREQ_PE={args.freqPE}')
 
     gen_args = [f'--cores={args.cores}']
     if args.tolerance is not None:
@@ -97,6 +120,14 @@ def main(tiling_enabled: bool = False, default_platform: str = 'Siracusa', defau
         gen_args.extend(['--input-type-map'] + list(args.input_type_map))
     if args.input_offset_map:
         gen_args.extend(['--input-offset-map'] + list(args.input_offset_map))
+    if getattr(args, 'convChannelsFirst', False):
+        gen_args.append('--convChannelsFirst')
+    if getattr(args, 'identitySchedule', False):
+        gen_args.append('--identitySchedule')
+    if getattr(args, 'recomputeSchedule', None):
+        gen_args.append(f'--recomputeSchedule={args.recomputeSchedule}')
+    if getattr(args, 'promoteToL2FetchBytes', None):
+        gen_args.append(f'--promoteToL2FetchBytes={args.promoteToL2FetchBytes}')
 
     if tiling_enabled:
         if getattr(args, 'defaultMemLevel', None):
@@ -119,8 +150,14 @@ def main(tiling_enabled: bool = False, default_platform: str = 'Siracusa', defau
             gen_args.append('--promoteToL2')
             gen_args.append(f'--promoteToL2Strategy={args.promoteToL2Strategy}')
             gen_args.append('--promoteToL2IncludeActivations')
-            gen_args.append('--promoteToL2MaxBufferBytes=0')
+            _maxBuf = getattr(args, 'promoteToL2MaxBufferBytes', None)
+            gen_args.append(f'--promoteToL2MaxBufferBytes={0 if _maxBuf is None else _maxBuf}')
+            _minBuf = getattr(args, 'promoteToL2MinBufferBytes', None)
+            if _minBuf is not None:
+                gen_args.append(f'--promoteToL2MinBufferBytes={_minBuf}')
             gen_args.append(f'--promoteToL2Headroom={args.promoteToL2Headroom}')
+        if getattr(args, 'doublebuffer', False):
+            gen_args.append('--doublebuffer')
 
     config = DeeployTestConfig(
         test_name = test_name,

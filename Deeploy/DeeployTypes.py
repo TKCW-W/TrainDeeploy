@@ -979,8 +979,12 @@ class NetworkContext():
             Returns the name of the newly registed ConstantBuffer
 
         """
-        assert len(constant.outputs) <= 1, f"Constant {constant.name} has more than one output"
-
+        # A ConstantBuffer is global and read-only, so several nodes reading one is
+        # sound and needs no copy. Requiring a single consumer blocked every graph
+        # where a frozen weight is read twice: a quantised weight reaching both the
+        # forward MatMul and its backward Gemm, and a transposed weight shared the
+        # same way after constant folding. Duplicating to satisfy the assertion is
+        # not free either, since it charges the full constant again per consumer.
         name = name if name is not None else constant.name
 
         # LMACAN: The shape needs to be copied into a tuple for pickling to work. Don't ask me why..
@@ -2799,7 +2803,39 @@ class NetworkContainer():
 
         callStack = ''
 
+        # Power-measurement aid (compile-time gated). Emit a GPIO "notch" at the
+        # forward->backward boundary of a TRAINING graph so an external power
+        # monitor (PPK2) resolves forward and backward as separate power peaks.
+        # The boundary is the first gradient node ("...Grad...") that follows the
+        # loss node; only training graphs contain that pattern, so inference and
+        # optimizer networks emit nothing. The C is wrapped in
+        # #ifdef POWER_MEASUREMENT, so non-power builds are byte-for-byte
+        # unchanged. Cluster core 0 (the network-function orchestrator) drives
+        # GPIO 89; GPIOs is defined by the training harness (deeploytraintest.c).
+        # Board latency runs build with POWER_MEASUREMENT too, and the busy wait
+        # below costs ~2.6 M cycles per step, so the marker is opt-in (local change,
+        # same as the §2.4 board measurements).
+        fwdBwdMarker = ("{\n"
+                        "#ifdef POWER_FWDBWD_MARK\n"
+                        "    extern unsigned int GPIOs;\n"
+                        "    pi_gpio_pin_write(GPIOs, 0);\n"
+                        "    for (volatile int _fbm = 0; _fbm < 200000; _fbm++) {\n"
+                        "      __asm__ volatile(\"nop\");\n"
+                        "    }\n"
+                        "    pi_gpio_pin_write(GPIOs, 1);\n"
+                        "#endif\n"
+                        "}\n")
+        seenLoss = False
+        markerEmitted = False
+
         for key, node in self.layerBinding.items():
+            op = getattr(getattr(node, "node", None), "op", "") or ""
+            if (not markerEmitted) and seenLoss and ("Grad" in op):
+                callStack += fwdBwdMarker
+                markerEmitted = True
+            if ("Loss" in op) and ("Grad" not in op):
+                seenLoss = True
+
             self.ctxt, code = node.generate(self.ctxt)
 
             sections = reduce(lambda a, b: a + b, code, [])
@@ -3441,6 +3477,15 @@ class NetworkDeployer(NetworkContainer):
 
         log.debug(" - Constant Folding")
         self._foldConstants(self.graph)
+
+        # Folding can hand a single constant to several consumers: a weight reached
+        # through Constant -> Transpose -> Variable collapses to one Constant, and a
+        # training graph has the forward MatMul and the backward Gemm both reading it.
+        # Duplication ran before the fold, so nothing splits that, and hoistConstant
+        # then asserts. Run it again; it only touches tensors with more than one
+        # consumer, so it is a no-op when the fold introduced none.
+        log.debug(" - Duplicate Constants (post-fold)")
+        self._duplicateConstants(self.graph)
 
         log.info(f"> Export State to {_middlewarePreLoweringFilename}[.onnx|.pkl]")
         self.exportDeeployState(self.deeployStateDir, _middlewarePreLoweringFilename)

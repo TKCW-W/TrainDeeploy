@@ -15,12 +15,12 @@ from Deeploy.Targets.Generic.Bindings import BasicGEMMBindings, BasicPad1DBindin
     BasicRQIntegerDivBinding
 from Deeploy.Targets.Generic.Layers import AddLayer, AveragePoolGradLayer, AveragePoolLayer, \
     BatchNormalizationGradLayer, BatchNormInternalLayer, ConcatLayer, ConvGradBLayer, ConvGradWLayer, ConvGradXLayer, \
-    ConvLayer, GatherLayer, GELUGradLayer, GELULayer, GEMMLayer, GlobalAveragePoolGradLayer, GlobalAveragePoolLayer, \
+    ConvLayer, GatherLayer, GELUGradLayer, GELULayer, GlobalAveragePoolGradLayer, GlobalAveragePoolLayer, \
     InPlaceAccumulatorV2Layer, PerturbRademacherLayer, LayerNormGradLayer, LayerNormLayer, MatMulLayer, MaxPoolGradLayer, MaxPoolLayer, \
-    MSELossGradLayer, MSELossLayer, MulLayer, PadLayer, QuantLayer, ReduceMeanLayer, ReduceSumLayer, ReluGradLayer, \
-    ReluLayer, RequantShiftLayer, ReshapeLayer, RQIntegerDivLayer, RQSiGELULayer, RQSiHardswishLayer, SGDLayer, \
-    SliceLayer, SoftmaxCrossEntropyLossGradLayer, SoftmaxCrossEntropyLossLayer, SoftmaxGradLayer, SoftmaxLayer, \
-    TransposeLayer, iHardswishLayer, iRMSNormLayer
+    MSELossGradLayer, MSELossLayer, PadLayer, QuantLayer, ReduceMeanLayer, ReduceSumLayer, ReluGradLayer, ReluLayer, \
+    RequantShiftLayer, ReshapeLayer, RQIntegerDivLayer, RQSiGELULayer, RQSiHardswishLayer, SGDLayer, SliceLayer, \
+    SoftmaxCrossEntropyLossGradLayer, SoftmaxCrossEntropyLossLayer, SoftmaxGradLayer, SoftmaxLayer, TransposeLayer, \
+    iHardswishLayer, iRMSNormLayer
 from Deeploy.Targets.Generic.Parsers import AddParser, AveragePool2DParser, BatchNormalizationGradParser, \
     BatchNormInternalParser, ConcatParser, Conv2DGradBParser, DequantParser, FlattenParser, GatherParser, \
     GELUGradParser, GELUParser, GEMMParser, GlobalAveragePoolGradParser, GlobalAveragePoolParser, \
@@ -34,9 +34,9 @@ from Deeploy.Targets.Generic.Templates import AllocateTemplate as BasicAllocateT
 from Deeploy.Targets.Generic.TopologyOptimizationPasses.Passes import DequantPatternPass, IntegerDivRequantMergePass, \
     MergeConstAddAndRequantPass, MergeTrueIntegerDivRequantShiftPass, QuantPatternPass, RQSSplitPass, \
     SkipEmptyConcatPass, SkipUnityRequantPass, iGELURequantMergePass, iHardswishRequantMergePass
-from Deeploy.Targets.PULPOpen.Bindings import BasicDequantBindings, BasicQuantBindings, PULPDMASliceBindings, \
-    PULPDWConv1DBinding
-from Deeploy.Targets.PULPOpen.Layers import PULPRQSConvLayer, PULPRQSGEMMLayer
+from Deeploy.Targets.PULPOpen.Bindings import BasicQuantBindings, PULPDMASliceBindings, PULPDWConv1DBinding
+from Deeploy.Targets.PULPOpen.Layers import PULPAddLayer, PULPGEMMLayer, PULPMulLayer, PULPRQSConvLayer, \
+    PULPRQSGEMMLayer
 from Deeploy.Targets.PULPOpen.Parsers import PULPConv1DParser, PULPConv2DParser, PULPConvGradW2DParser, \
     PULPConvGradX2DParser, PULPDWConv1DParser, PULPDWConv2DParser, PULPDWConvGradW2DParser, PULPDWConvGradX2DParser, \
     PULPFPConv2DParser, PULPFPDWConv2DParser, PULPGEMMParser, PULPMatrixVecParser, PULPPWConvGradW2DParser, \
@@ -46,25 +46,27 @@ from Deeploy.Targets.PULPOpen.Tiler import PULPAddTilingReadyBindings, PULPAvera
     PULPAveragePoolGrad2DTilingReadyBindings, PULPBatchNormalizationGradTilingReadyBindings, \
     PULPBatchNormInternalTilingReadyBindings, PULPConcatTilingReadyBindings, PULPConv2DTilingReadyBindings, \
     PULPConvGradBTilingReadyBindings, PULPConvGradW2DTilingReadyBindings, PULPConvGradX2DTilingReadyBindings, \
-    PULPDWConv2DTilingReadyBindings, PULPDWConvGradW2DTilingReadyBindings, PULPDWConvGradX2DTilingReadyBindings, \
-    PULPFlattenTilingReadyBindings, PULPFPGELUGradTilingReadyBindings, PULPFPGELUTilingReadyBindings, \
-    PULPFPGEMMTilingReadyBindings, PULPGatherTilingReadyBindings, PULPGlobalAveragePool2DTilingReadyBindings, \
-    PULPGlobalAveragePoolGrad2DTilingReadyBindings, PULPiHardswishTilingReadyBindings, \
-    PULPInPlaceAccumulatorV2TilingReadyBindings, PULPPerturbRademacherTilingReadyBindings, PULPiRMSNormTilingReadyBindings, PULPiRQSGELUTilingReadyBindings, \
-    PULPLayernormGradTilingReadyBindings, PULPLayernormTilingReadyBindings, PULPMatMulTilingReadyBindings, \
-    PULPMaxPool1DTilingReadyBindings, PULPMaxPool2DTilingReadyBindings, PULPMaxPoolGrad2DTilingReadyBindings, \
-    PULPMaxPoolArgmaxTilingReadyBindings, PULPMaxPoolGradMaskTilingReadyBindings, \
-    PULPMSELossGradTilingReadyBindings, PULPMSELossTilingReadyBindings, PULPMulTilingReadyBindings, \
-    PULPPWConvGradW2DTilingReadyBindings, PULPPWConvGradX2DTilingReadyBindings, PULPReduceMeanTilingReadyBindings, \
-    PULPReduceSumTilingReadyBindings, PULPReluGradTilingReadyBindings, PULPReluTilingReadyBindings, \
-    PULPRQAddTilingReadyBindings, PULPRQSConv1DTilingReadyBindings, PULPRQSConv2DTilingReadyBindings, \
-    PULPRQSDWConv2DTilingReadyBindings, PULPRQSGEMMTilingReadyBindings, PULPRQSiHardswishTilingReadyBindings, \
-    PULPRQSMatrixVecTilingReadyBindings, PULPRQSTallGEMMTilingReadyBindings, PULPRQSTilingReadyBindings, \
-    PULPSGDTilingReadyBindings, PULPSliceTilingReadyBindings, PULPSoftmaxCrossEntropyGradTilingReadyBindings, \
-    PULPSoftmaxCrossEntropyTilingReadyBindings, PULPSoftmaxGradTilingReadyBindings, PULPSoftmaxTilingReadyBindings, \
-    PULPTransposeTilingReadyBindings, PULPUniformRQSTilingReadyBindings
-from Deeploy.Targets.PULPOpen.TopologyOptimizationPasses.Passes import PULPAddRequantMergePass, \
-    PULPConvRequantMergePass, PULPGEMMRequantMergePass, PULPMatMulRequantMergePass
+    PULPDequantTilingReadyBindings, PULPDWConv2DTilingReadyBindings, PULPDWConvGradW2DTilingReadyBindings, \
+    PULPDWConvGradX2DTilingReadyBindings, PULPFlattenTilingReadyBindings, PULPFPGELUGradTilingReadyBindings, \
+    PULPFPGELUTilingReadyBindings, PULPFPGEMMTilingReadyBindings, PULPGatherTilingReadyBindings, \
+    PULPGlobalAveragePool2DTilingReadyBindings, PULPGlobalAveragePoolGrad2DTilingReadyBindings, \
+    PULPiHardswishTilingReadyBindings, PULPInPlaceAccumulatorV2TilingReadyBindings, PULPPerturbRademacherTilingReadyBindings, PULPiRMSNormTilingReadyBindings, \
+    PULPiRQSGELUTilingReadyBindings, PULPLayernormGradTilingReadyBindings, PULPLayernormTilingReadyBindings, \
+    PULPMatMulTilingReadyBindings, PULPMaxPool1DTilingReadyBindings, PULPMaxPool2DTilingReadyBindings, \
+    PULPMaxPoolGrad2DTilingReadyBindings, PULPMaxPoolArgmaxTilingReadyBindings, \
+    PULPMaxPoolGradMaskTilingReadyBindings, PULPMSELossGradTilingReadyBindings, PULPMSELossTilingReadyBindings, \
+    PULPMulTilingReadyBindings, PULPPWConvGradW2DTilingReadyBindings, PULPPWConvGradX2DTilingReadyBindings, \
+    PULPReduceMeanTilingReadyBindings, PULPReduceSumTilingReadyBindings, PULPReluGradTilingReadyBindings, \
+    PULPReluTilingReadyBindings, PULPRQAddTilingReadyBindings, PULPRQSConv1DTilingReadyBindings, \
+    PULPRQSConv2DTilingReadyBindings, PULPRQSDWConv2DTilingReadyBindings, PULPRQSGEMMTilingReadyBindings, \
+    PULPRQSiHardswishTilingReadyBindings, PULPRQSMatrixVecTilingReadyBindings, PULPRQSTallGEMMTilingReadyBindings, \
+    PULPRQSTilingReadyBindings, PULPSGDTilingReadyBindings, PULPSliceTilingReadyBindings, \
+    PULPSoftmaxCrossEntropyGradTilingReadyBindings, PULPSoftmaxCrossEntropyTilingReadyBindings, \
+    PULPSoftmaxGradTilingReadyBindings, PULPSoftmaxTilingReadyBindings, PULPTransposeTilingReadyBindings, \
+    PULPUniformRQSTilingReadyBindings
+from Deeploy.Targets.PULPOpen.TopologyOptimizationPasses.Passes import FoldActivationTransposeIntoGemmPass, \
+    FoldDequantIntoMatMulPass, MaxPoolGradReadInputPass, PULPAddRequantMergePass, PULPConvRequantMergePass, \
+    PULPGEMMRequantMergePass, PULPMatMulRequantMergePass, TransposeGemmSquashPass
 from Deeploy.Targets.PULPOpen.TopologyOptimizationPasses.SplitConvGradPass import SplitConvGradPass
 
 RQAddMapper = NodeMapper(RQAddParser(), PULPRQAddTilingReadyBindings)
@@ -175,7 +177,7 @@ PULPMapping = {
     'RequantizedConv': PULPRQSConvLayer([Conv2DMapper, DWConv2DMapper, Conv1DMapper, DWConv1DMapper]),
     'RequantizedDualConv': _PULPDualConvLayer([DualConv2DMapper]),  # -- QW (dual_pass_fusion exp5)
     'RequantizedGemm': PULPRQSGEMMLayer([MatrixVecMapper, TallGEMMMapper, GEMMMapper]),
-    'Gemm': GEMMLayer([FloatGEMMMapper, GEMMDequantMapper]),
+    'Gemm': PULPGEMMLayer([FloatGEMMMapper, GEMMDequantMapper]),
     'Gelu': GELULayer([GELUMapper]),
     'GeluGrad': GELUGradLayer([GELUGradMapper]),
     'LayerNormalization': LayerNormLayer([LayerNormMapper]),
@@ -201,10 +203,10 @@ PULPMapping = {
     'ReduceMean': ReduceMeanLayer([ReduceMeanMapper]),
     'ReduceSum': ReduceSumLayer([ReduceSumMapper]),
     'RequantShift': RequantShiftLayer([UniformRequantShiftMapper, RequantShiftMapper]),
-    'Add': AddLayer([AddMapper]),
+    'Add': PULPAddLayer([AddMapper]),
     'Flatten': ReshapeLayer([FlattenMapper]),
     'Gather': GatherLayer([GatherMapper]),
-    'Mul': MulLayer([MulMapper]),
+    'Mul': PULPMulLayer([MulMapper]),
     'Pad': PadLayer([Pad1DMapper, Pad2DMapper]),
     'Relu': ReluLayer([ReluMapper]),
     'ReluGrad': ReluGradLayer([ReluGradMapper]),
@@ -299,28 +301,39 @@ class PULPStructBuffer(StructBuffer):
     deallocTemplate = NodeTemplate("")
 
 
-PULPOptimizer = TopologyOptimizer([
-    SplitConvGradPass(),
-    QuantPatternPass(),
-    DequantPatternPass(),
-    SkipEmptyConcatPass(),
-    SkipUnityRequantPass(previous_op_regex = "Concat", num_inputs = 2),
-    SkipUnityRequantPass(previous_op_regex = "Reshape|Transpose", num_inputs = 1),
-    SkipUnityRequantPass(previous_op_regex = "Reshape|Transpose", num_inputs = 1),
-    RQSSplitPass(),
-    MergeTrueIntegerDivRequantShiftPass(),
-    IntegerDivRequantMergePass(),
-    iGELURequantMergePass(),
-    iHardswishRequantMergePass(),
-    PULPConvRequantMergePass(),
-    MergeConstAddAndRequantPass(),
-    PULPGEMMRequantMergePass(),
-    PULPMatMulRequantMergePass(),
-    PULPAddRequantMergePass(),
-    RemoveEmptyConvBiasPass(),
-    RemoveOnlySingletonReduceMeanPass(),
-],
-                                  name = "PULPOptimizer")
+PULPOptimizer = TopologyOptimizer(
+    [
+        SplitConvGradPass(),
+        MaxPoolGradReadInputPass(),
+        TransposeGemmSquashPass(),
+        # The mirror case: an ACTIVATION transposed only to be a Gemm's B operand.
+        # Runs next to the weight version because both are the same identity read in
+        # opposite directions, and neither needs anything new from the kernel.
+        FoldActivationTransposeIntoGemmPass(),
+        QuantPatternPass(),
+        DequantPatternPass(),
+        # Fold a weight's Dequant into the matmul that reads it, so the dequantised
+        # weight is never materialised. Placed straight after DequantPatternPass, which
+        # is what normalises the Dequant nodes this matches on.
+        FoldDequantIntoMatMulPass(),
+        SkipEmptyConcatPass(),
+        SkipUnityRequantPass(previous_op_regex = "Concat", num_inputs = 2),
+        SkipUnityRequantPass(previous_op_regex = "Reshape|Transpose", num_inputs = 1),
+        SkipUnityRequantPass(previous_op_regex = "Reshape|Transpose", num_inputs = 1),
+        RQSSplitPass(),
+        MergeTrueIntegerDivRequantShiftPass(),
+        IntegerDivRequantMergePass(),
+        iGELURequantMergePass(),
+        iHardswishRequantMergePass(),
+        PULPConvRequantMergePass(),
+        MergeConstAddAndRequantPass(),
+        PULPGEMMRequantMergePass(),
+        PULPMatMulRequantMergePass(),
+        PULPAddRequantMergePass(),
+        RemoveEmptyConvBiasPass(),
+        RemoveOnlySingletonReduceMeanPass(),
+    ],
+    name = "PULPOptimizer")
 
 # SCHEREMO: stdint is included before pulp_nn_kernels.h because it is supposed to be included in there, but isn't...
 _includeList = [

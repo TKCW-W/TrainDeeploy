@@ -16,6 +16,7 @@ This file contains the changelog for the Deeploy project. The changelog is divid
 - Use Pre-Commit in CI [#159](https://github.com/pulp-platform/Deeploy/pull/159)
 - Deeploy-GAP9 Platform [#143](https://github.com/pulp-platform/Deeploy/pull/143)
 - Update CLI interface Across Project, Fix Tutorial, and Remove Legacy Test [#157](https://github.com/pulp-platform/Deeploy/pull/157)
+- Fix GAP9 L3 Board Tests: readfs Flash Ordering and Duplicate Input Data [#196](https://github.com/pulp-platform/Deeploy/pull/196)
 
 ### Added
 - Add many missing docstrings
@@ -40,6 +41,7 @@ This file contains the changelog for the Deeploy project. The changelog is divid
 - PULP-NN moved to TargetLibraries third-party folder
 - Aligned CLI commands across the project
 - Added @runwangdl as a code owner
+- Skip emitting duplicate `testInputVector` data for inputs placed in L3 (loaded at runtime from the readfs hex instead), reducing test binary size
 
 ### Fixed
 - Add missing `shell: bash` directive to CI cache generation steps to ensure correct shell execution
@@ -51,6 +53,7 @@ This file contains the changelog for the Deeploy project. The changelog is divid
 - Fix test paths in Deeploy 101 tutorial
 - Fix tiling variable replacement corrupting static arrays by changing pointer update from value copy to address reassignment
 - Reduce RunNetwork stack usage by scoping per-layer variables with braces and moving tileIdxPtr allocation into per-layer execution blocks
+- Fix invalid escape sequence python error in DeeployTypes.py: appearing when using pytest to launch regressions
 - [SpeechNet] [TODO: verify] Fix FloatMaxPool PULPOpen template x/y dimension order, which produced wrong logits on asymmetric pools (SpeechNet inference 9/9 errors → 0/9, bit-exact)
 - [SpeechNet] [TODO: verify] Fix NCHW→NHWC lowering to transpose MaxPoolGrad's forward-input X (`inputs[1]`), correcting the backward-pass layout (per-step fine-tuning drift 0.025 → ~1e-6)
 - [SpeechNet] [TODO: verify] Pass `num_cores` correctly so the Im2Col buffer is allocated at the right size in the test runner

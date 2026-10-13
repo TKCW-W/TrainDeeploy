@@ -6,9 +6,14 @@
 name: CI • GAP9
 
 "on":
-  # Auto-trigger disabled in TrainDeeploy fork: GAP9 has no training
-  # pytest jobs yet (only kernels / models). Re-enable by restoring
-  # the push: / pull_request: blocks once a training marker is wired in.
+  push:
+    branches:
+      - main
+      - devel
+  pull_request:
+    branches:
+      - main
+      - devel
   workflow_dispatch:
     inputs:
       docker_image_deeploy:
@@ -42,3 +47,78 @@ jobs:
       runner: ${{ needs.select-env.outputs.runner }}
       docker-image: ${{ needs.select-env.outputs.image }}
       pytest-marker: "models"
+
+  gap9-train-kernel:
+    needs: select-env
+    uses: ./.github/workflows/_runner-gap9.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-marker: "train_kernel"
+
+  gap9-training:
+    needs: select-env
+    uses: ./.github/workflows/_runner-gap9.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-marker: "training"
+
+  # On-chip training: weights and activations stay in L2, nothing spills to L3.
+  # Without this job the L2 training entries are configured but never executed.
+  gap9-training-tiled-l2-singlebuffer:
+    needs: select-env
+    uses: ./.github/workflows/_runner-gap9-tiled.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-markers: "gap9_tiled and training and singlebuffer and l2"
+
+  gap9-training-tiled-l3-singlebuffer:
+    needs: select-env
+    uses: ./.github/workflows/_runner-gap9-tiled.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-markers: "gap9_tiled and training and singlebuffer and l3 and not recompute"
+
+  # Gradient-checkpointed training: the same models and budgets as the singlebuffer
+  # job, but replaying a solved recompute schedule so checkpointed activations are
+  # regenerated before the backward pass rather than held live. Its own job so it
+  # does not stretch the singlebuffer job's runtime and a failure is attributable.
+  gap9-training-tiled-l3-recompute:
+    needs: select-env
+    uses: ./.github/workflows/_runner-gap9-tiled.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-markers: "gap9_tiled and training and l3 and recompute"
+
+  # L3 double-buffered training (CCT) — promote+DB handled by its own job below
+  gap9-training-tiled-l3-doublebuffer:
+    needs: select-env
+    uses: ./.github/workflows/_runner-gap9-tiled.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-markers: "gap9_tiled and training and doublebuffer and l3 and not promote"
+
+  # L3 training + PromoteTensorsToL2, singlebuffer (CCT)
+  gap9-training-tiled-promote-singlebuffer:
+    needs: select-env
+    uses: ./.github/workflows/_runner-gap9-tiled.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-markers: "gap9_tiled and promote and training and singlebuffer"
+
+  # L3 training + PromoteTensorsToL2 + double-buffering combined. This is the
+  # best-latency deployment of Autoencoder, CCT and MobileNetV1 (traffic-per-peak
+  # with measured Q(t), per-model L2 budget; see L3_DOUBLEBUFFER_TRAINING_PROMOTE_MODELS).
+  gap9-training-tiled-promote-doublebuffer:
+    needs: select-env
+    uses: ./.github/workflows/_runner-gap9-tiled.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-markers: "gap9_tiled and promote and training and doublebuffer"

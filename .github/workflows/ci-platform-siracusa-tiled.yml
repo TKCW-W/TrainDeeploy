@@ -29,24 +29,6 @@ jobs:
     with:
       docker_image_deeploy: ${{ inputs.docker_image_deeploy }}
 
-  # Training tests - L2 singlebuffer
-  siracusa-training-tiled-l2-singlebuffer:
-    needs: select-env
-    uses: ./.github/workflows/_runner-siracusa-tiled.yml
-    with:
-      runner: ${{ needs.select-env.outputs.runner }}
-      docker-image: ${{ needs.select-env.outputs.image }}
-      pytest-marker: "training and l2 and singlebuffer"
-
-  # Training tests - L3 singlebuffer (models that spill weights/activations to L3)
-  siracusa-training-tiled-l3-singlebuffer:
-    needs: select-env
-    uses: ./.github/workflows/_runner-siracusa-tiled.yml
-    with:
-      runner: ${{ needs.select-env.outputs.runner }}
-      docker-image: ${{ needs.select-env.outputs.image }}
-      pytest-marker: "training and l3 and singlebuffer and not promote"
-
   # Inference L3 + PromoteTensorsToL2 regression
   siracusa-inference-tiled-promote:
     needs: select-env

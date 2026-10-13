@@ -175,12 +175,14 @@ class DeeployRunnerArgumentParser(argparse.ArgumentParser):
             self.add_argument('--promoteToL2',
                               action = 'store_true',
                               help = 'Promote selected L3 tensors to L2 (requires --defaultMemLevel L3)\n')
-            self.add_argument(
-                '--promoteToL2Strategy',
-                type = str,
-                default = 'cycle-aware',
-                choices = ['cycle-aware', 'greedy-score', 'knapsack-ratio', 'smallest', 'largest', 'random'],
-                help = 'Promotion selection strategy. Default: cycle-aware\n')
+            self.add_argument('--promoteToL2Strategy',
+                              type = str,
+                              default = 'cycle-aware',
+                              choices = [
+                                  'traffic-per-peak', 'cycle-aware', 'greedy-score', 'knapsack-ratio', 'smallest',
+                                  'largest', 'random'
+                              ],
+                              help = 'Promotion selection strategy. Default: cycle-aware\n')
             self.add_argument('--promoteToL2Headroom',
                               type = int,
                               default = 131072,
@@ -243,6 +245,19 @@ def create_config_from_args(args: argparse.Namespace,
         gen_args_list.append("--input-offset-map")
         gen_args_list.extend(args.input_offset_map)
 
+    # Forward the core count to the untiled code generator (generateNetwork.py),
+    # which defaults to --cores=1. It sizes per-core scratch buffers (e.g. the
+    # conv im2col buffer = n_cores * ch_im_in * Hk * Wk) for a single core, but
+    # the build sets -DNUM_CORES from args.cores and the kernel forks over all
+    # those cores, each writing its own scratch region -> cores 1..N-1 write past
+    # the under-sized buffer and corrupt the L2 heap (crashes on real inputs,
+    # survives on small random ones). The tiled generator (testMVP.py) already
+    # sizes for the right core count, so only the untiled path needs this.
+    if not tiling:
+        _cores = getattr(args, 'cores', None) or getattr(args, 'num_cores', None)
+        if _cores:
+            gen_args_list.append(f"--cores={_cores}")
+
     if tiling:
         if hasattr(args, 'defaultMemLevel') and args.defaultMemLevel:
             gen_args_list.append(f"--defaultMemLevel={args.defaultMemLevel}")
@@ -290,6 +305,9 @@ def create_config_from_args(args: argparse.Namespace,
 
     if getattr(args, 'profileMicrobenchmark', False):
         gen_args_list.append("--profileMicrobenchmark")
+
+    if getattr(args, 'convChannelsFirst', False):
+        gen_args_list.append("--convChannelsFirst")
 
     config = DeeployTestConfig(
         test_name = test_name,
@@ -462,9 +480,15 @@ def main(default_platform: Optional[str] = None,
 
     if hasattr(args, 'powerMeasurement') and args.powerMeasurement:
         platform_specific_cmake_args.append("-DPOWER_MEASUREMENT=ON")
+        if hasattr(args, 'freqFC'):
+            platform_specific_cmake_args.append(f"-DFREQ_FC={args.freqFC}")
+        if hasattr(args, 'freqCL'):
+            platform_specific_cmake_args.append(f"-DFREQ_CL={args.freqCL}")
+        if hasattr(args, 'freqPE'):
+            platform_specific_cmake_args.append(f"-DFREQ_PE={args.freqPE}")
 
     if platform == 'GAP9':
-        platform_specific_cmake_args.append("-D SIMULATOR=" + simulator)
+        platform_specific_cmake_args.append("-DSIMULATOR=" + simulator)
 
     config = create_config_from_args(args, platform, simulator, tiling_enabled, platform_specific_cmake_args)
 

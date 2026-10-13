@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 from abc import ABC
 from dataclasses import dataclass
 from typing import List, Literal
@@ -64,13 +65,52 @@ class PrototypeTilingMixIn(ABC):
         return executionBlock
 
 
+# DEEPLOY_PROFILE_SUMMARY=1: instead of per-tile arrays and one printf per tile, every tile
+# loop adds its waits into six global counters (deeploy_prof_acc, defined by the test harness,
+# indexed level*3 + {0: ingress wait, 1: kernel, 2: egress wait}, level 0 = L2 loop, 1 = L3
+# loop) that the harness prints once. The per-tile mode keeps a few hundred KB of names and
+# measurement arrays in L2 and one UART line per tile, which a full training graph cannot
+# afford next to tensor promotion; the summary mode costs ~24 B per node.
+_PROFILE_SUMMARY = os.environ.get("DEEPLOY_PROFILE_SUMMARY", "0") == "1"
+
+
+def _summaryAccumulate(measurements: str, tileIdxVar) -> str:
+    """C that records one timestamp and, on an *_end timestamp, adds the interval to the
+    node level's counter."""
+    kind = next(i for i, k in enumerate(("ingress_dma_wait", "kernel", "egress_dma_wait")) if k in measurements)
+    level = 1 if f"_L3_{('ingress_dma_wait', 'kernel', 'egress_dma_wait')[kind]}" in measurements else 0
+    acc = f"deeploy_prof_acc[{level * 3 + kind}]"
+    if not measurements.endswith("_end_measurements"):
+        return f"{measurements}[0] = getCycles();"
+    start = measurements.replace("_end_measurements", "_start_measurements")
+    if kind == 2 and isinstance(tileIdxVar, int):
+        # double-buffering teardown: the last tile's egress wait is re-measured after the
+        # loop and replaces the in-loop value, so add only the extra wait since then
+        return f"{{ uint32_t _t = getCycles(); {acc} += _t - {measurements}[0]; {measurements}[0] = _t; }}"
+    return f"{measurements}[0] = getCycles(); {acc} += {measurements}[0] - {start}[0];"
+
+
+class _MeasureCyclesTemplate(NodeTemplate):
+
+    def generate(self, operatorRepresentation = {}, **kwargs) -> str:
+        if _PROFILE_SUMMARY:
+            return "\n" + _summaryAccumulate(operatorRepresentation["measurements"],
+                                             operatorRepresentation["tileIdxVar"]) + "\n"
+        return super().generate(operatorRepresentation, **kwargs)
+
+
 class ProfilingPrototypeMixIn(ABC):
-    _measureCycles = NodeTemplate("""
+    _measureCycles = _MeasureCyclesTemplate("""
     ${measurements}[${tileIdxVar}] = getCycles();
     """)
 
+    # RW: 'static' moves the per-node profiling measurement arrays off the CC/master
+    # stack (carved from L1) into .bss (-> L2). With a large --l1 arena there is almost
+    # no L1 headroom left for the CC stack, so keeping these here would overflow it; the
+    # arrays are written/printed master-side and sequentially per node, so a single
+    # static instance is correct. Lets --profileTiling run at the full L1 arena size.
     _measurementArrayDeclaration = NodeTemplate("""
-    uint32_t ${measurements}[${totalNumTiles}];
+    static uint32_t ${measurements}[${totalNumTiles}];
     """)
 
     _stringDeclaration = NodeTemplate("""
@@ -132,10 +172,15 @@ class ProfilingPrototypeMixIn(ABC):
             measurementsList = ["kernel_start", "kernel_end"] + measurementsList
 
         for measurements in measurementsList:
-            executionBlock.addLeft(cls._measurementArrayDeclaration, {
-                "measurements": f"{nodeName}_{measurements}_measurements",
-                "totalNumTiles": totalNumTiles
-            })
+            executionBlock.addLeft(
+                cls._measurementArrayDeclaration, {
+                    "measurements": f"{nodeName}_{measurements}_measurements",
+                    "totalNumTiles": 1 if _PROFILE_SUMMARY else totalNumTiles
+                })
+
+        if _PROFILE_SUMMARY:
+            executionBlock.addLeft(NodeTemplate("extern uint32_t deeploy_prof_acc[6];\n"), {})
+            return executionBlock
 
         executionBlock.addLeft(cls._stringDeclaration, {
             "name": f"{nodeName}_prefix",
@@ -151,6 +196,9 @@ class ProfilingPrototypeMixIn(ABC):
 
     @classmethod
     def injectPrintCycleDiff(cls, executionBlock: ExecutionBlock, metaInfo: TilingMetaInfo) -> ExecutionBlock:
+
+        if _PROFILE_SUMMARY:  # printed once by the harness
+            return executionBlock
 
         numTiles = metaInfo.numTiles
         nodeName = metaInfo.nodeName

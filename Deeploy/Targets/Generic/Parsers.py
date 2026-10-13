@@ -142,7 +142,10 @@ class SliceParser(NodeParser):
             ctxt.hoistConstant(axesTensor)
             node.inputs.append(axesTensor)
         if len(node.inputs) <= 4:
-            values = np.ones((self.operatorRepresentation['dims']))
+            # RW: int64 (Slice steps are integers per ONNX). np.ones() defaults to
+            # float64, which poisons every int-only tiling computation downstream
+            # (SliceTileConstraint, value hoisting) -> 'IntExpr * float' / all-int asserts.
+            values = np.ones((self.operatorRepresentation['dims']), dtype = np.int64)
             stepsTensor = gs.Constant(f'{node.name}_Steps_Tensor', values = values)
             ctxt.hoistConstant(stepsTensor)
             node.inputs.append(stepsTensor)
@@ -754,7 +757,13 @@ class AddParser(NodeParser):
         self.operatorRepresentation['data_in_1'] = data_in_1.name
         self.operatorRepresentation['data_in_2'] = data_in_2.name
         self.operatorRepresentation['data_out'] = data_out.name
-        self.operatorRepresentation['size'] = np.prod(data_in_1.shape)
+        # Size the loop by the output, not by an input. With both operands the same
+        # shape these agree, but a broadcast operand does not: PULPAddLayer leaves a
+        # Linear's [O] bias at its own shape rather than storing the same row per
+        # output row, and taking the first input's size then bounded the loop at the
+        # bias length. The remaining outputs were never written and read back as
+        # whatever was in memory.
+        self.operatorRepresentation['size'] = np.prod(data_out.shape)
 
         return ctxt, True
 
@@ -1611,6 +1620,15 @@ class Conv2DParser(ConvParser):
             self.operatorRepresentation['bias_shift'] = int(0)
             self.operatorRepresentation['out_shift'] = int(0)
 
+            # A weight-only-quantised graph can fold its Dequant into this convolution,
+            # in which case the weight arrives as int8 and carries the per-tensor affine
+            # parameters the kernel needs. The GEMM parser has carried this since the
+            # fold landed; the Conv one did not, so the dequantising Conv templates were
+            # rendering context.get('dequant_scale', 1.0) -- the DEFAULT -- and would have
+            # scaled every int8 weight by 1.0. Defaults keep the fp32 path unchanged.
+            self.operatorRepresentation['dequant_scale'] = float(node.attrs.get('dequant_scale', 1.0))
+            self.operatorRepresentation['dequant_zero_point'] = int(node.attrs.get('dequant_zero_point', 0))
+
         return ret
 
     def parseNodeCtxt(self,
@@ -2070,6 +2088,13 @@ class MatMulParser(NodeParser):
             self.operatorRepresentation['transB'] = 0
             self.operatorRepresentation['transA'] = 0
 
+            # A weight-only-quantised graph can fold its Dequant into this node, in
+            # which case the B operand arrives as int8 and carries the per-tensor
+            # affine parameters the kernel needs. Defaults keep the fp32 path
+            # unchanged for every graph that has no folded Dequant.
+            self.operatorRepresentation['dequant_scale'] = float(node.attrs.get('dequant_scale', 1.0))
+            self.operatorRepresentation['dequant_zero_point'] = int(node.attrs.get('dequant_zero_point', 0))
+
         return ret
 
     def parseNodeCtxt(self,
@@ -2205,6 +2230,11 @@ class GEMMParser(MatMulParser):
             if len(node.inputs) == 2 and not self.noBiasHoisting:
                 C = gs.Constant(f"{node.name}_C", np.zeros((1,)))
                 node.inputs.append(C)
+
+            # Set by FoldDequantIntoMatMulPass when the weight arrives int8. This
+            # parseNode does not chain to MatMulParser's, which reads the same keys.
+            self.operatorRepresentation['dequant_scale'] = float(node.attrs.get('dequant_scale', 1.0))
+            self.operatorRepresentation['dequant_zero_point'] = int(node.attrs.get('dequant_zero_point', 0))
 
             return True
         # This might be a matmul node -> Cast up

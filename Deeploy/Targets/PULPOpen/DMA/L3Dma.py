@@ -6,8 +6,7 @@ import math
 from typing import Dict, Tuple
 
 from Deeploy.DeeployTypes import NetworkContext, NodeTemplate, OperatorRepresentation, VariableBuffer
-from Deeploy.TilingExtension.AsyncDma import AsyncDma, BlockingDmaFromAsyncDmaAdapter, DmaDirection, Future, \
-    PerTensorWaitingStrategy
+from Deeploy.TilingExtension.AsyncDma import AsyncDma, DmaDirection, Future, PerTensorWaitingStrategy
 
 
 class L3DmaFuture(Future):
@@ -21,6 +20,7 @@ class L3DmaFuture(Future):
     _waitTemplate = NodeTemplate("""
     if (${name}.size != 0) {
         pi_cl_ram_copy_wait(&${name});
+        ${name}.size = 0;
     }""")
 
 
@@ -60,5 +60,9 @@ class L3Dma(AsyncDma):
         return operatorRepresentation
 
 
-# LMACAN: It's a hack because the driver is now working correctly
-l3DmaHack = BlockingDmaFromAsyncDmaAdapter(L3Dma())
+# Async L3 DMA — used for both SB and DB. The strided-2D deferred-wait
+# corruption that previously required a blocking SB fallback is fixed at
+# the AnydimAsyncDmaTransferAdapter level (port of pulp-platform/Deeploy#198),
+# so async is now safe for every transfer shape and the separate
+# l3DmaBlocking variable is no longer needed.
+l3DmaHack = L3Dma()

@@ -15,7 +15,7 @@ helpers only through imports, not by interleaving with inference definitions.
 
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
@@ -34,7 +34,13 @@ def generateTrainingTestInputsHeader(deployer: NetworkDeployer,
                                      num_grad_inputs: int = 0,
                                      learning_rate: float = 0.001,
                                      init_weights: List[np.ndarray] = None,
-                                     data_size: int = None) -> str:
+                                     data_size: int = None,
+                                     emit_init_weights: bool = True,
+                                     weight_section: Optional[str] = ".weightmem_sram",
+                                     l3_weight_indices: Optional[Set[int]] = None,
+                                     weights_to_l3: bool = False,
+                                     testdata_to_l3: bool = False,
+                                     hex_dir: str = None) -> str:
     """Generate testinputs.h for training tests.
 
     Parameters
@@ -85,6 +91,14 @@ def generateTrainingTestInputsHeader(deployer: NetworkDeployer,
     retStr += f"#define TRAINING_LEARNING_RATE {learning_rate:.10g}f\n"
     retStr += "\n"
 
+    # When testdata_to_l3 is set (GAP9, large inputs): don't bake the per-mini-batch
+    # arrays into L2 .data. Instead emit L3 pointers filled at runtime from hex files
+    # (written separately into the gen hex/ dir, auto-added to the readfs) by a
+    # cluster-side LoadTestDataL3() loader. The harness feeds inputs via l3_aware_copy
+    # which handles an L3 source, so no harness data path change is needed. This frees
+    # the baked test images out of L2 (MobileNetV1: 4x108KB = 432KB) for promotion.
+    _l3_loader_lines: List[str] = []
+
     # Emit per-mini-batch buffer arrays — only effective_data_size unique rows.
     # all_mb_data must contain exactly effective_data_size rows.
     for mb in range(effective_data_size):
@@ -117,6 +131,28 @@ def generateTrainingTestInputsHeader(deployer: NetworkDeployer,
             buf_name = f"testData_mb{mb}_buf{buf_idx}"
             row_entries.append(buf_name)
 
+            if testdata_to_l3:
+                # L3-resident: emit a pointer filled at runtime from the hex file;
+                # skip baking the array into L2 .data entirely.
+                total_bytes = (values.size * typeWidth) // 8
+                nbytes = total_bytes + ((-total_bytes) % 4)  # word-aligned, matches hex
+                retStr += f'void *{buf_name} = 0;\n'
+                _l3_loader_lines.append(f'  {buf_name} = cl_ram_malloc({nbytes}); '
+                                        f'load_file_to_ram({buf_name}, "{buf_name}.hex");')
+                if hex_dir is not None:
+                    _npdt = {
+                        'float32_t': np.float32,
+                        'int64_t': np.int64,
+                        'uint8_t': np.uint8,
+                        'int32_t': np.int32
+                    }.get(typeName, np.float32)
+                    raw = values.astype(_npdt).tobytes()
+                    raw = raw + b'\x00' * (nbytes - len(raw))  # word-align pad, matches cl_ram_malloc size
+                    os.makedirs(hex_dir, exist_ok = True)
+                    with open(os.path.join(hex_dir, f'{buf_name}.hex'), 'wb') as _hf:
+                        _hf.write(raw)
+                continue
+
             # Format values
             if typeName == 'float32_t':
                 list_str = ", ".join(
@@ -131,24 +167,59 @@ def generateTrainingTestInputsHeader(deployer: NetworkDeployer,
                 paddingElements = (pad_bytes * 8 + typeWidth - 1) // typeWidth
                 list_str += ", " + ", ".join("0" for _ in range(paddingElements))
 
-            retStr += f'__attribute__((section(".weightmem_sram"))) {typeName} {buf_name}[] = {{{list_str}}};\n'
+            # Place the per-mini-batch test data in WEIGHTMEM_SRAM (Siracusa
+            # linker, ~4 MB) — same reason as the init weights below: `.l2_data`
+            # is only ~1.94 MB and the data + weights overflow it at link time.
+            # Only platforms that emit init weights (Siracusa) have this section;
+            # GAP9 (emit_init_weights=False) hex-loads instead, so keep default.
+            if emit_init_weights and weight_section:
+                retStr += f'__attribute__((section("{weight_section}"))) {typeName} {buf_name}[] = {{{list_str}}};\n'
+            else:
+                retStr += f'{typeName} {buf_name}[] = {{{list_str}}};\n'
 
         # Emit the row pointer array for this mini-batch
         row_name = f"testDataRow{mb}"
-        retStr += f"void* {row_name}[] = {{{', '.join(f'(void*){e}' for e in row_entries)}}};\n"
+        if testdata_to_l3:
+            # Pointers are filled at runtime (cl_ram_malloc), so the row can't be
+            # statically initialised with their values — declare it and fill it in
+            # the loader after the mallocs. (testDataVector below stays constant:
+            # it holds the row-array addresses, which are compile-time constants.)
+            retStr += f"void* {row_name}[{len(row_entries)}];\n"
+            for _bi, _e in enumerate(row_entries):
+                _l3_loader_lines.append(f"  {row_name}[{_bi}] = {_e};")
+        else:
+            retStr += f"void* {row_name}[] = {{{', '.join(f'(void*){e}' for e in row_entries)}}};\n"
         retStr += "\n"
 
     # Emit the top-level vector of row pointers (only unique samples; C harness cycles via modulo).
     retStr += f"void** testDataVector[{effective_data_size}] = {{{', '.join(f'testDataRow{mb}' for mb in range(effective_data_size))}}};\n"
 
     # Emit initial weight arrays (one per weight input, indices num_data..grad_buf_start_idx-1).
-    if init_weights:
+    #
+    # On platforms whose harness already loads every L3-resident weight from the
+    # generated N.hex files at boot (e.g. GAP9 via load_file_to_ram), baking the
+    # same weights a *second* time into the binary's `.weightmem_sram` section is
+    # pure redundancy: it doubles the on-chip footprint (overflowing GAP9's
+    # 1.5 MB L2_shared for larger models) and forces an extra harness copy.
+    # `emit_init_weights=False` suppresses that second copy; the harness then
+    # relies on the hex load (a TRAINING_SKIP_INITWEIGHT_COPY define is emitted
+    # so it skips the redundant l3_aware_copy).
+    if init_weights and not emit_init_weights:
+        retStr += "\n#define TRAINING_SKIP_INITWEIGHT_COPY 1\n"
+    if init_weights and emit_init_weights:
         retStr += "\n"
         weight_entries = []
         num_data = len(all_mb_data[0]) if all_mb_data else 0
         for wi, arr in enumerate(init_weights):
             buf_global_idx = num_data + wi
             input_key = f"input_{buf_global_idx}"
+            # L3-resident weights are already loaded from their generated N.hex
+            # file by InitTrainingNetwork; baking them again would duplicate them
+            # in L2. Emit a NULL slot so the harness skips the redundant copy and
+            # only the non-L3 weights cost L2 .data.
+            if l3_weight_indices is not None and wi in l3_weight_indices:
+                weight_entries.append("NULL")
+                continue
             if deployer.ctxt.is_buffer(input_key):
                 buffer = deployer.ctxt.lookup(input_key)
                 typeName = buffer._type.referencedType.typeName
@@ -162,9 +233,29 @@ def generateTrainingTestInputsHeader(deployer: NetworkDeployer,
                 expected_nelems = int(np.prod(deployer.ctxt.lookup(input_key).shape))
                 if expected_nelems > len(values) and expected_nelems % len(values) == 0:
                     values = np.tile(values, expected_nelems // len(values))
-            list_str = ", ".join([f'{float(x)}f' for x in values])
             buf_name = f"testInitWeight_{wi}"
             weight_entries.append(buf_name)
+
+            if weights_to_l3:
+                # Same trick as testdata_to_l3: park the initial values in L3 and
+                # let the harness l3_aware_copy them into the L2 network buffer.
+                # Baking them into .data instead would hold a second full copy on
+                # chip, which does not fit for an on-chip-L2 net (ResNet-8 needs
+                # 1,350,236 B of arena + 521,536 B of weights > 1.5 MB L2_shared).
+                _total_bytes = (values.size * typeWidth) // 8
+                _nbytes = _total_bytes + ((-_total_bytes) % 4)
+                retStr += f'void *{buf_name} = 0;\n'
+                _l3_loader_lines.append(f'  {buf_name} = cl_ram_malloc({_nbytes}); '
+                                        f'load_file_to_ram({buf_name}, "{buf_name}.hex");')
+                if hex_dir is not None:
+                    _raw = values.astype(np.float32).tobytes()
+                    _raw = _raw + b'\x00' * (_nbytes - len(_raw))
+                    os.makedirs(hex_dir, exist_ok = True)
+                    with open(os.path.join(hex_dir, f'{buf_name}.hex'), 'wb') as _hf:
+                        _hf.write(_raw)
+                continue
+
+            list_str = ", ".join([f'{float(x)}f' for x in values])
             # Place initial weight arrays in WEIGHTMEM_SRAM (defined in the
             # Siracusa linker script, ~4 MB on-chip). Two reasons:
             #   1) `.l2_data` is only ~1.94 MB after kernel-reserved space;
@@ -180,8 +271,25 @@ def generateTrainingTestInputsHeader(deployer: NetworkDeployer,
             #      with weights baked into the binary via WEIGHTMEM_SRAM,
             #      gvsoc loads them in one shot with the program image and
             #      ResNet8/MobileNetV1 sim finishes in ~1 min.
-            retStr += f'{typeName} {buf_name}[] __attribute__((section(".weightmem_sram"))) = {{{list_str}}};\n'
-        retStr += f"void* testInitWeights[{len(weight_entries)}] = {{{', '.join(f'(void*){e}' for e in weight_entries)}}};\n"
+            _sec = f' __attribute__((section("{weight_section}")))' if weight_section else ''
+            retStr += f'{typeName} {buf_name}[]{_sec} = {{{list_str}}};\n'
+        if weights_to_l3:
+            # The per-weight pointers are filled at runtime by the loader, so the
+            # vector cannot be statically initialised with their values -- declare
+            # it and fill it in LoadTestDataL3 (same pattern as testDataRow above).
+            retStr += f"void* testInitWeights[{len(weight_entries)}];\n"
+            for _wi, _e in enumerate(weight_entries):
+                _l3_loader_lines.append(f"  testInitWeights[{_wi}] = {'NULL' if _e == 'NULL' else _e};")
+        else:
+            retStr += f"void* testInitWeights[{len(weight_entries)}] = {{{', '.join('NULL' if e == 'NULL' else f'(void*){e}' for e in weight_entries)}}};\n"
+
+    if _l3_loader_lines:
+        # Cluster-side loader: cl_ram_malloc + load_file_to_ram run on the cluster
+        # controller (pi_cl_ram_alloc / pi_cl_fs_read are cluster-delegated). The
+        # harness dispatches LoadTestDataL3 to the cluster (guarded by the define
+        # below) after InitTrainingNetwork, before the initial-weight copy.
+        retStr += "\n#define TRAINING_TESTDATA_L3 1\n"
+        retStr += "void LoadTestDataL3(void) {\n" + "\n".join(_l3_loader_lines) + "\n}\n"
 
     return retStr
 
@@ -399,12 +507,44 @@ void InitTrainingNetwork(){
 void InitTrainingNetwork(__attribute__((unused)) uint32_t core_id, __attribute__((unused)) uint32_t numThreads){
 """
     retStr += deployer.generateEngineInitializationCode()
-    retStr += deployer.generateBufferAllocationCode()
+    retStr += _hoistL2AllocsBeforeL3(deployer.generateBufferAllocationCode())
     retStr += """
 }
 """
 
     return retStr
+
+
+def _hoistL2AllocsBeforeL3(allocCode: str) -> str:
+    """Group all pi_l2_malloc allocations before the first cl_ram_malloc.
+
+    On GAP9, InitTrainingNetwork runs on the cluster controller (CC). cl_ram_malloc
+    delegates an allocation task to the FC (pi_cl_ram_alloc -> pi_cl_send_task_to_fc);
+    pi_l2_malloc runs the pulp-os L2 allocator (pos_alloc) directly on the CC. The two
+    share the L2 allocator's freelist, so a pi_l2_malloc interleaved *after* a delegated
+    cl_ram_malloc races the FC and corrupts the freelist -> the FC then crashes/spins in
+    os_evt_release (verified via pe8/insn ring-trace: the crash is pos_alloc reached from
+    pi_l2_malloc right after a cl_ram_malloc). Tensor promotion exposes this by adding the
+    PROMOTED_POOL_L2 pi_l2_malloc into the interleaved region, which is why ResNet8
+    promote/promote+DB hung at init while non-promote (fewer L2 allocs) survived.
+
+    Hoisting every pi_l2_malloc above the first cl_ram_malloc makes the CC do all L2
+    allocations while the FC is still idle, then only delegated L3 allocs afterwards -> no
+    concurrent freelist access. Only fires when both alloc kinds are present (GAP9 L3
+    training); a pure reorder of independent allocations, so it is semantically a no-op
+    everywhere else.
+    """
+    if 'cl_ram_malloc' not in allocCode or 'pi_l2_malloc' not in allocCode:
+        return allocCode
+    lines = allocCode.split('\n')
+    l2 = [ln for ln in lines if 'pi_l2_malloc(' in ln and ln.rstrip().endswith(';')]
+    if not l2:
+        return allocCode
+    rest = [ln for ln in lines if not ('pi_l2_malloc(' in ln and ln.rstrip().endswith(';'))]
+    # find first cl_ram_malloc in `rest` and splice the L2 allocs right before it
+    idx = next((i for i, ln in enumerate(rest) if 'cl_ram_malloc(' in ln), 0)
+    out = rest[:idx] + ['  // [GAP9 FC/CC pos_alloc race fix] all pi_l2_malloc before cl_ram_malloc'] + l2 + rest[idx:]
+    return '\n'.join(out)
 
 
 def generateTrainingTestNetwork(deployer: NetworkDeployer,
@@ -449,6 +589,59 @@ def generateTrainingTestNetwork(deployer: NetworkDeployer,
 
     os.makedirs(dumpdir, exist_ok = True)
 
+    _platform_name = type(deployer.Platform).__name__
+    _is_gap9 = "GAP9" in _platform_name
+
+    # GAP9 may skip baking the initial weights ONLY when every weight buffer is
+    # genuinely L3-resident: Deeploy then emits a load_file_to_ram(buf, "N.hex")
+    # per weight and the bake would be a redundant second copy (see the long
+    # comment in generateTrainingTestInputsHeader).
+    #
+    # That assumption silently broke --defaultMemLevel L2: there the weights live
+    # in L2, no hex file is emitted for them, and suppressing the bake *also*
+    # emits TRAINING_SKIP_INITWEIGHT_COPY, so the harness skips its copy too.
+    # Every trainable weight then stays zero, the network emits all-equal logits
+    # and the loss is pinned at exactly ln(num_classes) -- measured as
+    # ln(12)=2.484907 for DS-CNN and ln(10)=2.302585 for ResNet-8, while the same
+    # models pass in L3 and on Siracusa. Key the decision on where the weights
+    # actually live, not on the platform name.
+    _num_data_bufs = len(all_mb_data[0]) if all_mb_data else 0
+    _weight_is_l3 = {
+        _wi: getattr(deployer.ctxt.lookup(f"input_{_num_data_bufs + _wi}"), "_memoryLevel", None) == "L3"
+        for _wi in range(grad_buf_start_idx - _num_data_bufs)
+        if deployer.ctxt.is_buffer(f"input_{_num_data_bufs + _wi}")
+    }
+    _weights_all_l3 = bool(_weight_is_l3) and all(_weight_is_l3.values())
+    _emit_init_weights = (not _is_gap9) or (not _weights_all_l3)
+
+    # Only GAP9 emits a per-weight N.hex load, so only there may an individual
+    # L3-resident weight be left out of the bake. Siracusa keeps baking all of
+    # them (unchanged behaviour).
+    _l3_weight_indices = {_wi for _wi, _isl3 in _weight_is_l3.items() if _isl3} if _is_gap9 else None
+
+    # On GAP9 the weights that are NOT L3-resident still must not be baked into
+    # .data: an on-chip-L2 net needs the whole arena in L2_shared and a second
+    # copy of the weights does not fit. Stage them in L3 (hex) instead and let the
+    # harness copy L3 -> L2 at boot, the same way testdata_to_l3 already works.
+    _weights_to_l3 = _is_gap9 and _emit_init_weights
+
+    # `.weightmem_sram` is defined only by the Siracusa linker script; GAP9 has no
+    # such section, so its arrays go to the default (L2_shared) section.
+    _weight_section = None if _is_gap9 else ".weightmem_sram"
+
+    # Move large baked test inputs out of L2 -> L3 (GAP9 only; threshold-gated so
+    # small-input nets like ResNet8/CCT keep the simple L2-baked path unchanged,
+    # zero blast radius). MobileNetV1 bakes 4x108KB=432KB into L2 .data, starving
+    # promotion; loading it from L3 (hex) frees that L2.
+    _TESTDATA_L3_THRESHOLD = 262144
+    _testdata_bytes = sum(int(a.size) * int(a.itemsize) for row in all_mb_data for a in row) if all_mb_data else 0
+    # Whenever the weights are being staged through L3 (on-chip-L2 nets), stage the
+    # baked test images the same way: every byte kept out of .data is a byte the
+    # arena can use, and the on-chip configs are the ones that need it.
+    _testdata_to_l3 = _is_gap9 and (_weights_to_l3 or (_weights_all_l3 and _testdata_bytes > _TESTDATA_L3_THRESHOLD))
+    if _testdata_to_l3:
+        print(f"  [testData->L3] {_testdata_bytes} B of baked test inputs moved out of L2 to L3 (hex-loaded)")
+
     # testinputs.h
     testInputStr = generateTrainingTestInputsHeader(deployer,
                                                     all_mb_data,
@@ -458,7 +651,13 @@ def generateTrainingTestNetwork(deployer: NetworkDeployer,
                                                     num_grad_inputs,
                                                     learning_rate,
                                                     init_weights = init_weights,
-                                                    data_size = data_size)
+                                                    data_size = data_size,
+                                                    emit_init_weights = _emit_init_weights,
+                                                    weight_section = _weight_section,
+                                                    l3_weight_indices = _l3_weight_indices,
+                                                    weights_to_l3 = _weights_to_l3,
+                                                    testdata_to_l3 = _testdata_to_l3,
+                                                    hex_dir = os.path.join(dumpdir, 'hex'))
     with open(f'{dumpdir}/testinputs.h', 'w') as f:
         f.write(testInputStr)
 
@@ -579,7 +778,9 @@ def build_shared_buffer_maps(train_onnx_path: str, opt_onnx_model) -> Tuple[Dict
 def _patch_shared_buffers(retStr: str,
                           shared_input_map: Dict[int, int],
                           shared_output_map: Dict[int, int],
-                          train_c_source: str = "") -> str:
+                          train_c_source: str = "",
+                          l2_shared_inputs = None,
+                          l2_shared_outputs = None) -> str:
     """Redirect optimizer I/O buffers to Training's already-allocated buffers.
 
     Must be called AFTER the _TRAIN_PREFIX → _OPT_PREFIX substitution so that
@@ -643,15 +844,18 @@ def _patch_shared_buffers(retStr: str,
         pat = rf'{_TRAIN_PREFIX}input_{train_idx}\s*=\s*\([^)]+\)\s*pi_l2_malloc\b'
         return bool(re.search(pat, train_c_source))
 
+    _l2_in = set(l2_shared_inputs or ())
+    _l2_out = set(l2_shared_outputs or ())
+
     def _make_replacement(symbol: str, kind: str, idx: int) -> Optional[str]:
         if kind == "input" and idx in shared_input_map:
             train_idx = shared_input_map[idx]
-            if _is_train_l2(train_idx):
-                return None  # Don't share: training buffer at L2, optimizer expects L3
+            if _is_train_l2(train_idx) and idx not in _l2_in:
+                return None  # Don't share: training buffer at L2, optimizer tiles it as L3
             return f'{symbol} = (float32_t *){_TRAIN_PREFIX}input_{train_idx};  /* shared with TrainingNetwork */'
         if kind == "output" and idx in shared_output_map:
             train_idx = shared_output_map[idx]
-            if _is_train_l2(train_idx):
+            if _is_train_l2(train_idx) and idx not in _l2_out:
                 return None
             return f'{symbol} = (float32_t *){_TRAIN_PREFIX}input_{train_idx};  /* in-place, shared with TrainingNetwork */'
         return None
@@ -752,14 +956,26 @@ def _patch_shared_arenas(retStr: str, train_c_source: str) -> str:
     str
         Patched C source string.
     """
-    for level in ('L1',):
+    # The L2 arena is shared too when the training network is tiled from L3
+    # (MEMORYARENA_L3 present): its L2 arena is then pure tile staging, dead between
+    # kernels, and the optimizer's staging arena fits inside it. In L2-resident mode the
+    # training L2 arena holds the tensors themselves and must stay private.
+    # DEEPLOY_NO_SHARED_L2_ARENA=1 restores the L1-only behaviour.
+    levels = ['L1']
+    if 'DeeployNetwork_MEMORYARENA_L3' in train_c_source and not os.environ.get('DEEPLOY_NO_SHARED_L2_ARENA'):
+        _tr = re.search(r'DeeployNetwork_MEMORYARENA_L2\s*=.*?\*\s*(\d+)\)', train_c_source)
+        _op = re.search(r'DeeployOptNetwork_MEMORYARENA_L2\s*=.*?\*\s*(\d+)\)', retStr)
+        if _tr and _op and int(_op.group(1)) <= int(_tr.group(1)):
+            levels.append('L2')
+    for level in levels:
         train_sym = f'DeeployNetwork_MEMORYARENA_{level}'
         # Only alias if the training network actually has this arena
         if train_sym not in train_c_source:
             continue
 
         opt_sym = f'DeeployOptNetwork_MEMORYARENA_{level}'
-        opt_malloc_pat = re.compile(rf'({re.escape(opt_sym)})\s*=\s*\([^)]+\)\s*\w+\(sizeof\([^)]+\)\s*\*\s*\d+\)\s*;')
+        opt_malloc_pat = re.compile(
+            rf'({re.escape(opt_sym)})\s*=\s*\([^)]+\)\s*\w+\((?:[^;]*?,\s*)?sizeof\([^)]+\)\s*\*\s*\d+\)\s*;')
         if not opt_malloc_pat.search(retStr):
             continue
 
@@ -802,7 +1018,7 @@ def _ensure_training_l1_capacity(dumpdir: str, train_c_source: str, opt_alloc_co
         (Possibly updated) TrainingNetwork.c source string.
     """
     m_opt = re.search(
-        r'DeeployOptNetwork_MEMORYARENA_L1\s*=\s*\([^)]+\)\s*pmsis_l1_malloc\(sizeof\([^)]+\)\s*\*\s*(\d+)\)',
+        r'DeeployOptNetwork_MEMORYARENA_L1\s*=\s*\([^)]+\)\s*\w+_l1_malloc\((?:[^;]*?,\s*)?sizeof\([^)]+\)\s*\*\s*(\d+)\)',
         opt_alloc_code,
     )
     if not m_opt:
@@ -811,7 +1027,7 @@ def _ensure_training_l1_capacity(dumpdir: str, train_c_source: str, opt_alloc_co
     opt_l1 = int(m_opt.group(1))
 
     m_train = re.search(
-        r'(DeeployNetwork_MEMORYARENA_L1\s*=\s*\([^)]+\)\s*pmsis_l1_malloc\(sizeof\([^)]+\)\s*\*\s*)(\d+)(\))',
+        r'(DeeployNetwork_MEMORYARENA_L1\s*=\s*\([^)]+\)\s*\w+_l1_malloc\((?:[^;]*?,\s*)?sizeof\([^)]+\)\s*\*\s*)(\d+)(\))',
         train_c_source,
     )
     if not m_train:
@@ -899,7 +1115,9 @@ def generateOptimizerNetworkImplementation(deployer: NetworkDeployer,
                                            verbosityCfg: CodeGenVerbosity,
                                            shared_input_map: Optional[Dict[int, int]] = None,
                                            shared_output_map: Optional[Dict[int, int]] = None,
-                                           train_c_source: Optional[str] = None) -> str:
+                                           train_c_source: Optional[str] = None,
+                                           l2_shared_inputs = None,
+                                           l2_shared_outputs = None) -> str:
     """Generate OptimizerNetwork.c.
 
     Parameters
@@ -979,7 +1197,9 @@ void InitOptimizerNetwork(__attribute__((unused)) uint32_t core_id, __attribute_
     retStr = _patch_shared_buffers(retStr,
                                    shared_input_map or {},
                                    shared_output_map or {},
-                                   train_c_source = train_c_source or "")
+                                   train_c_source = train_c_source or "",
+                                   l2_shared_inputs = l2_shared_inputs,
+                                   l2_shared_outputs = l2_shared_outputs)
     # Redirect optimizer L1/L2 arena mallocs to reuse training arenas
     if train_c_source:
         retStr = _patch_shared_arenas(retStr, train_c_source)
@@ -990,7 +1210,9 @@ def generateOptimizerTestNetwork(deployer: NetworkDeployer,
                                  dumpdir: str,
                                  verbosityCfg: CodeGenVerbosity,
                                  shared_input_map: Optional[Dict[int, int]] = None,
-                                 shared_output_map: Optional[Dict[int, int]] = None) -> None:
+                                 shared_output_map: Optional[Dict[int, int]] = None,
+                                 l2_shared_inputs = None,
+                                 l2_shared_outputs = None) -> None:
     """Generate OptimizerNetwork.h and OptimizerNetwork.c.
 
     Parameters
@@ -1026,7 +1248,7 @@ def generateOptimizerTestNetwork(deployer: NetworkDeployer,
         f.write(headerStr)
 
     implStr = generateOptimizerNetworkImplementation(deployer, verbosityCfg, shared_input_map, shared_output_map,
-                                                     train_c_source)
+                                                     train_c_source, l2_shared_inputs, l2_shared_outputs)
     with open(f'{dumpdir}/OptimizerNetwork.c', 'w') as f:
         f.write(implStr)
 

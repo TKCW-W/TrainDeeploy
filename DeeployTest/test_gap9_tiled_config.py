@@ -84,3 +84,309 @@ L3_DOUBLEBUFFER_MODELS = {
     "Models/miniMobileNet": [60000, 24000, 12000, 6000],
     "Models/miniMobileNetv2": [60000, 32000, 24000, 16000],
 }
+
+# Training models — GAP9 L2 size is 1 MB (DEFAULT_L2 = 1024000).
+# L2 models: DSCNN fits within 1 MB L2.
+# The Autoencoder does NOT, and has moved to the L3 lists below. It is the MLperf
+# Tiny anomaly-detection reference (640 -> 128x4 -> 8 -> 128x4 -> 640, 267,928
+# params): 1046.6 KB of weights plus an equally large gradient-accumulation
+# buffer is 2098 KB of graph-input tensors alone, against GAP9's 1536 KB L2, so
+# minimalloc fails even at --l2 1572864. Being a pure MLP it has 0.99 MACs per
+# parameter where the convolutional benchmarks have 115-160, which is why it is
+# the one benchmark whose parameters, not its activations, set the footprint.
+L2_SINGLEBUFFER_TRAINING_MODELS = {
+    "Models/Training/SimpleMLP/simplemlp_train": [64000],
+    # 128000 only: the MLperf-compliant DS-CNN-S (49x10 MFCC, 64 channels,
+    # 23,180 params) is 8x the old XS fixture and no longer has anything to gain
+    # from the smaller arena.
+    "Models/Training/DSCNN/dscnn_train": [128000],
+    # ResNet8 on-chip. It only fits channels-first: the NHWC path materialises a
+    # transposed copy of every conv weight -- 75 of them, 2950 KB in total -- because
+    # the pass that eliminates W^T covers Linear layers and not Conv. CHW kernels need
+    # no transpose at all, which takes the peak from 1410 KB to 1278 KB and brings it
+    # inside L2 with no recompute, no promotion and no double buffering.
+    # 122000, raised from 116000. The lower figure was chosen because CI trains four
+    # mini-batches and their accumulation buffers left the L1 allocator 118 KB; with
+    # the accumulator now forked across the cluster that budget holds at 122000, and
+    # the 6 KB is worth a great deal here: 55.40M -> 43.16M cycles per step, -22.2%.
+    # That also settles a confusing comparison -- at 116000 this on-chip deployment
+    # was *slower* than every L3 configuration, which reads as though going off-chip
+    # were free. At an equal L1 it is the fastest of them (43.16M against 45.68M for
+    # L3+promote+DB), which is what one would expect. The L1 budget, not the memory
+    # level, was doing the work.
+    # It cannot be double-buffered: the arena is 1,350,236 B of the 1.5 MB L2 and
+    # doubled staging does not fit ("Allocation failed for allocator 1"; allocator 1
+    # is L2 and 2 is cluster L1, see pi_malloc.h).
+    # 118000, not 122000. The cluster-L1 allocator has 118,672 B free once the
+    # runtime and the cluster stacks are up, and at a 122000 budget the random-max
+    # tiling search can land on a 121,984 B arena, which does not fit. pi_l1_malloc
+    # returns NULL, nothing checks it, and the wild pointer surfaces later as
+    # "Allocation failed for allocator 2" followed by an Invalid access -- randomly,
+    # because a different search result fits. Same reasoning as CCT_QLORA_FT below.
+    # 122000: the best-latency deployment (43,157,266 cycles/step, 116.6 ms). The
+    # 118000 this entry used before was needed only because the L2 job did not
+    # pass cc_stack / slave_stack to CMake, so the SDK-default cluster stacks left
+    # the L1 allocator 118,672 B; with cc 4096 + 8 x 512 the 121,984 B arena fits.
+    "Models/Training/ResNet8/resnet8_train": [122000],
+    # CCT-QLoRA on-chip. The frozen backbone is int8 and its Dequant is folded into
+    # the MatMul/Gemm/Conv, so the dequantised weights are never materialised:
+    # trainable_bytes is 48 KB and the arena needs 923 KB, which fits GAP9's real 1.5 MB
+    # L2 but not the 1000 KB runner default -- hence the l2 override below.
+    # The frozen conv tokenizer is fully integer (W8A8) and runs the pulp-nn cluster
+    # kernels, which need slave_stack 2048; 110000 keeps arena + stacks inside L1.
+    "Models/Training/CCT_QLORA_FT/cct_qlorar1_train": [110000],
+}
+
+# Best-latency deployment of the five paper networks (gvsoc, 8 cores, Errors 0/4, all
+# measured on this branch at 29a5c63 through these tests;
+# per-step = (train + opt cycles) / 4, ms at 370 MHz):
+#
+#   model        deployment                                           L1      cycles/step   ms
+#   DS-CNN-S     L2 single-buffer, no promotion                       128000   10,264,002   27.7
+#   ResNet-8     on-chip L2 single-buffer, CHW, no promotion          122000   43,173,174  116.7
+#   Autoencoder  L3+DB+promote traffic-per-peak, l2=1572864 hr=131072  122000    7,398,196   20.0
+#   MobileNetV1  L3+DB+promote traffic-per-peak, hr=500000 (no skip)   116000   46,017,380  124.4
+#   CCT-2        L3+DB+promote traffic-per-peak + alias groups, hr=420000  122000   55,118,389  149.0
+#
+# DS-CNN and ResNet-8 are the L2 list above; the other three are
+# L3_DOUBLEBUFFER_TRAINING_PROMOTE_MODELS below.
+
+# L3 models: ResNet8, MobileNetV1, CCT exceed 1 MB L2 — weights spill to L3.
+# L1 budgets are the validated best-performing values with the scatter ConvGradX
+# binding + -O3 kernels (see TargetLibraries/GAP9/CMakeLists.txt). Per-model
+# cc_stack (TRAINING_MODEL_OVERRIDES) keeps arena+cc_stack within the ~127 KB L1
+# pool. MobileNetV1 runs channels-first (CHW kernels, no NCHW<->NHWC transpose).
+L3_SINGLEBUFFER_TRAINING_MODELS = {
+    # Autoencoder: L3 is not a choice, it is the only level that fits (see the
+    # L2 list above). 122000, not the 128000 it used on L2 -- an L3 model must
+    # leave L1 room for the cluster stacks: 122000 + cc 4096 + slave 512*8 =
+    # 130192 < 131072. At 128000 the arena overflows and gvsoc aborts with
+    # "Allocation failed for allocator 2".
+    "Models/Training/Autoencoder/autoencoder_train": [122000],
+    "Models/Training/ResNet8/resnet8_train": [122000],
+    "Models/Training/MobileNetV1/mobilenetv1_train": [116000],
+    "Models/Training/CCT/cct_train": [122000],
+    # One transformer block of the CCT-2 spec (same tokenizer, 64 tokens, frozen
+    # tokenizer). Errors 0/4 on gvsoc and on the GAP9 EVK: 46.4 M cycles per step on
+    # gvsoc, 57.8 M on the board (156 ms at 370 MHz).
+    "Models/Training/CCT_1/cct1_train": [122000],
+    # Rank-4 LoRA on CCT-2 at the official spec (mlp_ratio=1), adapters on attention
+    # and FFN, regenerated with Onnx4Deeploy's lora_ffn/mlp_ratio keys (the adapter
+    # matrices are stored (D, r)/(r, D), so no Transpose is exported for them).
+    # 2616 KB planned L3 peak, 55.6M cycles -- faster than full fine-tuning because
+    # the frozen base weights need no weight gradients. Errors 0/4 on gvsoc.
+    "Models/Training/CCT_LoRA_R1/cct_lorar1_train": [122000],
+    # The same model with its frozen backbone quantised to int8. Exercises the folded
+    # Dequant path (without in-kernel dequantisation this model does not fit at all,
+    # minimalloc fails) and the integer tokenizer: Quant -> RequantizedConv -> uint8
+    # MaxPool -> Dequant on the pulp-nn kernels. 110000 leaves L1 for slave_stack 2048.
+    "Models/Training/CCT_QLORA_FT/cct_qlorar1_train": [110000],
+    "Models/Training/SleepConViT/sleepconvit_train": [122000],
+    "Models/Training/TSDR/tsdr_train": [122000],
+    "Models/Training/MCUNet/mcunet_train": [116000],
+}
+
+# Gradient-checkpointed training. Each entry replays a solved recompute schedule
+# instead of keeping every forward activation live across the backward pass: an
+# activation is dropped after its forward use and regenerated just before the
+# gradient node reads it, trading cycles for peak memory.
+#
+# Only schedules verified end to end on gvsoc belong here. A schedule is keyed on
+# node names, so one produced from a different graph would replay as the default
+# order under a name claiming to be checkpointed; the replay refuses below 90%
+# name coverage rather than report that as a pass.
+#
+#   model                  schedule                       Errors  cycles/step
+#   CCT (exact ILP)        recompute_checkmate.json       0       68.63M vs 64.24M
+#                                                                 baseline (+6.8%)
+L3_RECOMPUTE_TRAINING_MODELS = {
+    # Solved by scripts/solve_recompute_schedule.py against the current deployed
+    # graph. They cannot be carried across a lowering change: see
+    # docs/gradient_checkpointing.md.
+    #
+    #   model         recomputes  Errors  cycles (1 step)
+    #   CCT                    6       0   68,634,810
+    #   MobileNetV1           16       0   52,727,331
+    "Models/Training/CCT/cct_train": {
+        "l1": 122000,
+        "schedule": "Tests/Models/Training/CCT/cct_train/recompute_checkmate.json",
+    },
+    "Models/Training/MobileNetV1/mobilenetv1_train": {
+        "l1": 116000,
+        "schedule": "Tests/Models/Training/MobileNetV1/mobilenetv1_train/recompute_checkmate.json",
+    },
+}
+
+# L3 double-buffered training. Only the L3<->L2 hop is double-buffered
+# (TrainingDBOnlyL3Tiler) so the L2 staging budget doesn't double.
+# ResNet8's strided ConvGrad InPlaceAccumulatorV2 is forced to coeff=1 (SB)
+# by TrainingDBOnlyL3Tiler. MobileNetV1: multi-tile Transpose + ConvGradW
+# opted out of DB (tilingUtils.DB_OPT_OUT_OPS, same numerical fix as
+# Siracusa); its CHW im2col forward conv runs the async DB hop directly
+# now that AnydimAsyncDmaTransferAdapter serializes decomposed sub-transfers
+# on the shared per-tensor request handle.
+L3_DOUBLEBUFFER_TRAINING_MODELS = {
+    "Models/Training/CCT/cct_train": [122000],
+    "Models/Training/ResNet8/resnet8_train": [122000],
+    "Models/Training/MobileNetV1/mobilenetv1_train": [116000],
+}
+
+# Training + PromoteTensorsToL2 (singlebuffer). test path ->
+# list of (l1, strategy, includeActivations).
+# ResNet8 uses "smallest" (cycle-aware promotes 0 tensors for ResNet8 — its
+# heuristic finds no positive-cycle-benefit candidate). Both pass thanks to the
+# InitNetwork pi_l2_malloc-before-cl_ram_malloc hoist (see codeGenerateTraining
+# _hoistL2AllocsBeforeL3): without it, promotion's PROMOTED_POOL_L2 pi_l2_malloc
+# interleaved with the FC-delegated cl_ram_malloc loop races the pulp-os L2
+# allocator freelist -> FC os_evt_release corruption at init.
+L3_SINGLEBUFFER_TRAINING_PROMOTE_MODELS = {
+    "Models/Training/CCT/cct_train": [(122000, "smallest", True),],
+    "Models/Training/ResNet8/resnet8_train": [(122000, "smallest", True),],
+    "Models/Training/MobileNetV1/mobilenetv1_train": [(116000, "smallest", True),],
+}
+
+# Training + PromoteTensorsToL2 + double-buffering combined.
+# This is the best-latency deployment of the three L3 networks, so the job doubles
+# as the performance regression for them: `traffic-per-peak` ranks candidates by
+# measured L3<->L2 traffic per byte of L2 occupied (fetch_bytes.json next to each
+# fixture, harvested with DEEPLOY_FETCH_HARVEST on the same deployment with nothing
+# promoted), and the per-model l2 / headroom in TRAINING_MODEL_OVERRIDES set the
+# promotion budget. cycles/step on gvsoc, 8 cores, Errors 0/4:
+#
+#   model        l2       headroom  promoted            traffic removed  cycles/step
+#   Autoencoder  1572864  131072    51 t, 1,064,960 B   57.8%             7,390,595
+#   CCT          1572864  420000    280 t, 1,146,168 B  alias groups     55,118,389
+#   MobileNetV1  1024000  500000    76 t, 523,232 B     27.6%            45,955,002
+#
+# MobileNetV1 needs the promoted-tile offset fix (SingleBufferingTilingCodeGeneration
+# ._promotedByteOffsets): before it, promoting any activation read by a 3x3
+# depthwise conv gave Errors 4/4 and the entry had to exclude the stem.
+# ResNet8 deploys on-chip (L2 list above); its entry here is a regression of the
+# promote+DB path, not its best configuration, and keeps "smallest" (cycle-aware
+# promotes 0 tensors for it).
+L3_DOUBLEBUFFER_TRAINING_PROMOTE_MODELS = {
+    "Models/Training/Autoencoder/autoencoder_train": [(122000, "traffic-per-peak", True),],
+    "Models/Training/CCT/cct_train": [(122000, "traffic-per-peak", True),],
+    "Models/Training/ResNet8/resnet8_train": [(122000, "smallest", True),],
+    "Models/Training/MobileNetV1/mobilenetv1_train": [(116000, "traffic-per-peak", True),],
+}
+
+TRAINING_MODEL_OVERRIDES = {
+    # Slave stacks live in L1 (SDK default); we just shrink them to 512B. Small
+    # L1 stacks are a big win over parking them in L2 (cyc/step, L1 vs L2 below).
+    "Models/Training/Autoencoder/autoencoder_train": {
+        # L3 model now: arena 122000 + cc 4096 + slave 512*8 = 130192 < 131072.
+        "cc_stack": 4096,
+        "slave_stack": 512,
+        # promote+DB: the whole 1.5 MB, 131072 headroom. The promoted set saturates
+        # at 1,064,960 B (hr 400000 promotes exactly the same tensors), so this is
+        # a clean upper bound, not a cliff. static L2 224,704 B leaves the room.
+        "promote_l2": 1572864,
+        "promote_headroom_db": 131072,
+        "promote_fetch_bytes": "Tests/Models/Training/Autoencoder/autoencoder_train/fetch_bytes.json",
+    },
+    "Models/Training/DSCNN/dscnn_train": {
+        # Cluster stacks in L1 rather than L2 (see the ResNet8 entry for the
+        # measured effect). The -33.7% figure this comment used to quote was
+        # taken on the old XS fixture (2,732 params, 0.80M cyc/step) and does
+        # not carry over to DS-CNN-S (23,180 params, 10.2M cyc/step).
+        "cc_stack": 4096,  # the best-latency build (10,245,171 cyc/step) uses cc 4096 + slave 512
+        "slave_stack": 512,
+    },
+    "Models/Training/ResNet8/resnet8_train": {
+        "conv_channels_first": True,  # CHW convs; see the on-chip entry above
+        "l2": 1400000,  # arena 1278 KB plus the static section, inside GAP9's 1.5 MB
+        "cc_stack": 4096,  # conv-light backward -> small CC stack, frees L1 for arena
+        # arena 122000 + cc 4096 + slave 512*8 = 130192 < 131072 -> L1 stacks fit.
+        # L1 vs L2 stacks: 47.8M vs 62.9M cyc/step (-23.9%, SB). With the gather
+        # ConvGradX kernel + promote+DB the best config is 44.1M/step.
+        "slave_stack": 512,
+    },
+    "Models/Training/MobileNetV1/mobilenetv1_train": {
+        "conv_channels_first": True,  # CHW convs; the NHWC-transpose tiling is infeasible
+        "cc_stack": 8192,  # -O3 cut the CC-stack need from 16384; frees L1 for a bigger arena
+        # 700000 (was 920000): testData is now hex-loaded to L3 (not baked into L2
+        # .data, freeing ~432KB), so MNV1 can promote a larger pool (~316KB). 700000
+        # keeps it below the runtime L2-staging cliff (DB doubles staging: promote+DB
+        # fails ≥~500KB, promote-SB ≥~800KB) -> promote+DB ~-6.8% vs SB.
+        "promote_headroom": 700000,
+        # promote+DB with the offset fix: l2 1024000 / hr 500000 (budget 524,000:
+        # 523,232 B promoted, 27.6% of the off-chip traffic removed, 45,955,002
+        # cycles/step). l2 1572864 / hr 500000 does NOT run: it promotes
+        # 1,070,688 B and the runtime L2 allocation fails ("Allocation failed for
+        # allocator 1", then the cluster DMA faults on the null pointer).
+        "promote_headroom_db": 500000,
+        "promote_fetch_bytes": "Tests/Models/Training/MobileNetV1/mobilenetv1_train/fetch_bytes.json",
+        # arena 116000 + cc 8192 + slave 512*8 = 128288 < 131072 -> L1 stacks fit.
+        # L1 vs L2 stacks: 53.1M vs 68.7M cyc/step (-22.7%).
+        "slave_stack": 512,
+    },
+    "Models/Training/CCT/cct_train": {
+        "tolerance":
+            5e-3,
+        # cc_stack 4096 (was 8192): with promote_headroom 700000 the CC closure
+        # chain no longer overflows at 4096 (the old 4096->os_evt_release deadlock
+        # was a tighter-headroom scenario, since fixed). Dropping to 4096 frees the
+        # L1 the slave stacks need: arena 122000 + cc 4096 + slave 512*8 = 130192
+        # < 131072 -> L1 stacks fit, no arena cut, no tiling penalty. Verified
+        # (build memcheck + sim) on SB, DB and promote+DB.
+        "cc_stack":
+            4096,
+        # L1 slave stacks: measured cyc/step (N=2) on the CI best (promote+DB):
+        #   cc8192 + L2 stacks            87.1M  (previous config)
+        #   cc4096 + L1 stacks (this)     66.8M  -> -23.4%
+        # Also helps single-buffer (95.8M -> 75.3M). promote+DB+L1 is CCT's best.
+        "slave_stack":
+            512,
+        # promote+DB, best deployment: alias-group promotion (Reshape-like views and
+        # the LayerNorm neighbours become candidates), optimizer traffic in Q, and
+        # headroom 420000 (budget 1,152,864 B, promotes 1,146,168 B). The optimizer
+        # shares the training network's L2 staging arena, which is what makes the
+        # smaller headroom fit: 23 KB of L2 left after init on gvsoc, 18 KB on the
+        # EVK. Before alias groups the floor was 600000 (at 400000 the runtime L2
+        # allocation failed).
+        "promote_l2":
+            1572864,
+        "promote_headroom_db":
+            420000,
+        "promote_fetch_bytes":
+            "Tests/Models/Training/CCT/cct_train/fetch_bytes.json",
+        "gen_args": [
+            "--promoteToL2AliasGroups",
+            "--promoteToL2OptimizerTraffic",
+            "--promoteToL2SkipOpsKeep=BatchNormInternal,BatchNormalizationGrad",
+        ],
+    },
+    "Models/Training/CCT_1/cct1_train": {
+        "cc_stack": 4096,
+        "slave_stack": 512,
+    },
+    "Models/Training/CCT_LoRA_R1/cct_lorar1_train": {
+        "cc_stack": 4096,
+        "slave_stack": 512,
+    },
+    "Models/Training/CCT_QLORA_FT/cct_qlorar1_train": {
+        "l2": 1572864,  # GAP9's real 1.5 MB; the arena needs 923 KB of it
+        # arena 110000 + cc 4096 + slave 2048*8 = 130480 < 131072, so the cluster
+        # stacks stay in L1. Without these the SDK defaults overflow it and gvsoc
+        # exits before producing any output.
+        "cc_stack": 4096,
+        "slave_stack": 2048,  # the integer tokenizer's pulp-nn kernels overflow 512 B
+        # The references are computed on the int8 backbone itself (weights
+        # fake-quantised before export), so no quantisation tolerance is needed.
+    },
+    "Models/Training/SleepConViT/sleepconvit_train": {
+        "tolerance": 5e-3,
+        "cc_stack": 4096,  # transformer backward; small CC stack frees L1 for the arena
+    },
+    "Models/Training/TSDR/tsdr_train": {
+        "tolerance": 5e-3,
+        "cc_stack": 4096,  # spectrogram transformer; same profile as SleepConViT
+        "conv_channels_first": True,  # CHW patch-embed conv (no NCHW<->NHWC transpose)
+    },
+    "Models/Training/MCUNet/mcunet_train": {
+        "tolerance": 5e-3,
+        "cc_stack": 8192,  # MnasNet-style; deep DW/PW chain needs a larger CC stack
+        "conv_channels_first": True,  # CHW convs; NHWC-transpose tiling is infeasible
+    },
+}

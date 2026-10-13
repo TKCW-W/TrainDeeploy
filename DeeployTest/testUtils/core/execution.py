@@ -81,6 +81,13 @@ def configure_cmake(config: DeeployTestConfig) -> None:
     if cmake_cmd == "cmake" and shutil.which("cmake") is None:
         raise RuntimeError("CMake not found. Please install CMake or set CMAKE environment variable")
 
+    # Tests share one build directory per worker, and CMake keeps every -D it has ever
+    # been given in CMakeCache.txt. A per-model override such as SLAVESTACKSIZE=2048 would
+    # otherwise stay in force for every later test that does not pass it again.
+    cmake_cache = Path(config.build_dir) / "CMakeCache.txt"
+    if cmake_cache.exists():
+        cmake_cache.unlink()
+
     # Build CMake command
     cmd = [
         cmake_cmd,
@@ -149,9 +156,13 @@ def build_binary(config: DeeployTestConfig) -> None:
         config.test_name,
     ]
 
-    # GAP9 requires the 'image' target to generate MRAM .bin files for GVSOC
-    if config.platform in ('GAP9', 'GAP9_w_NE16'):  # -- QW
-        cmd.append("image")
+    # GAP9 board deployment: generate mram.bin + flash.bin via image_<name>.
+    # GAP9 GVSOC simulation: generate GVSOC image via the generic 'image' target.
+    if config.platform in ('GAP9', 'GAP9_w_NE16'):  # -- QW: NE16 variant needs the image too
+        if config.simulator == 'board':
+            cmd.append(f"image_{config.test_name}")
+        else:
+            cmd.append("image")
 
     env = os.environ.copy()
     if config.verbose >= 3:
@@ -185,6 +196,31 @@ def run_simulation(config: DeeployTestConfig, skip: bool = False) -> TestResult:
 
     if config.simulator == 'none':
         raise RuntimeError("No simulator specified!")
+
+    if config.simulator == 'board':
+        board_workdir = Path(config.build_dir) / "board_workdir"
+        # GAP9 puts the binary at build_dir/ directly (CMAKE_RUNTIME_OUTPUT_DIRECTORY
+        # is set to CMAKE_BINARY_DIR for GAP9, not the default bin/ subdirectory).
+        binary_path = Path(config.build_dir) / config.test_name
+        if not binary_path.exists():
+            binary_path = Path(config.build_dir) / "bin" / config.test_name
+
+        mram_bin = board_workdir / "mram.bin"
+        flash_bin = board_workdir / "flash.bin"
+
+        print(f"\nFlash images ready in: {board_workdir}")
+        print(f"  mram.bin  — MRAM (FSBL + SSBL + partition table + app)")
+        if flash_bin.exists():
+            print(f"  flash.bin — OSPI readfs (input hex files)")
+        print(f"\nTransfer to the measurement host and run:")
+        scp_files = [str(mram_bin)]
+        if flash_bin.exists():
+            scp_files.append(str(flash_bin))
+        scp_files.append(str(binary_path))
+        print(f"  scp {' '.join(scp_files)} \\")
+        print(f"      <user>@<host>:<images_dir>/")
+        print(f"  ssh <user>@<host> 'bash <run_power_script>'")
+        return TestResult(success = True, error_count = 0, total_count = 0, stdout = "Board images generated")
 
     if config.simulator == 'host':
         # Run binary directly

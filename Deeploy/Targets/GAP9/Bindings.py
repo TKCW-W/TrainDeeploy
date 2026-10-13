@@ -24,10 +24,12 @@ from Deeploy.Targets.GAP9.DMA.MchanDma import GAP9MchanDma
 # Import templates from PULPOpen and Generic
 from Deeploy.Targets.Generic.Templates import AddTemplate, ConcatTemplate, DequantTemplate, FloatReduceMeanTemplate, \
     FloatReduceSumTemplate, GatherTemplate, QuantTemplate, RQSiGELUTemplate, SliceTemplate, iHardswishTemplate
-from Deeploy.Targets.Generic.TypeCheckers import AddChecker, ConcatChecker, ConvChecker, DequantChecker, \
-    GatherChecker, GELUChecker, GEMMChecker, HardswishChecker, LayerNormChecker, MatMulChecker, MulChecker, \
-    QuantChecker, ReduceMeanChecker, ReluChecker, ReshapeChecker, RQAddChecker, RQHardswishChecker, SGDChecker, \
-    SliceChecker, SoftmaxChecker, SoftmaxCrossEntropyLossChecker, TransposeChecker
+from Deeploy.Targets.Generic.TypeCheckers import AddChecker, BatchNormalizationGradChecker, BatchNormInternalChecker, \
+    ConcatChecker, ConvChecker, DequantChecker, GatherChecker, GELUChecker, GEMMChecker, GlobalAveragePoolChecker, \
+    GlobalAveragePoolGradChecker, HardswishChecker, InPlaceAccumulatorV2Checker, LayerNormChecker, MatMulChecker, \
+    MaxPoolGradChecker, MSELossChecker, MulChecker, PULPConvGradBChecker, QuantChecker, ReduceMeanChecker, \
+    ReluChecker, ReshapeChecker, RQAddChecker, RQHardswishChecker, SGDChecker, SliceChecker, SoftmaxChecker, \
+    SoftmaxCrossEntropyLossChecker, TransposeChecker
 from Deeploy.Targets.PULPOpen.Bindings import ForkClosure, L3MemoryAwareFunctionCallClosure, \
     MemoryAwareForkTransformer, MemoryAwareFunctionCallClosure, TilingCallClosure
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterSynch import PULPSynchCoresPass
@@ -35,14 +37,16 @@ from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterTiling import 
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPL3Tiling import PULPL3Tiling
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPProfileUntiled import PULPProfileUntiled
 from Deeploy.Targets.PULPOpen.DataTypes import PULPDMAFuture
-from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, FloatConvTemplate, \
-    FloatGELUTemplate, FloatGemmTemplate, FloatLayernormTemplate, FloatMatMulTemplate, FloatMaxPoolTemplate, \
-    FloatMulTemplate, FloatReluTemplate, FloatSoftmaxTemplate, GEMMTemplate, MatrixVectorTemplate, MaxPoolTemplate, \
-    MulTemplate, ReduceMeanTemplate, RequantShiftTemplate, ReshapeTemplate, RQAddTemplate, RQSiHardswishTemplate, \
-    SGDTemplate, SoftmaxCrossEntropyLossTemplate, TallGEMMTemplate, TransposeTemplate, UniformRequantShiftTemplate, \
+from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, \
+    FloatAveragePoolTemplate, FloatBatchNormTemplate, FloatConvGradTemplate, FloatConvTemplate, FloatGELUTemplate, \
+    FloatGemmTemplate, FloatGlobalAveragePoolTemplate, FloatInPlaceAccumulatorV2Template, FloatLayernormTemplate, \
+    FloatMatMulDequantTemplate, FloatMatMulTemplate, FloatMaxPoolTemplate, FloatMulTemplate, FloatReluTemplate, \
+    FloatSoftmaxTemplate, GEMMTemplate, MatrixVectorTemplate, MaxPoolTemplate, MSELossTemplate, MulTemplate, \
+    ReduceMeanTemplate, RequantShiftTemplate, ReshapeTemplate, RQAddTemplate, RQSiHardswishTemplate, SGDTemplate, \
+    SoftmaxCrossEntropyLossTemplate, TallGEMMTemplate, TransposeTemplate, UniformRequantShiftTemplate, \
     iRMSNormTemplate, iSoftmaxTemplate
-from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPLinearChecker, PULPMaxPoolChecker, \
-    PULPRequantShiftChecker
+from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPDequantConvChecker, PULPDequantGEMMChecker, \
+    PULPDequantMatMulChecker, PULPLinearChecker, PULPMaxPoolChecker, PULPRequantShiftChecker
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingVariableReplacement import TilingVariableReplacement, \
     TilingVariableReplacementUpdate
 
@@ -58,7 +62,11 @@ GAP9Transformer = CodeTransformation([
     MemoryManagementGeneration("L1"),
     TilingVariableReplacement("L2"),
     MemoryAwareFunctionCallClosure(writeback = False, generateStruct = True),
-    PULPL3Tiling("L3", "L2", gap9L3DmaHack),  # Use GAP9-specific L3 DMA
+    # Async L3 DMA for both SB and DB. Anydim now serializes the decomposed
+    # sub-transfers on the shared handle (port of pulp-platform/Deeploy#198),
+    # so async is safe for strided 2D ConvGrad L3 transfers too — no need for
+    # the SB blocking wrapper.
+    PULPL3Tiling("L3", "L2", gap9L3DmaHack),
     PULPProfileUntiled(),
     ArgumentStructGeneration(),
     L3MemoryAwareFunctionCallClosure(writeback = False),
@@ -78,7 +86,11 @@ GAP9ClusterTransformer = CodeTransformation([
     MemoryManagementGeneration("L1"),
     TilingVariableReplacement("L2"),
     MemoryAwareFunctionCallClosure(writeback = False, generateStruct = True),
-    PULPL3Tiling("L3", "L2", gap9L3DmaHack),  # Use GAP9-specific L3 DMA
+    # Async L3 DMA for both SB and DB. Anydim now serializes the decomposed
+    # sub-transfers on the shared handle (port of pulp-platform/Deeploy#198),
+    # so async is safe for strided 2D ConvGrad L3 transfers too — no need for
+    # the SB blocking wrapper.
+    PULPL3Tiling("L3", "L2", gap9L3DmaHack),
     PULPProfileUntiled(),
     ArgumentStructGeneration(),
     L3MemoryAwareFunctionCallClosure(writeback = False),
@@ -119,15 +131,22 @@ GAP9DMASliceBindings = [
     for type in IntegerDataTypes
 ]
 
+# starts/ends/axes/steps are indices, not data: their width follows the extent of the
+# tensor being sliced, not its element type. Hardcoding uint8_t offered four bindings,
+# all of them unusable once any bound exceeds 255, and the node was then reported as
+# having no adequate mapping for the whole graph. The identical SliceTemplate is bound
+# across every integer type by PULPSliceBindings, so the template already handles it.
 GAP9SliceBindings = [
     NodeBinding(
         SliceChecker([
             PointerClass(type),
-            PointerClass(uint8_t),
-            PointerClass(uint8_t),
-            PointerClass(uint8_t),
-            PointerClass(uint8_t)
-        ], [PointerClass(type)]), SliceTemplate.referenceTemplate, GAP9Transformer) for type in FloatDataTypes
+            PointerClass(index_type),
+            PointerClass(index_type),
+            PointerClass(index_type),
+            PointerClass(index_type)
+        ], [PointerClass(type)]), SliceTemplate.referenceTemplate, GAP9Transformer)
+    for type in FloatDataTypes
+    for index_type in IntegerDataTypes
 ]
 
 GAP9ReshapeBindings = [
@@ -148,6 +167,12 @@ GAP9AddBindings = [
                 AddTemplate.referenceTemplate, GAP9Transformer)
     for type1 in IntegerDataTypes
     for type2 in IntegerDataTypes
+] + [
+    # fp32 activations against an int8 weight whose Dequant has been folded in, so
+    # the dequantised weight is never materialised. GAP9 keeps its own binding list;
+    # adding this to PULPMatMulBindings alone has no effect here.
+    NodeBinding(PULPDequantMatMulChecker([PointerClass(float32_t), PointerClass(int8_t)], [PointerClass(float32_t)]),
+                FloatMatMulDequantTemplate.referenceTemplate, GAP9Transformer)
 ] + [
     NodeBinding(AddChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatAddTemplate.referenceTemplate, GAP9Transformer)
@@ -187,6 +212,22 @@ GAP9RQSGEMM_8_Binding = [
 ]
 
 GAP9FloatGEMMBindings = [
+    # int8 weight with the Dequant folded in. Needed on the BACKWARD Gemm too, not
+    # just the forward MatMul: they share the weight constant, and if the backward
+    # one selects an fp32 binding, typeInferGlobalCtxt re-types the shared constant
+    # to float and its allocation quadruples.
+    NodeBinding(
+        PULPDequantGEMMChecker(
+            [PointerClass(float32_t), PointerClass(int8_t),
+             PointerClass(float32_t)], [PointerClass(float32_t)]), FloatGemmTemplate.referenceDequantTemplate,
+        GAP9Transformer),
+    # fp32 first. A binding is matched before a weight constant's type is fixed, and
+    # typeInferGlobalCtxt then types that constant from the SELECTED binding's
+    # input_types. With the int8 variant first, an ordinary fp32 weight is claimed by
+    # it and retyped to int8, silently quantising it: the FP32 Conv kernel test
+    # failed 512 of 512 and the emitted GAP9 call had no visible declaration. A
+    # genuinely int8 constant already carries that type, so the fp32 checker rejects
+    # it and the int8 binding below still wins.
     NodeBinding(
         GEMMChecker([PointerClass(float32_t), PointerClass(float32_t),
                      PointerClass(float32_t)], [PointerClass(float32_t)]), FloatGemmTemplate.referenceTemplate,
@@ -194,6 +235,14 @@ GAP9FloatGEMMBindings = [
 ]
 
 GAP9FloatConv2DBindings = [
+    # int8 weight with the Dequant folded in. GAP9 keeps its own binding list, so
+    # this has to be added here and not only in PULPFloatConv2DBindings.
+    NodeBinding(
+        PULPDequantConvChecker(
+            [PointerClass(float32_t), PointerClass(int8_t),
+             PointerClass(float32_t)], [PointerClass(float32_t)]), FloatConvTemplate.reference2DIm2ColDequantTemplate,
+        GAP9Transformer),
+    # fp32 first, for the reason given on GAP9FloatGEMMBindings above.
     NodeBinding(
         ConvChecker([PointerClass(float32_t), PointerClass(float32_t),
                      PointerClass(float32_t)], [PointerClass(float32_t)]), FloatConvTemplate.reference2DIm2ColTemplate,
@@ -206,6 +255,26 @@ GAP9FloatDWConv2DBindings = [
             [PointerClass(float_type), PointerClass(float_type),
              PointerClass(float_type)], [PointerClass(float_type)]), FloatConvTemplate.referenceDW2DIm2ColTemplate,
         GAP9Transformer) for float_type in FloatDataTypes
+]
+
+# RW: channels-first (NCHW) forward conv bindings. These call the trainlib
+# *_CHW forward kernels (pulp_conv2d_fp32_fw_cl / pulp_conv_dw_fp32_fw_cl),
+# which fork internally on the cluster (master-core dispatch), so they bind via
+# GAP9ClusterTransformer like the ConvGrad forward-style kernels — NOT the
+# per-core GAP9Transformer used by the HWC kernels.
+GAP9FloatConv2DCHWBindings = [
+    NodeBinding(
+        ConvChecker([PointerClass(float32_t), PointerClass(float32_t),
+                     PointerClass(float32_t)], [PointerClass(float32_t)]),
+        FloatConvTemplate.reference2DIm2ColTemplate_CHW, GAP9ClusterTransformer)
+]
+
+GAP9FloatDWConv2DCHWBindings = [
+    NodeBinding(
+        ConvChecker(
+            [PointerClass(float_type), PointerClass(float_type),
+             PointerClass(float_type)], [PointerClass(float_type)]), FloatConvTemplate.referenceDW2DIm2ColTemplate_CHW,
+        GAP9ClusterTransformer) for float_type in FloatDataTypes
 ]
 
 GAP9RQSMatrixVecBindings = [
@@ -236,6 +305,13 @@ GAP9MaxPool2DBindings = [
                 FloatMaxPoolTemplate.referenceTemplate, GAP9Transformer)
 ]
 
+# Needed only when the layer before a MaxPool is trained, e.g. a CCT whose conv
+# tokenizer is fine-tuned too; frozen tokenizers never produce the gradient.
+GAP9MaxPoolGrad2DBindings = [
+    NodeBinding(MaxPoolGradChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatMaxPoolTemplate.referenceGradTemplate, GAP9Transformer)
+]
+
 GAP9Conv1DBinding = NodeBinding(
     PULPConvChecker(
         [PointerClass(int8_t), PointerClass(int8_t),
@@ -251,6 +327,13 @@ GAP9DWConv1DBinding = NodeBinding(
 GAP9MatMulBindings = [
     NodeBinding(MatMulChecker([PointerClass(int8_t), PointerClass(int8_t)], [PointerClass(int32_t)]),
                 GEMMTemplate.PULPMM_8_Template, GAP9ClusterTransformer)
+] + [
+    # int8 weight with the Dequant folded in. PULPDequantMatMulChecker matches only a
+    # node the fold marked with dequant_scale, so this must come first to be reached
+    # at all (binding selection stops at the first type check that passes) while
+    # staying invisible to an ordinary fp32 graph.
+    NodeBinding(PULPDequantMatMulChecker([PointerClass(float32_t), PointerClass(int8_t)], [PointerClass(float32_t)]),
+                FloatMatMulDequantTemplate.referenceTemplate, GAP9Transformer)
 ] + [
     NodeBinding(MatMulChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatMatMulTemplate.referenceTemplate, GAP9Transformer)
@@ -322,7 +405,8 @@ GAP9SoftmaxCrossEntropyLossBindings = [
 
 GAP9SoftmaxCrossEntropyLossGradBindings = [
     NodeBinding(
-        SoftmaxCrossEntropyLossChecker([PointerClass(float32_t), PointerClass(type)], [PointerClass(float32_t)]),
+        SoftmaxCrossEntropyLossChecker([PointerClass(float32_t), PointerClass(type)],
+                                       [PointerClass(float32_t), PointerClass(float32_t)]),
         SoftmaxCrossEntropyLossTemplate.referenceGradientTemplate, GAP9Transformer) for type in IntegerDataTypes
 ]
 
@@ -342,6 +426,11 @@ GAP9TransposeBindings = [
 GAP9ConcatBindings = [
     NodeBinding(ConcatChecker([PointerClass(type), PointerClass(type)], [PointerClass(type)]),
                 ConcatTemplate.referenceTemplate, GAP9ClusterTransformer) for type in IntegerDataTypes
+] + [
+    # RW: float Concat (byte-wise memcpy template, dtype-agnostic). Needed for
+    # FP32 models with Concat (e.g. SleepConViT ConvStem + cls-token prepend).
+    NodeBinding(ConcatChecker([PointerClass(type), PointerClass(type)], [PointerClass(type)]),
+                ConcatTemplate.referenceTemplate, GAP9ClusterTransformer) for type in FloatDataTypes
 ]
 
 GAP9iRMSNormBindings = [
@@ -386,13 +475,22 @@ GAP9ReluBinding = NodeBinding(ReluChecker([PointerClass(float32_t)], [PointerCla
 
 GAP9LayernormBinding = NodeBinding(
     LayerNormChecker(
+        # inputs: data_in (X), weight (scale/gamma), bias (beta)
         [PointerClass(float32_t), PointerClass(float32_t),
-         PointerClass(float32_t)], [PointerClass(float32_t)]), FloatLayernormTemplate.referenceTemplate,
+         PointerClass(float32_t)],
+        # outputs: data_out (Y), mean stash, inv_std_dev stash
+        [PointerClass(float32_t), PointerClass(float32_t),
+         PointerClass(float32_t)]),
+    FloatLayernormTemplate.referenceTemplate,
     GAP9Transformer)
 
 GAP9FloatGELUBinding = NodeBinding(
     GELUChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
     FloatGELUTemplate.referenceTemplate, GAP9Transformer)
+
+GAP9FloatGELUGradBinding = NodeBinding(
+    GELUChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+    FloatGELUTemplate.referenceGradTemplate, GAP9Transformer)
 
 GAP9GatherBindings = [
     NodeBinding(GatherChecker([PointerClass(float32_t), PointerClass(type)], [PointerClass(float32_t)]),
@@ -411,3 +509,122 @@ GAP9DequantBindings = [
     NodeBinding(DequantChecker([PointerClass(int32_t)], [PointerClass(float32_t)]), DequantTemplate.referenceTemplate,
                 GAP9Transformer),
 ]
+
+# ===========================================================================
+# Training op bindings (FP32 backward/loss/optimizer)
+# All use GAP9Transformer (ForkTransformer equivalent) or
+# GAP9ClusterTransformer (ClusterTransformer equivalent).
+# ===========================================================================
+
+GAP9FloatConvGradW2DBindings = [
+    NodeBinding(ConvChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatConvGradTemplate.referenceConvGradW2DIm2ColTemplate, GAP9ClusterTransformer)
+]
+
+# RW: Use the scatter ConvGradX kernel (like Siracusa/PULPOpen), NOT the Im2Col one.
+# The Im2Col variant materialises a P*Q-expanded im2col buffer
+# (4 * Hout*Wout * Cout * P*Q -> 576 KB for the 32x32 early layers, ~4.5x L1),
+# forcing it to tile into hundreds of tiny strips (layer1 -> 384 tiles) that never
+# use the L1 budget, capping the usable arena and tripping a tile-geometry OOB at
+# higher --l1. The scatter kernel computes dX in place (no im2col), tiles into 1-3
+# blocks, and uses L1 efficiently -- the reason Siracusa is ~1.8x faster here.
+GAP9FloatConvGradX2DBindings = [
+    NodeBinding(ConvChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatConvGradTemplate.referenceConvGradX2DTemplate, GAP9Transformer)
+]
+
+GAP9FloatDWConvGradW2DBindings = [
+    NodeBinding(ConvChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatConvGradTemplate.referenceDWConvGradW2DTemplate, GAP9ClusterTransformer)
+]
+
+GAP9FloatDWConvGradX2DBindings = [
+    # RW: must be GAP9ClusterTransformer (master-only closure), NOT GAP9Transformer.
+    # referenceDWConvGradX2DTiledTemplate calls PULP_DWConvGradX2d..._tiled which does
+    # pi_cl_team_fork INTERNALLY. With a ForkClosure (GAP9Transformer) the closure is
+    # itself forked to all cores -> nested pi_cl_team_fork -> the single-level cluster EU
+    # dispatch desyncs, a worker reads a stale dispatch entry and jumps to garbage
+    # (manifested as the node_64/block-10 DW ConvGradX crash). DWConvGradW2D above
+    # correctly uses GAP9ClusterTransformer for the same reason.
+    NodeBinding(ConvChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatConvGradTemplate.referenceDWConvGradX2DTiledTemplate, GAP9ClusterTransformer)
+]
+
+GAP9FloatPWConvGradW2DBindings = [
+    NodeBinding(ConvChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatConvGradTemplate.referencePWConvGradW2DTemplate, GAP9ClusterTransformer)
+]
+
+GAP9FloatPWConvGradX2DBindings = [
+    NodeBinding(ConvChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatConvGradTemplate.referencePWConvGradX2DTemplate, GAP9ClusterTransformer)
+]
+
+GAP9FloatConvGradBBindings = [
+    NodeBinding(PULPConvGradBChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatConvGradTemplate.referenceConvGradB2DTemplate, GAP9ClusterTransformer)
+]
+
+GAP9AveragePoolGrad2DBindings = [
+    NodeBinding(PULPMaxPoolChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatAveragePoolTemplate.referenceGradTemplate, GAP9Transformer)
+]
+
+GAP9GlobalAveragePool2DBindings = [
+    NodeBinding(GlobalAveragePoolChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatGlobalAveragePoolTemplate.globalAveragePoolTemplate, GAP9Transformer)
+]
+
+GAP9GlobalAveragePoolGrad2DBindings = [
+    NodeBinding(GlobalAveragePoolGradChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatGlobalAveragePoolTemplate.globalAveragePoolGradTemplate, GAP9Transformer)
+]
+
+GAP9BatchNormInternalBindings = [
+    NodeBinding(BatchNormInternalChecker([PointerClass(float32_t)] * 5, [PointerClass(float32_t)] * 5),
+                FloatBatchNormTemplate.batchNormInternalTemplate, GAP9Transformer)
+]
+
+GAP9BatchNormalizationGradBindings = [
+    NodeBinding(BatchNormalizationGradChecker([PointerClass(float32_t)] * 5, [PointerClass(float32_t)] * 3),
+                FloatBatchNormTemplate.batchNormGradTemplate, GAP9Transformer)
+]
+
+GAP9MSELossBindings = [
+    NodeBinding(MSELossChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                MSELossTemplate.referenceTemplate, GAP9Transformer)
+]
+
+GAP9MSELossGradBindings = [
+    NodeBinding(MSELossChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                MSELossTemplate.referenceGradientTemplate, GAP9Transformer)
+]
+
+GAP9ReluGradBinding = NodeBinding(
+    ReluChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+    FloatReluTemplate.referenceGradTemplate, GAP9Transformer)
+
+# Parallel (8-core) accumulation. The single-core binding below it was chosen
+# when dense back-to-back accumulator forks were seen to lock up the GVSoC EU
+# dispatch unit, on the assumption that "accumulation is cheap & elementwise".
+# That holds for MAC-dense models (1.2% of DS-CNN-S, 2.5% of ResNet-8) but not
+# for parameter-dense ones: accumulation cost scales with PARAMETER COUNT while
+# the backward scales with MACs, so on the MLperf AD autoencoder (268 K params,
+# 0.26 M MACs) it was 55.5% of the training cycles while running on 1 of 8 cores.
+GAP9InPlaceAccumulatorV2Bindings = [
+    NodeBinding(
+        InPlaceAccumulatorV2Checker(
+            [PointerClass(float32_t), PointerClass(float32_t),
+             PointerClass(uint8_t)], [PointerClass(float32_t)]), FloatInPlaceAccumulatorV2Template.referenceTemplate,
+        GAP9Transformer)
+]
+
+GAP9LayernormGradBinding = NodeBinding(
+    LayerNormChecker([
+        PointerClass(float32_t),
+        PointerClass(float32_t),
+        PointerClass(float32_t),
+        PointerClass(float32_t),
+        PointerClass(float32_t)
+    ], [PointerClass(float32_t), PointerClass(float32_t),
+        PointerClass(float32_t)]), FloatLayernormTemplate.referenceGradTemplate, GAP9Transformer)

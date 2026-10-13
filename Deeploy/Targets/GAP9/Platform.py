@@ -11,38 +11,54 @@ from Deeploy.MemoryLevelExtension.MemoryLevels import MemoryHierarchy, MemoryLev
 from Deeploy.MemoryLevelExtension.NetworkDeployers.MemoryLevelDeployer import MemoryPlatform, MemoryPlatformWrapper
 from Deeploy.Targets.GAP9.Templates import AllocateTemplate, FreeTemplate
 # Import GAP9-specific tiler bindings
-from Deeploy.Targets.GAP9.Tiler import GAP9AddTilingReadyBindings, GAP9ConcatTilingReadyBindings, \
-    GAP9Conv2DTilingReadyBindings, GAP9DWConv2DTilingReadyBindings, GAP9FlattenTilingReadyBindings, \
+from Deeploy.Targets.GAP9.Tiler import GAP9AddTilingReadyBindings, GAP9AveragePoolGrad2DTilingReadyBindings, \
+    GAP9BatchNormalizationGradTilingReadyBindings, GAP9BatchNormInternalTilingReadyBindings, \
+    GAP9ConcatTilingReadyBindings, GAP9Conv2DCHWTilingReadyBindings, GAP9Conv2DTilingReadyBindings, \
+    GAP9ConvGradBTilingReadyBindings, GAP9ConvGradW2DTilingReadyBindings, GAP9ConvGradX2DTilingReadyBindings, \
+    GAP9DWConv2DCHWTilingReadyBindings, GAP9DWConv2DTilingReadyBindings, GAP9DWConvGradW2DTilingReadyBindings, \
+    GAP9DWConvGradX2DTilingReadyBindings, GAP9FlattenTilingReadyBindings, GAP9FPGELUGradTilingReadyBindings, \
     GAP9FPGELUTilingReadyBindings, GAP9FPGEMMTilingReadyBindings, GAP9GatherTilingReadyBindings, \
-    GAP9iHardswishTilingReadyBindings, GAP9iRMSNormTilingReadyBindings, GAP9iRQSGELUTilingReadyBindings, \
-    GAP9LayernormTilingReadyBindings, GAP9MatMulTilingReadyBindings, GAP9MaxPool2DTilingReadyBindings, \
-    GAP9MulTilingReadyBindings, GAP9ReduceSumTilingReadyBindings, GAP9ReluTilingReadyBindings, \
-    GAP9RQAddTilingReadyBindings, GAP9RQSConv2DTilingReadyBindings, GAP9RQSDWConv2DTilingReadyBindings, \
-    GAP9RQSGEMMTilingReadyBindings, GAP9RQSiHardswishTilingReadyBindings, GAP9RQSMatrixVecTilingReadyBindings, \
-    GAP9RQSTallGEMMTilingReadyBindings, GAP9RQSTilingReadyBindings, GAP9SGDTilingReadyBindings, \
+    GAP9GlobalAveragePool2DTilingReadyBindings, GAP9GlobalAveragePoolGrad2DTilingReadyBindings, \
+    GAP9iHardswishTilingReadyBindings, GAP9InPlaceAccumulatorV2TilingReadyBindings, GAP9iRMSNormTilingReadyBindings, \
+    GAP9iRQSGELUTilingReadyBindings, GAP9LayernormGradTilingReadyBindings, GAP9LayernormTilingReadyBindings, \
+    GAP9MatMulTilingReadyBindings, GAP9MaxPool2DTilingReadyBindings, GAP9MaxPoolGrad2DTilingReadyBindings, \
+    GAP9MSELossGradTilingReadyBindings, GAP9MSELossTilingReadyBindings, GAP9MulTilingReadyBindings, \
+    GAP9PWConvGradW2DTilingReadyBindings, GAP9PWConvGradX2DTilingReadyBindings, GAP9ReduceSumTilingReadyBindings, \
+    GAP9ReluGradTilingReadyBindings, GAP9ReluTilingReadyBindings, GAP9RQAddTilingReadyBindings, \
+    GAP9RQSConv2DTilingReadyBindings, GAP9RQSDWConv2DTilingReadyBindings, GAP9RQSGEMMTilingReadyBindings, \
+    GAP9RQSiHardswishTilingReadyBindings, GAP9RQSMatrixVecTilingReadyBindings, GAP9RQSTallGEMMTilingReadyBindings, \
+    GAP9RQSTilingReadyBindings, GAP9SGDTilingReadyBindings, GAP9SliceTilingReadyBindings, \
     GAP9SoftmaxCrossEntropyGradTilingReadyBindings, GAP9SoftmaxCrossEntropyTilingReadyBindings, \
     GAP9SoftmaxGradTilingReadyBindings, GAP9SoftmaxTilingReadyBindings, GAP9TransposeTilingReadyBindings, \
     GAP9UniformRQSTilingReadyBindings
 from Deeploy.Targets.Generic.Bindings import BasicGEMMBindings, BasicPad1DBindings, BasicPad2DBindings, \
     BasicRQIntegerDivBinding
-from Deeploy.Targets.Generic.Layers import AddLayer, ConcatLayer, ConvLayer, GatherLayer, GELULayer, GEMMLayer, \
-    LayerNormLayer, MatMulLayer, MaxPoolLayer, MulLayer, PadLayer, QuantLayer, ReduceMeanLayer, ReduceSumLayer, \
-    ReluLayer, RequantShiftLayer, ReshapeLayer, RQIntegerDivLayer, RQSiGELULayer, RQSiHardswishLayer, SGDLayer, \
-    SliceLayer, SoftmaxCrossEntropyLossGradLayer, SoftmaxCrossEntropyLossLayer, SoftmaxGradLayer, SoftmaxLayer, \
-    TransposeLayer, iHardswishLayer, iRMSNormLayer
-from Deeploy.Targets.Generic.Parsers import AddParser, ConcatParser, DequantParser, FlattenParser, GatherParser, \
-    GELUParser, GEMMParser, LayerNormParser, MatMulParser, MaxPool2DParser, MulParser, Pad1DParser, Pad2DParser, \
-    QuantParser, ReduceMeanParser, ReduceSumParser, ReluParser, RequantShiftParser, ReshapeParser, RQAddParser, \
+from Deeploy.Targets.Generic.Layers import AddLayer, AveragePoolGradLayer, BatchNormalizationGradLayer, \
+    BatchNormInternalLayer, ConcatLayer, ConvGradBLayer, ConvGradWLayer, ConvGradXLayer, ConvLayer, GatherLayer, \
+    GELUGradLayer, GELULayer, GlobalAveragePoolGradLayer, GlobalAveragePoolLayer, InPlaceAccumulatorV2Layer, \
+    LayerNormGradLayer, LayerNormLayer, MatMulLayer, MaxPoolGradLayer, MaxPoolLayer, MSELossGradLayer, MSELossLayer, \
+    PadLayer, QuantLayer, ReduceMeanLayer, ReduceSumLayer, ReluGradLayer, ReluLayer, RequantShiftLayer, ReshapeLayer, \
+    RQIntegerDivLayer, RQSiGELULayer, RQSiHardswishLayer, SGDLayer, SliceLayer, SoftmaxCrossEntropyLossGradLayer, \
+    SoftmaxCrossEntropyLossLayer, SoftmaxGradLayer, SoftmaxLayer, TransposeLayer, iHardswishLayer, iRMSNormLayer
+from Deeploy.Targets.Generic.Parsers import AddParser, AveragePool2DParser, BatchNormalizationGradParser, \
+    BatchNormInternalParser, ConcatParser, Conv2DGradBParser, DequantParser, FlattenParser, GatherParser, \
+    GELUGradParser, GELUParser, GEMMParser, GlobalAveragePoolGradParser, GlobalAveragePoolParser, \
+    InPlaceAccumulatorV2Parser, LayerNormGradParser, LayerNormParser, MatMulParser, MaxPool2DParser, \
+    MaxPoolGradParser, MSELossGradParser, MSELossParser, MulParser, Pad1DParser, Pad2DParser, QuantParser, \
+    ReduceMeanParser, ReduceSumParser, ReluGradParser, ReluParser, RequantShiftParser, ReshapeParser, RQAddParser, \
     RQIntegerDivParser, RQSiGELUParser, RQSiHardswishParser, SGDParser, SliceParser, \
     SoftmaxCrossEntropyLossGradParser, SoftmaxCrossEntropyLossParser, SoftmaxGradParser, SoftmaxParser, \
     TransposeParser, UniformRequantShiftParser, UnsqueezeParser, iHardswishParser, iRMSNormParser, iSoftmaxParser
 from Deeploy.Targets.Generic.Templates import AllocateTemplate as BasicAllocateTemplate
-from Deeploy.Targets.PULPOpen.Bindings import BasicDequantBindings, BasicQuantBindings, PULPDMASliceBindings, \
-    PULPDWConv1DBinding, PULPReduceMeanBindings, PULPRQSConv1DBindings, PULPSliceBindings
-from Deeploy.Targets.PULPOpen.Layers import PULPRQSConvLayer, PULPRQSGEMMLayer
-from Deeploy.Targets.PULPOpen.Parsers import PULPConv1DParser, PULPConv2DParser, PULPDWConv1DParser, \
-    PULPDWConv2DParser, PULPFPConv2DParser, PULPFPDWConv2DParser, PULPGEMMParser, PULPMatrixVecParser, \
-    PULPTallGEMMParser
+from Deeploy.Targets.PULPOpen.Bindings import PULPDMASliceBindings, PULPDWConv1DBinding, PULPReduceMeanBindings, \
+    PULPRQSConv1DBindings
+from Deeploy.Targets.PULPOpen.Layers import PULPAddLayer, PULPGEMMLayer, PULPMulLayer, PULPRQSConvLayer, \
+    PULPRQSGEMMLayer
+from Deeploy.Targets.PULPOpen.Parsers import PULPConv1DParser, PULPConv2DParser, PULPConvGradW2DParser, \
+    PULPConvGradX2DParser, PULPDWConv1DParser, PULPDWConv2DParser, PULPDWConvGradW2DParser, PULPDWConvGradX2DParser, \
+    PULPFPConv2DCHWParser, PULPFPConv2DParser, PULPFPDWConv2DCHWParser, PULPFPDWConv2DParser, PULPGEMMParser, \
+    PULPMatrixVecParser, PULPPWConvGradW2DParser, PULPPWConvGradX2DParser, PULPTallGEMMParser
+from Deeploy.Targets.PULPOpen.Tiler import PULPDequantTilingReadyBindings, PULPQuantTilingReadyBindings
 
 # -- QW: QZO / MeZO ops (BatchNormInternal, PerturbRademacher fp32, RQSPerturbRademacher int8).
 #        GAP9 has no GAP9-specific tiling bindings for these; the kernels are already compiled into
@@ -63,6 +79,7 @@ GAP9_RQAddMapper = NodeMapper(RQAddParser(), GAP9RQAddTilingReadyBindings)
 GAP9_AddMapper = NodeMapper(AddParser(), GAP9AddTilingReadyBindings)
 GAP9_FlattenMapper = NodeMapper(FlattenParser(), GAP9FlattenTilingReadyBindings)
 GAP9_GELUMapper = NodeMapper(GELUParser(), GAP9FPGELUTilingReadyBindings)
+GAP9_GELUGradMapper = NodeMapper(GELUGradParser(), GAP9FPGELUGradTilingReadyBindings)
 GAP9_GatherMapper = NodeMapper(GatherParser(), GAP9GatherTilingReadyBindings)
 GAP9_MulMapper = NodeMapper(MulParser(), GAP9MulTilingReadyBindings)
 GAP9_Pad1DMapper = NodeMapper(Pad1DParser(), BasicPad1DBindings)
@@ -80,6 +97,11 @@ GAP9_RQGELU_int8_Mapper = NodeMapper(RQSiGELUParser(), GAP9iRQSGELUTilingReadyBi
 GAP9_Conv1DMapper = NodeMapper(PULPConv1DParser(), PULPRQSConv1DBindings)
 GAP9_DWConv1DMapper = NodeMapper(PULPDWConv1DParser(), [PULPDWConv1DBinding])
 GAP9_FPConv2DMapper = NodeMapper(PULPFPConv2DParser(), GAP9Conv2DTilingReadyBindings)
+# Channels-first (NCHW) forward conv mappers. Their parsers only accept Conv nodes
+# tagged keep_channels_first (PULPConvKeepCHWPass), so they are placed ahead of the
+# HWC mappers in the 'Conv' mapping and untagged convs fall through to the HWC path.
+GAP9_FPConv2DCHWMapper = NodeMapper(PULPFPConv2DCHWParser(), GAP9Conv2DCHWTilingReadyBindings)
+GAP9_FPDWConv2DCHWMapper = NodeMapper(PULPFPDWConv2DCHWParser(), GAP9DWConv2DCHWTilingReadyBindings)
 GAP9_Conv2DMapper = NodeMapper(PULPConv2DParser(), GAP9RQSConv2DTilingReadyBindings)
 GAP9_FPDWConv2DMapper = NodeMapper(PULPFPDWConv2DParser(), GAP9DWConv2DTilingReadyBindings)
 GAP9_DWConv2DMapper = NodeMapper(PULPDWConv2DParser(), GAP9RQSDWConv2DTilingReadyBindings)
@@ -88,6 +110,7 @@ GAP9_FloatGEMMMapper = NodeMapper(GEMMParser(), GAP9FPGEMMTilingReadyBindings)
 GAP9_MatrixVecMapper = NodeMapper(PULPMatrixVecParser(), GAP9RQSMatrixVecTilingReadyBindings)
 GAP9_TallGEMMMapper = NodeMapper(PULPTallGEMMParser(), GAP9RQSTallGEMMTilingReadyBindings)
 GAP9_MaxPool2DMapper = NodeMapper(MaxPool2DParser(), GAP9MaxPool2DTilingReadyBindings)
+GAP9_MaxPoolGrad2DMapper = NodeMapper(MaxPoolGradParser(), GAP9MaxPoolGrad2DTilingReadyBindings)
 GAP9_LayerNormMapper = NodeMapper(LayerNormParser(), GAP9LayernormTilingReadyBindings)
 GAP9_ReluMapper = NodeMapper(ReluParser(), GAP9ReluTilingReadyBindings)
 GAP9_SoftmaxMapper = NodeMapper(SoftmaxParser(), GAP9SoftmaxTilingReadyBindings)
@@ -95,7 +118,7 @@ GAP9_SoftmaxGradMapper = NodeMapper(SoftmaxGradParser(), GAP9SoftmaxGradTilingRe
 GAP9_Softmax_int8_Mapper = NodeMapper(iSoftmaxParser(), GAP9SoftmaxTilingReadyBindings)
 GAP9_ConcatMapper = NodeMapper(ConcatParser(), GAP9ConcatTilingReadyBindings)
 GAP9_DMASliceMapper = NodeMapper(SliceParser(), PULPDMASliceBindings)
-GAP9_SliceMapper = NodeMapper(SliceParser(), PULPSliceBindings)
+GAP9_SliceMapper = NodeMapper(SliceParser(), GAP9SliceTilingReadyBindings)
 GAP9_iRMSNormMapper = NodeMapper(iRMSNormParser(), GAP9iRMSNormTilingReadyBindings)
 GAP9_iHardswishMapper = NodeMapper(iHardswishParser(), GAP9iHardswishTilingReadyBindings)
 GAP9_RQSiHardswishMapper = NodeMapper(RQSiHardswishParser(), GAP9RQSiHardswishTilingReadyBindings)
@@ -104,18 +127,33 @@ GAP9_SoftmaxCrossEntropyLossMapper = NodeMapper(SoftmaxCrossEntropyLossParser(),
 GAP9_SoftmaxCrossEntropyLossGradMapper = NodeMapper(SoftmaxCrossEntropyLossGradParser(),
                                                     GAP9SoftmaxCrossEntropyGradTilingReadyBindings)
 GAP9_SGDMapper = NodeMapper(SGDParser(), GAP9SGDTilingReadyBindings)
-# -- QW: tiled QZO graph needs tiling-ready Quant/Dequant (BasicQuant/DequantBindings are untiled →
-#        'PULPQuantTemplate' object has no attribute 'tileConstraint'). Use the PULPOpen tiling-ready
-#        bindings (UnaryTileConstraint), matching PULPMapping. Originals kept commented below.
-# GAP9_QuantMapper = NodeMapper(QuantParser(), BasicQuantBindings)
-# GAP9_DequantMapper = NodeMapper(DequantParser(), BasicDequantBindings)
-GAP9_QuantMapper = NodeMapper(QuantParser(), PULPQuantTilingReadyBindings)  # -- QW
-GAP9_DequantMapper = NodeMapper(DequantParser(), PULPDequantTilingReadyBindings)  # -- QW
+GAP9_QuantMapper = NodeMapper(QuantParser(), PULPQuantTilingReadyBindings)
+GAP9_DequantMapper = NodeMapper(DequantParser(), PULPDequantTilingReadyBindings)
 GAP9_GEMMDequantMapper = NodeMapper(PULPGEMMParser(), BasicGEMMBindings)
 
+# Training op mappers
+GAP9_ConvGradXMapper = NodeMapper(PULPConvGradX2DParser(), GAP9ConvGradX2DTilingReadyBindings)
+GAP9_DWConvGradXMapper = NodeMapper(PULPDWConvGradX2DParser(), GAP9DWConvGradX2DTilingReadyBindings)
+GAP9_PWConvGradXMapper = NodeMapper(PULPPWConvGradX2DParser(), GAP9PWConvGradX2DTilingReadyBindings)
+GAP9_ConvGradWMapper = NodeMapper(PULPConvGradW2DParser(), GAP9ConvGradW2DTilingReadyBindings)
+GAP9_DWConvGradWMapper = NodeMapper(PULPDWConvGradW2DParser(), GAP9DWConvGradW2DTilingReadyBindings)
+GAP9_PWConvGradWMapper = NodeMapper(PULPPWConvGradW2DParser(), GAP9PWConvGradW2DTilingReadyBindings)
+GAP9_ConvGradBMapper = NodeMapper(Conv2DGradBParser(), GAP9ConvGradBTilingReadyBindings)
+GAP9_AveragePoolGrad2DMapper = NodeMapper(AveragePool2DParser(), GAP9AveragePoolGrad2DTilingReadyBindings)
+GAP9_GlobalAveragePoolMapper = NodeMapper(GlobalAveragePoolParser(), GAP9GlobalAveragePool2DTilingReadyBindings)
+GAP9_GlobalAveragePoolGradMapper = NodeMapper(GlobalAveragePoolGradParser(),
+                                              GAP9GlobalAveragePoolGrad2DTilingReadyBindings)
+GAP9_BatchNormInternalMapper = NodeMapper(BatchNormInternalParser(), GAP9BatchNormInternalTilingReadyBindings)
+GAP9_BatchNormalizationGradMapper = NodeMapper(BatchNormalizationGradParser(),
+                                               GAP9BatchNormalizationGradTilingReadyBindings)
+GAP9_MSELossMapper = NodeMapper(MSELossParser(), GAP9MSELossTilingReadyBindings)
+GAP9_MSELossGradMapper = NodeMapper(MSELossGradParser(), GAP9MSELossGradTilingReadyBindings)
+GAP9_ReluGradMapper = NodeMapper(ReluGradParser(), GAP9ReluGradTilingReadyBindings)
+GAP9_InPlaceAccumulatorV2Mapper = NodeMapper(InPlaceAccumulatorV2Parser(), GAP9InPlaceAccumulatorV2TilingReadyBindings)
+GAP9_LayerNormGradMapper = NodeMapper(LayerNormGradParser(), GAP9LayernormGradTilingReadyBindings)
+
+
 # -- QW: QZO / MeZO mappers (reuse the PULPOpen tiling-ready bindings; kernels are in GAP9 deeploylib)
-GAP9_GlobalAveragePoolMapper = NodeMapper(GlobalAveragePoolParser(), PULPGlobalAveragePool2DTilingReadyBindings)  # -- QW (SpeechNet global_pool)
-GAP9_BatchNormInternalMapper = NodeMapper(BatchNormInternalParser(), PULPBatchNormInternalTilingReadyBindings)  # -- QW
 GAP9_PerturbRademacherMapper = NodeMapper(PerturbRademacherParser(), PULPPerturbRademacherTilingReadyBindings)  # -- QW (fp32 ZO op)
 GAP9_RQSPerturbRademacherMapper = NodeMapper(RQSPerturbRademacherParser(), PULPRQSPerturbRademacherTilingReadyBindings)  # -- QW (quantized ZO)
 
@@ -149,19 +187,23 @@ GAP9_NE16DualBiasMapper = NodeMapper(NE16DualBiasParser(), NE16DualBiasTilingRea
 # GAP9-specific mapping using ClDma
 GAP9Mapping = {
     'Conv':
-        ConvLayer([GAP9_FPConv2DMapper, GAP9_FPDWConv2DMapper]),
+        ConvLayer([GAP9_FPConv2DCHWMapper, GAP9_FPDWConv2DCHWMapper, GAP9_FPConv2DMapper, GAP9_FPDWConv2DMapper]),
     'RequantizedConv':
         PULPRQSConvLayer([GAP9_Conv2DMapper, GAP9_DWConv2DMapper, GAP9_Conv1DMapper, GAP9_DWConv1DMapper]),
     'RequantizedGemm':
         PULPRQSGEMMLayer([GAP9_MatrixVecMapper, GAP9_TallGEMMMapper, GAP9_GEMMMapper]),
     'Gemm':
-        GEMMLayer([GAP9_FloatGEMMMapper, GAP9_GEMMDequantMapper]),
+        PULPGEMMLayer([GAP9_FloatGEMMMapper, GAP9_GEMMDequantMapper]),
     'Gelu':
         GELULayer([GAP9_GELUMapper]),
+    'GeluGrad':
+        GELUGradLayer([GAP9_GELUGradMapper]),
     'LayerNormalization':
         LayerNormLayer([GAP9_LayerNormMapper]),
     'MaxPool':
         MaxPoolLayer([GAP9_MaxPool2DMapper]),
+    'MaxPoolGrad':
+        MaxPoolGradLayer([GAP9_MaxPoolGrad2DMapper]),
     'RequantizediGELU':
         RQSiGELULayer([GAP9_RQGELU_int8_Mapper]),
     'RQIntegerDiv':
@@ -181,13 +223,13 @@ GAP9Mapping = {
     'RequantShift':
         RequantShiftLayer([GAP9_UniformRequantShiftMapper, GAP9_RequantShiftMapper]),
     'Add':
-        AddLayer([GAP9_AddMapper]),
+        PULPAddLayer([GAP9_AddMapper]),
     'Flatten':
         ReshapeLayer([GAP9_FlattenMapper]),
     'Gather':
         GatherLayer([GAP9_GatherMapper]),
     'Mul':
-        MulLayer([GAP9_MulMapper]),
+        PULPMulLayer([GAP9_MulMapper]),
     'Pad':
         PadLayer([GAP9_Pad1DMapper, GAP9_Pad2DMapper]),
     'Relu':
@@ -224,11 +266,33 @@ GAP9Mapping = {
         SoftmaxCrossEntropyLossGradLayer([GAP9_SoftmaxCrossEntropyLossGradMapper]),
     'SGD':
         SGDLayer([GAP9_SGDMapper]),
-    # -- QW: QZO / MeZO ops (mirror PULPMapping so GAP9 can run the ZO train + update graphs)
+    'ConvGradX':
+        ConvGradXLayer([GAP9_PWConvGradXMapper, GAP9_DWConvGradXMapper, GAP9_ConvGradXMapper]),
+    'ConvGradW':
+        ConvGradWLayer([GAP9_PWConvGradWMapper, GAP9_DWConvGradWMapper, GAP9_ConvGradWMapper]),
+    'ConvGradB':
+        ConvGradBLayer([GAP9_ConvGradBMapper]),
+    'AveragePoolGrad':
+        AveragePoolGradLayer([GAP9_AveragePoolGrad2DMapper]),
     'GlobalAveragePool':
-        GlobalAveragePoolLayer([GAP9_GlobalAveragePoolMapper]),  # -- QW (SpeechNet forward global_pool)
+        GlobalAveragePoolLayer([GAP9_GlobalAveragePoolMapper]),
+    'GlobalAveragePoolGrad':
+        GlobalAveragePoolGradLayer([GAP9_GlobalAveragePoolGradMapper]),
     'BatchNormInternal':
-        BatchNormInternalLayer([GAP9_BatchNormInternalMapper]),  # -- QW (frozen-stat BN, flag-gated)
+        BatchNormInternalLayer([GAP9_BatchNormInternalMapper]),
+    'BatchNormalizationGrad':
+        BatchNormalizationGradLayer([GAP9_BatchNormalizationGradMapper]),
+    'MSELoss':
+        MSELossLayer([GAP9_MSELossMapper]),
+    'MSELossGrad':
+        MSELossGradLayer([GAP9_MSELossGradMapper]),
+    'ReluGrad':
+        ReluGradLayer([GAP9_ReluGradMapper]),
+    'InPlaceAccumulatorV2':
+        InPlaceAccumulatorV2Layer([GAP9_InPlaceAccumulatorV2Mapper]),
+    'LayerNormalizationGrad':
+        LayerNormGradLayer([GAP9_LayerNormGradMapper]),
+    # -- QW: QZO / MeZO ops (mirror PULPMapping so GAP9 can run the ZO train + update graphs)
     'PerturbRademacher':
         PerturbRademacherLayer([GAP9_PerturbRademacherMapper]),  # -- QW (fp32 ZO perturb)
     'RQSPerturbRademacher':

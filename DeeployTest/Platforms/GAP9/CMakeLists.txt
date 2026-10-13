@@ -47,7 +47,6 @@ else()
 endif()
 
 add_deeploy_executable(${ProjectId} EXCLUDE_FROM_ALL ${SOURCES})
-# add_executable(${ProjectId} ${SOURCES})
 target_include_directories(${ProjectId} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/inc)
 
 if(TRAINING OR MEZO_TRAINING)  # QW: MeZO links the same two OBJECT libs as BP -- QW
@@ -56,11 +55,42 @@ else()
     target_link_libraries(${ProjectId} PRIVATE ${NETWORK_LIB} deeploylib)
 endif()
 target_compile_options(${ProjectId} INTERFACE ${NETWORK_LIB})
+
+if(TRAINING)
+    # N_TRAIN_STEPS, N_ACCUM_STEPS, TRAINING_NUM_DATA_INPUTS are defined in
+    # the generated testinputs.h; do not redefine them here.
+endif()
+
 add_gvsoc_emulation(${ProjectId} "gap9.evk")
 add_board_deployment(${ProjectId} "gap9.evk")
 
 if(POWER_MEASUREMENT)
   target_compile_definitions(${ProjectId} PRIVATE POWER_MEASUREMENT)
+  # Operating point (FREQ_FC/CL/PE, optional VOLTAGE) is configured at the
+  # board-deployment level — see add_board_deployment() in cmake/gap9/gap9_board.cmake.
+  # Debug-only: -DPOWER_BISECT emits GPIO pulse bursts at each main() checkpoint
+  # to locate where on-board execution hangs before the ROI.
+  if(POWER_BISECT)
+    target_compile_definitions(${ProjectId} PRIVATE POWER_BISECT)
+  endif()
+endif()
+
+if(CC_STACK_SIZE)
+  target_compile_definitions(${ProjectId} PRIVATE CC_STACK_SIZE=${CC_STACK_SIZE})
+endif()
+
+# Per-model cluster slave-stack size (see deeploytraintest.c). The stacks live in
+# L1 (SDK default); this only shrinks them. Optional override per model.
+if(SLAVESTACKSIZE)
+  target_compile_definitions(${ProjectId} PRIVATE SLAVESTACKSIZE=${SLAVESTACKSIZE})
+endif()
+
+# Untiled baseline: "L1" buffers come from FC L2 and the mchan transfers become
+# memcpy, so the cluster computes over the L2 fabric instead of out of TCDM.
+# Both branches are emitted by codegen; this define selects the untiled one.
+if(DEEPLOY_L1_AS_L2)
+  target_compile_definitions(${ProjectId} PRIVATE DEEPLOY_L1_AS_L2)
+  message(STATUS "[cMake  ]   DEEPLOY_L1_AS_L2       = ON (untiled: compute from L2)")
 endif()
 
 if(MEZO_TRAINING)  # QW: MeZO (ZO) compile-time defines — parallel block alongside BP TRAINING -- QW

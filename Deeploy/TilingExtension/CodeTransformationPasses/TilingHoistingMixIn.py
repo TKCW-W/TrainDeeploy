@@ -5,6 +5,8 @@
 import math
 from typing import List, Mapping, Optional, Sequence, Tuple, Type, TypeVar, Union
 
+import numpy as np
+
 import Deeploy.CommonExtensions.DataTypes as BasicDataTypes
 from Deeploy.AbstractDataTypes import BaseType, PointerClass, VoidType
 from Deeploy.DeeployTypes import ConstantBuffer, NetworkContext, NodeTemplate, OperatorRepresentation, VariableBuffer, \
@@ -52,6 +54,10 @@ class TilingHoistingMixIn:
                      name: str,
                      values: List[int],
                      override_type: Optional[Type[BaseType]] = None) -> ConstantBuffer:
+        # RW: coerce numpy integers (e.g. Slice byte offsets derived from int64
+        # ONNX index constants) to python int — they are valid integer table
+        # values; the assert only needs to guard against genuine non-integers.
+        values = [int(v) if isinstance(v, np.integer) else v for v in values]
         assert all(isinstance(value, int) for value in values)
         cb = ctxt.ConstantBuffer(self.prefix + name, [len(values)], values)
         ctxt.add(cb, 'global')
@@ -60,7 +66,19 @@ class TilingHoistingMixIn:
         else:
             cb._type = PointerClass(BasicDataTypes.minimalIntegerType(values))
         cb._instance = cb._type(cb.name, ctxt)
-        cb._memoryLevel = self.memory
+        # These are constant tile *control* tables (numTiles / DMA cmd / size /
+        # dims / offsets) read by the (cluster) controller to drive the tiling
+        # loop and program DMAs -- not bulk tile data. Putting them in the
+        # innermost tile memory (L1/TCDM) wastes scarce L1 and, on GAP9, places
+        # them in the contended L1 region next to the cluster master stack: a
+        # deep stack write can clobber a single table entry, turning a DMA `cmd`
+        # into a garbage code pointer so mchan_transfer_wait() hangs forever
+        # (observed on MobileNetV1 training, OptimizerNetwork _sgd_blocks_5...).
+        # Keep them in the controller-addressable outer memory (L2) instead.
+        # Only redirect the L2->L1 pass; the L3->L2 pass must keep its tables in
+        # L2 (== self.memory), never L3. Platforms that don't tile into "L1"
+        # (different level naming) are unaffected.
+        cb._memoryLevel = "L2" if self.memory == "L1" else self.memory
         return cb
 
     def _hoistReference(self,

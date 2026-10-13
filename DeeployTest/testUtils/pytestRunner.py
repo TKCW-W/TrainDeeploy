@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
@@ -16,6 +17,16 @@ __all__ = [
     'configure_cmake',
     'run_simulation',
 ]
+
+# Tracks which Markdown sections we've already emitted a header for inside the
+# current pytest session. Keeps run_and_assert_test idempotent across
+# parametrised cases that share a section.
+_METRIC_SECTIONS_WRITTEN: set = set()
+
+# `BENCH train_cycles=<N> opt_cycles=<M> trainable_bytes=<K>` — printed once per
+# training run by the test harness; captured here so we can append a cycles
+# row to $GITHUB_STEP_SUMMARY for SB-vs-DB comparison.
+_TRAIN_BENCH_RE = re.compile(r"BENCH train_cycles=(\d+) opt_cycles=(\d+) trainable_bytes=(\d+)")
 
 
 def get_worker_id() -> str:
@@ -52,9 +63,12 @@ def create_test_config(
     training: bool = False,
     training_num_data_inputs: Optional[int] = None,
     training_tolerance: Optional[float] = None,
+    training_conv_channels_first: bool = False,
+    training_recompute_schedule: str = None,
     promote_to_l2: bool = False,
     promote_to_l2_strategy: str = "cycle-aware",
     promote_to_l2_headroom: int = 131072,
+    promote_to_l2_fetch_bytes: Optional[str] = None,
     gen_args: Optional[List[str]] = None,
     test_dir: Optional[str] = None,  # -- QW: fixture outside Tests/ (e.g. ../SpeechNet_Test/<name>)
 ) -> DeeployTestConfig:
@@ -77,7 +91,7 @@ def create_test_config(
 
     gen_args_list = list(gen_args) if gen_args else []
 
-    if cores is not None and platform in ["Siracusa", "Siracusa_w_neureka"]:
+    if cores is not None and platform in ["Siracusa", "Siracusa_w_neureka", "GAP9"]:
         gen_args_list.append(f"--cores={cores}")
 
     if tiling:
@@ -108,12 +122,23 @@ def create_test_config(
             gen_args_list.append("--promoteToL2IncludeActivations")
             gen_args_list.append("--promoteToL2MaxBufferBytes=0")
             gen_args_list.append(f"--promoteToL2Headroom={promote_to_l2_headroom}")
+            if promote_to_l2_fetch_bytes is not None:
+                # Measured per-tensor L3<->L2 traffic (DEEPLOY_FETCH_HARVEST on the same
+                # deployment with nothing promoted); ranks candidates by bytes actually
+                # saved instead of by consuming-node count.
+                gen_args_list.append(f"--promoteToL2FetchBytes={promote_to_l2_fetch_bytes}")
 
     if profile_untiled and not tiling and platform == "Siracusa":
         gen_args_list.append("--profileUntiled")
 
     if training and training_tolerance is not None:
         gen_args_list.append(f"--tolerance={training_tolerance}")
+
+    if training and training_conv_channels_first:
+        gen_args_list.append("--convChannelsFirst")
+
+    if training and training_recompute_schedule is not None:
+        gen_args_list.append(f"--recomputeSchedule={training_recompute_schedule}")
 
     config = DeeployTestConfig(
         test_name = test_name_clean,
@@ -179,7 +204,7 @@ def run_and_assert_test(test_name: str,
 
     cycles = getattr(result, "runtime_cycles", None)
     if cycles is None and getattr(result, "stdout", None):
-        # Training tests emit "BENCH train_cycles=N opt_cycles=M weight_sram=K"
+        # Training tests emit "BENCH train_cycles=N opt_cycles=M trainable_bytes=K"
         # instead of "Runtime: N cycles"; fall back to that format so the
         # training cycle reference table works the same as the inference one.
         import re as _re

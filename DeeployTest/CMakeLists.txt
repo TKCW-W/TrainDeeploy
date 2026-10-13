@@ -6,9 +6,26 @@ include_directories(${GENERATED_SOURCE})
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Untiled baseline (see Platforms/GAP9/CMakeLists.txt). The define must be in
+# scope for the *generated* network code and for deeploylib, not just for the
+# test executable: the L1 allocations and the mchan calls it switches live
+# there. Directory scope here covers every target created below.
+if(DEEPLOY_L1_AS_L2)
+  add_compile_definitions(DEEPLOY_L1_AS_L2)
+  if(TARGET deeploylib)
+    target_compile_definitions(deeploylib INTERFACE DEEPLOY_L1_AS_L2)
+  endif()
+endif()
+
 if(TRAINING OR MEZO_TRAINING)  # QW: build training/optimizer OBJECT libs for both BP and MeZO (ZO) -- QW
   add_library(training_network OBJECT ${GENERATED_SOURCE}/TrainingNetwork.c)
   target_link_libraries(training_network PUBLIC deeploylib)
+  # The codegen emits a #ifdef POWER_MEASUREMENT GPIO notch at the fwd/bwd
+  # boundary inside RunTrainingNetwork; the training_network object must see the
+  # define for it to compile in (the executable target alone is not enough).
+  if(POWER_MEASUREMENT)
+    target_compile_definitions(training_network PRIVATE POWER_MEASUREMENT)
+  endif()
   # Optimizer network (SGD kernel, compiled separately to allow different prefix)
   add_library(optimizer_network OBJECT ${GENERATED_SOURCE}/OptimizerNetwork.c)
   # -- QW exp13/14: strict fp32 for the generated training/optimizer graphs (inline Quant/Dequant/SCE) -- QW
@@ -105,14 +122,17 @@ elseif(platform STREQUAL GAP9 OR platform STREQUAL GAP9_w_NE16)  # -- QW
   endif()
 
   # Waive warnings in generated code
-  # QW: -Wno-error too — the generated ZO networks have benign incompatible-pointer-type /
-  #     implicit-decl warnings that the GAP9 toolchain escalates by default (Siracusa/pulp does
-  #     not); matches the training_network waiver in Platforms/GAP9/CMakeLists.txt. -- QW
+  # RW: --profileTiling instrumentation emits machine-generated patterns that trip
+  # several GCC -Werror classes (maybe-uninitialized on "..._measurements$" timing
+  # vars, old-style-declaration from "static" not leading, ...). These are
+  # generated, not hand-written, so demote ALL warnings to non-fatal for the
+  # network objects via -Wno-error (warnings still print; no effect on the SDK or
+  # on non-profiling builds, which simply produce no such warnings).
   if(TRAINING OR MEZO_TRAINING)  # QW: waive for both BP and MeZO (ZO) generated libs on GAP9 -- QW
     target_compile_options(training_network PRIVATE -Wno-pointer-sign -Wno-sign-compare -Wno-error)
     target_compile_options(optimizer_network PRIVATE -Wno-pointer-sign -Wno-sign-compare -Wno-error)
   else()
-    target_compile_options(network PRIVATE -Wno-pointer-sign -Wno-sign-compare)
+    target_compile_options(network PRIVATE -Wno-pointer-sign -Wno-sign-compare -Wno-error)
   endif()
 
   add_subdirectory(Platforms/GAP9)

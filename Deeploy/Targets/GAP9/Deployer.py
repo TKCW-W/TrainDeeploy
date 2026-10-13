@@ -8,16 +8,20 @@ This deployer extends PULPDeployer to use GAP9-specific DMA (ClDma) via
 the GAP9Bindings transformers.
 """
 
-from typing import Callable, Dict, Type
+import hashlib
+from typing import Callable, Dict, Tuple, Type
 
 import numpy as np
 import onnx_graphsurgeon as gs
 
 from Deeploy.AbstractDataTypes import Pointer
 from Deeploy.CommonExtensions.NetworkDeployers.SignPropDeployer import SignPropDeployer
+from Deeploy.CommonExtensions.OptimizationPasses.TopologyOptimizationPasses.LoweringOptimizationPasses import \
+    PULPNCHWtoNHWCPass
 from Deeploy.DeeployTypes import ConstantBuffer, DeploymentPlatform, NodeTemplate, TopologyOptimizer, VariableBuffer
 from Deeploy.Targets.GAP9.Bindings import GAP9ClusterTransformer, GAP9SimpleTransformer, GAP9Transformer
 from Deeploy.Targets.PULPOpen.Deployer import PULPDeployer
+from Deeploy.Targets.PULPOpen.TopologyOptimizationPasses.Passes import PULPConvKeepCHWPass
 
 # GAP9-specific L3 RAM allocation and loading templates
 _GAP9L3AllocTemplate = NodeTemplate("""
@@ -26,6 +30,10 @@ ${locPtr} = cl_ram_malloc(${size});
 
 _GAP9L3InitTemplate = NodeTemplate("""
 load_file_to_ram(${locPtr}, "${extName}.hex");
+""")
+
+_GAP9L3AliasTemplate = NodeTemplate("""
+${locPtr} = ${srcPtr};
 """)
 
 
@@ -51,6 +59,7 @@ class GAP9Deployer(PULPDeployer):
                  name: str = 'DeeployNetwork',
                  default_channels_first = False,
                  deeployStateDir: str = "DeeployStateDir",
+                 conv_channels_first: bool = False,
                  inputOffsets = {}):
         super().__init__(graph,
                          deploymentPlatform,
@@ -66,6 +75,18 @@ class GAP9Deployer(PULPDeployer):
         self.Transformer = GAP9Transformer
         self.ClusterTransformer = GAP9ClusterTransformer
         self.SimpleTransformer = GAP9SimpleTransformer
+
+        # RW: channels-first forward conv. When enabled, tag every forward Conv
+        # with keep_channels_first (PULPConvKeepCHWPass) *before* PULPNCHWtoNHWCPass
+        # runs. Tagged convs skip the NCHW->NHWC transpose and bind to the *_CHW
+        # kernels (their CHW mappers sit ahead of the HWC ones, gated by the tag),
+        # so conv activations stay channels-first end-to-end — removing the stem /
+        # per-conv transpose pairs that set MobileNetV1's L1 tiling floor.
+        self.conv_channels_first = conv_channels_first
+        if conv_channels_first:
+            passes = self.loweringOptimizer.passes
+            insertIdx = next((i for i, p in enumerate(passes) if isinstance(p, PULPNCHWtoNHWCPass)), len(passes))
+            passes.insert(insertIdx, PULPConvKeepCHWPass())
 
     def generateBufferAllocationCode(self) -> str:
         retStr = SignPropDeployer.generateBufferAllocationCode(self)
@@ -83,16 +104,33 @@ class GAP9Deployer(PULPDeployer):
             if hasattr(buf, "_memoryLevel") and buf._memoryLevel == "L3" and buf.name not in outputBuffNames:
                 l3ConstBuffer.append(buf)
 
-        # Generate allocation and loading code for each L3 buffer
+        # Generate allocation and loading code for each L3 buffer. Constants with
+        # byte-identical contents share one allocation and one load -- see the comment
+        # on the same loop in Targets/PULPOpen/Deployer.py for why the duplicates exist
+        # and how much they cost.
+        seenConst: Dict[str, Tuple[str, str]] = {}
+
         for idx, buf in enumerate(l3ConstBuffer):
             locPtr = str(buf._instance)
-            extName = str(idx)
-            buf.extName = extName  # This enables hex dump generation
             size = np.prod(buf.shape) * (buf._type.referencedType.typeWidth // 8)
 
             # Allocate L3 RAM space (for constant buffers only)
             if isinstance(buf, ConstantBuffer):
+                values = np.ascontiguousarray(np.asarray(buf.values))
+                key = f"{values.dtype.str}|{values.shape}|{hashlib.md5(values.tobytes()).hexdigest()}"
+                previous = seenConst.get(key)
+                if previous is not None:
+                    srcPtr, srcExtName = previous
+                    buf.extName = srcExtName  # reuse the source's hex, do not dump a copy
+                    L3FileStr += _GAP9L3AliasTemplate.generate({"locPtr": locPtr, "srcPtr": srcPtr})
+                    continue
+                extName = str(idx)
+                buf.extName = extName  # This enables hex dump generation
+                seenConst[key] = (locPtr, extName)
                 L3FileStr += _GAP9L3AllocTemplate.generate({"locPtr": locPtr, "extName": extName, "size": size})
+            else:
+                extName = str(idx)
+                buf.extName = extName
 
             # Load data from ReadFS
             L3FileStr += _GAP9L3InitTemplate.generate({"locPtr": locPtr, "extName": extName, "size": size})

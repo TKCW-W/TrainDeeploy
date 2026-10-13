@@ -13,13 +13,24 @@ from test_cortexm_config import MODEL_TESTS as CORTEXM_MODEL_TESTS
 from test_gap9_config import DEFAULT_NUM_CORES as GAP9_DEFAULT_NUM_CORES
 from test_gap9_config import KERNEL_TESTS as GAP9_KERNEL_TESTS
 from test_gap9_config import MODEL_TESTS as GAP9_MODEL_TESTS
+from test_gap9_config import TRAIN_KERNEL_TESTS as GAP9_TRAIN_KERNEL_TESTS
+from test_gap9_config import TRAINING_TESTS as GAP9_TRAINING_TESTS
 from test_gap9_tiled_config import DEFAULT_CORES as GAP9_TILED_DEFAULT_CORES
 from test_gap9_tiled_config import L2_DOUBLEBUFFER_KERNELS as GAP9_L2_DOUBLEBUFFER_KERNELS
 from test_gap9_tiled_config import L2_DOUBLEBUFFER_MODELS as GAP9_L2_DOUBLEBUFFER_MODELS
 from test_gap9_tiled_config import L2_SINGLEBUFFER_KERNELS as GAP9_L2_SINGLEBUFFER_KERNELS
 from test_gap9_tiled_config import L2_SINGLEBUFFER_MODELS as GAP9_L2_SINGLEBUFFER_MODELS
+from test_gap9_tiled_config import L2_SINGLEBUFFER_TRAINING_MODELS as GAP9_L2_SINGLEBUFFER_TRAINING_MODELS
 from test_gap9_tiled_config import L3_DOUBLEBUFFER_MODELS as GAP9_L3_DOUBLEBUFFER_MODELS
+from test_gap9_tiled_config import L3_DOUBLEBUFFER_TRAINING_MODELS as GAP9_L3_DOUBLEBUFFER_TRAINING_MODELS
+from test_gap9_tiled_config import \
+    L3_DOUBLEBUFFER_TRAINING_PROMOTE_MODELS as GAP9_L3_DOUBLEBUFFER_TRAINING_PROMOTE_MODELS
+from test_gap9_tiled_config import L3_RECOMPUTE_TRAINING_MODELS as GAP9_L3_RECOMPUTE_TRAINING_MODELS
 from test_gap9_tiled_config import L3_SINGLEBUFFER_MODELS as GAP9_L3_SINGLEBUFFER_MODELS
+from test_gap9_tiled_config import L3_SINGLEBUFFER_TRAINING_MODELS as GAP9_L3_SINGLEBUFFER_TRAINING_MODELS
+from test_gap9_tiled_config import \
+    L3_SINGLEBUFFER_TRAINING_PROMOTE_MODELS as GAP9_L3_SINGLEBUFFER_TRAINING_PROMOTE_MODELS
+from test_gap9_tiled_config import TRAINING_MODEL_OVERRIDES as GAP9_TRAINING_MODEL_OVERRIDES
 from test_generic_config import KERNEL_TESTS as GENERIC_KERNEL_TESTS
 from test_generic_config import MODEL_TESTS as GENERIC_MODEL_TESTS
 from test_mempool_config import DEFAULT_NUM_THREADS as MEMPOOL_DEFAULT_NUM_THREADS
@@ -39,10 +50,15 @@ from test_siracusa_neureka_tiled_config import L3_DOUBLEBUFFER_MODELS_WMEM as NE
 from test_siracusa_neureka_tiled_config import L3_SINGLEBUFFER_MODELS as NEUREKA_L3_SINGLEBUFFER_MODELS
 from test_siracusa_tiled_config import KERNEL_CMAKE_ARGS as SIRACUSA_KERNEL_CMAKE_ARGS
 from test_siracusa_tiled_config import KERNEL_GEN_ARGS as SIRACUSA_KERNEL_GEN_ARGS
-from test_siracusa_tiled_config import L2_DOUBLEBUFFER_KERNELS, L2_DOUBLEBUFFER_MODELS, L2_SINGLEBUFFER_KERNELS, \
-    L2_SINGLEBUFFER_MODELS
+from test_siracusa_tiled_config import L2_DOUBLEBUFFER_KERNELS, L2_DOUBLEBUFFER_MODELS
+from test_siracusa_tiled_config import L2_DOUBLEBUFFER_TRAINING_MODELS as SIRACUSA_L2_DOUBLEBUFFER_TRAINING_MODELS
+from test_siracusa_tiled_config import L2_SINGLEBUFFER_KERNELS, L2_SINGLEBUFFER_MODELS
 from test_siracusa_tiled_config import L2_SINGLEBUFFER_TRAINING_MODELS as SIRACUSA_L2_SINGLEBUFFER_TRAINING_MODELS
-from test_siracusa_tiled_config import L3_DOUBLEBUFFER_MODELS, L3_SINGLEBUFFER_MODELS
+from test_siracusa_tiled_config import L3_DOUBLEBUFFER_MODELS
+from test_siracusa_tiled_config import L3_DOUBLEBUFFER_TRAINING_MODELS as SIRACUSA_L3_DOUBLEBUFFER_TRAINING_MODELS
+from test_siracusa_tiled_config import \
+    L3_DOUBLEBUFFER_TRAINING_PROMOTE_MODELS as SIRACUSA_L3_DOUBLEBUFFER_TRAINING_PROMOTE_MODELS
+from test_siracusa_tiled_config import L3_SINGLEBUFFER_MODELS
 from test_siracusa_tiled_config import L3_SINGLEBUFFER_PROMOTE_MODELS as SIRACUSA_L3_SINGLEBUFFER_PROMOTE_MODELS
 from test_siracusa_tiled_config import L3_SINGLEBUFFER_TRAINING_MODELS as SIRACUSA_L3_SINGLEBUFFER_TRAINING_MODELS
 from test_siracusa_tiled_config import \
@@ -386,8 +402,9 @@ def test_siracusa_tiled_training_l2_singlebuffer(test_params, deeploy_test_dir, 
         training = True,
         training_num_data_inputs = overrides.get("num_data_inputs"),
         training_tolerance = overrides.get("tolerance"),
+        training_conv_channels_first = overrides.get("conv_channels_first", False),
     )
-    run_and_assert_test(test_name, config, skipgen, skipsim)
+    run_and_assert_test(test_name, config, skipgen, skipsim, metric_section = "Siracusa L2 training cycles")
 
 
 @pytest.mark.siracusa_tiled
@@ -420,8 +437,77 @@ def test_siracusa_tiled_training_l3_singlebuffer(test_params, deeploy_test_dir, 
         training = True,
         training_num_data_inputs = overrides.get("num_data_inputs"),
         training_tolerance = overrides.get("tolerance"),
+        training_conv_channels_first = overrides.get("conv_channels_first", False),
     )
-    run_and_assert_test(test_name, config, skipgen, skipsim)
+    run_and_assert_test(test_name, config, skipgen, skipsim, metric_section = "Siracusa L3 training cycles")
+
+
+@pytest.mark.siracusa_tiled
+@pytest.mark.training
+@pytest.mark.doublebuffer
+@pytest.mark.l3
+@pytest.mark.parametrize(
+    "test_params",
+    generate_test_params(SIRACUSA_L3_DOUBLEBUFFER_TRAINING_MODELS, "L3-doublebuffer-training"),
+    ids = param_id,
+)
+def test_siracusa_tiled_training_l3_doublebuffer(test_params, deeploy_test_dir, toolchain, toolchain_dir, cmake_args,
+                                                 skipgen, skipsim) -> None:
+    test_name, l1, _config_name = test_params
+    overrides = SIRACUSA_TRAINING_MODEL_OVERRIDES.get(test_name, {})
+    config = create_test_config(
+        test_name = test_name,
+        platform = "Siracusa",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = cmake_args,
+        tiling = True,
+        cores = SIRACUSA_DEFAULT_CORES,
+        l1 = l1,
+        l2 = 2000000,
+        default_mem_level = "L3",
+        double_buffer = True,
+        training = True,
+        training_num_data_inputs = overrides.get("num_data_inputs"),
+        training_tolerance = overrides.get("tolerance"),
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim, metric_section = "Siracusa L3 training cycles")
+
+
+@pytest.mark.siracusa_tiled
+@pytest.mark.training
+@pytest.mark.doublebuffer
+@pytest.mark.l2
+@pytest.mark.parametrize(
+    "test_params",
+    generate_test_params(SIRACUSA_L2_DOUBLEBUFFER_TRAINING_MODELS, "L2-doublebuffer-training"),
+    ids = param_id,
+)
+def test_siracusa_tiled_training_l2_doublebuffer(test_params, deeploy_test_dir, toolchain, toolchain_dir, cmake_args,
+                                                 skipgen, skipsim) -> None:
+    test_name, l1, _config_name = test_params
+    overrides = SIRACUSA_TRAINING_MODEL_OVERRIDES.get(test_name, {})
+    config = create_test_config(
+        test_name = test_name,
+        platform = "Siracusa",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = cmake_args,
+        tiling = True,
+        cores = SIRACUSA_DEFAULT_CORES,
+        l1 = l1,
+        l2 = 2000000,
+        default_mem_level = "L2",
+        double_buffer = True,
+        training = True,
+        training_num_data_inputs = overrides.get("num_data_inputs"),
+        training_tolerance = overrides.get("tolerance"),
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim, metric_section = "Siracusa L2 training cycles")
 
 
 # -- QW 2026-10-12: SpeechNet single-step CI gates on Siracusa (fixtures in TrainDeeploy/SpeechNet_Test).
@@ -1277,3 +1363,402 @@ def test_siracusa_tiled_training_promote_l3_singlebuffer(test_params, deeploy_te
         promote_to_l2_headroom = 200000,
     )
     run_and_assert_test(test_name, config, skipgen, skipsim)
+
+
+@pytest.mark.promote
+@pytest.mark.training
+@pytest.mark.siracusa_tiled
+@pytest.mark.l3
+@pytest.mark.doublebuffer
+@pytest.mark.parametrize(
+    "test_params",
+    _generate_promote_test_params(SIRACUSA_L3_DOUBLEBUFFER_TRAINING_PROMOTE_MODELS),
+    ids = _promote_param_id,
+)
+def test_siracusa_tiled_training_promote_l3_doublebuffer(test_params, deeploy_test_dir, toolchain, toolchain_dir,
+                                                         cmake_args, skipgen, skipsim) -> None:
+    """L3 training + PromoteTensorsToL2 + double-buffering combined (CCT)."""
+    test_name, l1, strategy, include_acts, promote = test_params
+    overrides = SIRACUSA_TRAINING_MODEL_OVERRIDES.get(test_name, {})
+    config = create_test_config(
+        test_name = test_name,
+        platform = "Siracusa",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = cmake_args,
+        tiling = True,
+        cores = SIRACUSA_DEFAULT_CORES,
+        l1 = l1,
+        # The Siracusa gvsoc L2 is physically 0x190000 = 1.5625 MB. Passing
+        # l2=2000000 over-commits: the promotion fills the L2 budget (arena +
+        # ~1.3 MB promoted pool) past the 1.5 MB physical L2, so a promoted
+        # tensor (node_196 linear2 Transpose) lands beyond mapped L2 and its
+        # cluster mchan L1->L2 write never completes -> deadlock. Cap l2 at the
+        # physical size minus FC/headroom so the promoted pool fits.
+        l2 = 1400000,
+        default_mem_level = "L3",
+        double_buffer = True,
+        training = True,
+        training_num_data_inputs = overrides.get("num_data_inputs"),
+        training_tolerance = overrides.get("tolerance"),
+        promote_to_l2 = promote,
+        promote_to_l2_strategy = strategy if promote else "cycle-aware",
+        # 500000 (not 200000): with l2 capped at 1.4 MB the promotion would
+        # otherwise leave only ~180 KB of staging, and DB doubles the tile
+        # buffers -> minimalloc infeasible. A 500 KB headroom both shrinks the
+        # promoted pool (so it fits physical L2) and leaves room for the
+        # double-buffered tiles (same value that works for GAP9 promote+DB).
+        # Per-model override: MobileNetV1's larger activations need a bigger
+        # headroom (smaller promoted pool) or it over-commits L2 -> init crash.
+        promote_to_l2_headroom = overrides.get("promote_headroom", 500000),
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim, metric_section = "Siracusa L3 training promote+DB cycles")
+
+
+# ---------------------------------------------------------------------------
+#  GAP9 training: single-op train kernels, untiled e2e, and tiled L2/L3
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.gap9
+@pytest.mark.train_kernel
+@pytest.mark.parametrize("test_name", GAP9_TRAIN_KERNEL_TESTS, ids = GAP9_TRAIN_KERNEL_TESTS)
+def test_gap9_train_kernels(test_name, deeploy_test_dir, toolchain, toolchain_dir, cmake_args, skipgen,
+                            skipsim) -> None:
+    gap9_cmake_args = cmake_args + [f"NUM_CORES={GAP9_DEFAULT_NUM_CORES}"]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "GAP9",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = gap9_cmake_args,
+        tiling = False,
+        cores = GAP9_DEFAULT_NUM_CORES,
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim)
+
+
+@pytest.mark.gap9
+@pytest.mark.training
+@pytest.mark.parametrize("test_name", GAP9_TRAINING_TESTS, ids = GAP9_TRAINING_TESTS)
+def test_gap9_training(test_name, deeploy_test_dir, toolchain, toolchain_dir, cmake_args, skipgen, skipsim) -> None:
+    gap9_cmake_args = cmake_args + [f"NUM_CORES={GAP9_DEFAULT_NUM_CORES}"]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "GAP9",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = gap9_cmake_args,
+        tiling = False,
+        cores = GAP9_DEFAULT_NUM_CORES,
+        training = True,
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim)
+
+
+@pytest.mark.gap9_tiled
+@pytest.mark.training
+@pytest.mark.singlebuffer
+@pytest.mark.l2
+@pytest.mark.parametrize(
+    "test_params",
+    generate_test_params(GAP9_L2_SINGLEBUFFER_TRAINING_MODELS, "L2-singlebuffer-training"),
+    ids = param_id,
+)
+def test_gap9_tiled_training_l2_singlebuffer(test_params, deeploy_test_dir, toolchain, toolchain_dir, cmake_args,
+                                             skipgen, skipsim) -> None:
+    test_name, l1, _config_name = test_params
+    overrides = GAP9_TRAINING_MODEL_OVERRIDES.get(test_name, {})
+    gap9_cmake_args = cmake_args + [f"NUM_CORES={GAP9_TILED_DEFAULT_CORES}"]
+    # Same per-model cluster stacks as the L3 jobs. Without them the SDK-default
+    # stacks eat the L1 the arena needs: ResNet-8 at 122000 asks for 121,984 B and
+    # only fits next to cc 4096 + 8 x 512 (130,176 < 131,072).
+    cc_stack = overrides.get("cc_stack")
+    if cc_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"CC_STACK_SIZE={cc_stack}"]
+    slave_stack = overrides.get("slave_stack")
+    if slave_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"SLAVESTACKSIZE={slave_stack}"]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "GAP9",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = gap9_cmake_args,
+        tiling = True,
+        cores = GAP9_TILED_DEFAULT_CORES,
+        l1 = l1,
+        # GAP9's L2 is 1.5 MB; 1024000 is the runner default. A model that needs
+        # the real capacity says so rather than being left out of the on-chip job.
+        l2 = overrides.get("l2", 1024000),
+        default_mem_level = "L2",
+        double_buffer = False,
+        training = True,
+        training_num_data_inputs = overrides.get("num_data_inputs"),
+        training_tolerance = overrides.get("tolerance"),
+        training_conv_channels_first = overrides.get("conv_channels_first", False),
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim)
+
+
+@pytest.mark.gap9_tiled
+@pytest.mark.training
+@pytest.mark.singlebuffer
+@pytest.mark.l3
+@pytest.mark.parametrize(
+    "test_params",
+    generate_test_params(GAP9_L3_SINGLEBUFFER_TRAINING_MODELS, "L3-singlebuffer-training"),
+    ids = param_id,
+)
+def test_gap9_tiled_training_l3_singlebuffer(test_params, deeploy_test_dir, toolchain, toolchain_dir, cmake_args,
+                                             skipgen, skipsim) -> None:
+    test_name, l1, _config_name = test_params
+    overrides = GAP9_TRAINING_MODEL_OVERRIDES.get(test_name, {})
+    gap9_cmake_args = cmake_args + [f"NUM_CORES={GAP9_TILED_DEFAULT_CORES}"]
+    # Per-model CC/master-stack size (carved from L1). Deep nets (MobileNetV1) need
+    # a larger CC stack for the nested L3->L2->L1 closure chain; conv-light nets can
+    # shrink it to free L1 for the tiling arena.
+    cc_stack = overrides.get("cc_stack")
+    if cc_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"CC_STACK_SIZE={cc_stack}"]
+    # Per-model cluster slave-stack size (stacks live in L1; this only shrinks
+    # them -> avoids the L2-stack access penalty, -22..-38% train cycles).
+    slave_stack = overrides.get("slave_stack")
+    if slave_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"SLAVESTACKSIZE={slave_stack}"]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "GAP9",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = gap9_cmake_args,
+        tiling = True,
+        cores = GAP9_TILED_DEFAULT_CORES,
+        l1 = l1,
+        l2 = 1024000,
+        default_mem_level = "L3",
+        double_buffer = False,
+        training = True,
+        training_num_data_inputs = overrides.get("num_data_inputs"),
+        training_tolerance = overrides.get("tolerance"),
+        training_conv_channels_first = overrides.get("conv_channels_first", False),
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim)
+
+
+@pytest.mark.gap9_tiled
+@pytest.mark.training
+@pytest.mark.singlebuffer
+@pytest.mark.l3
+@pytest.mark.recompute
+@pytest.mark.parametrize(
+    "test_name,recompute_config",
+    sorted(GAP9_L3_RECOMPUTE_TRAINING_MODELS.items()),
+    ids = lambda value: value.replace("/", "-") if isinstance(value, str) else "",
+)
+def test_gap9_tiled_training_l3_recompute(test_name, recompute_config, deeploy_test_dir, toolchain, toolchain_dir,
+                                          cmake_args, skipgen, skipsim) -> None:
+    """Train with a solved gradient-checkpointing schedule replayed on the deployed graph.
+
+    This is the same model and budget as the singlebuffer case; what differs is that
+    checkpointed activations are regenerated before the backward pass reads them
+    rather than held live. It costs cycles and buys peak memory, so it is a separate
+    entry rather than a replacement, and both run.
+    """
+    overrides = GAP9_TRAINING_MODEL_OVERRIDES.get(test_name, {})
+    gap9_cmake_args = cmake_args + [f"NUM_CORES={GAP9_TILED_DEFAULT_CORES}"]
+    cc_stack = overrides.get("cc_stack")
+    if cc_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"CC_STACK_SIZE={cc_stack}"]
+    slave_stack = overrides.get("slave_stack")
+    if slave_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"SLAVESTACKSIZE={slave_stack}"]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "GAP9",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = gap9_cmake_args,
+        tiling = True,
+        cores = GAP9_TILED_DEFAULT_CORES,
+        l1 = recompute_config["l1"],
+        l2 = 1024000,
+        default_mem_level = "L3",
+        double_buffer = False,
+        training = True,
+        training_num_data_inputs = overrides.get("num_data_inputs"),
+        training_tolerance = overrides.get("tolerance"),
+        training_conv_channels_first = overrides.get("conv_channels_first", False),
+        training_recompute_schedule = recompute_config["schedule"],
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim)
+
+
+@pytest.mark.gap9_tiled
+@pytest.mark.training
+@pytest.mark.doublebuffer
+@pytest.mark.l3
+@pytest.mark.parametrize(
+    "test_params",
+    generate_test_params(GAP9_L3_DOUBLEBUFFER_TRAINING_MODELS, "L3-doublebuffer-training"),
+    ids = param_id,
+)
+def test_gap9_tiled_training_l3_doublebuffer(test_params, deeploy_test_dir, toolchain, toolchain_dir, cmake_args,
+                                             skipgen, skipsim) -> None:
+    test_name, l1, _config_name = test_params
+    overrides = GAP9_TRAINING_MODEL_OVERRIDES.get(test_name, {})
+    gap9_cmake_args = cmake_args + [f"NUM_CORES={GAP9_TILED_DEFAULT_CORES}"]
+    cc_stack = overrides.get("cc_stack")
+    if cc_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"CC_STACK_SIZE={cc_stack}"]
+    # Per-model cluster slave-stack size (stacks live in L1; this only shrinks
+    # them -> avoids the L2-stack access penalty, -22..-38% train cycles).
+    slave_stack = overrides.get("slave_stack")
+    if slave_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"SLAVESTACKSIZE={slave_stack}"]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "GAP9",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = gap9_cmake_args,
+        tiling = True,
+        cores = GAP9_TILED_DEFAULT_CORES,
+        l1 = l1,
+        l2 = 1024000,
+        default_mem_level = "L3",
+        double_buffer = True,
+        training = True,
+        training_num_data_inputs = overrides.get("num_data_inputs"),
+        training_tolerance = overrides.get("tolerance"),
+        training_conv_channels_first = overrides.get("conv_channels_first", False),
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim, metric_section = "GAP9 L3 training DB cycles")
+
+
+@pytest.mark.gap9_tiled
+@pytest.mark.promote
+@pytest.mark.training
+@pytest.mark.l3
+@pytest.mark.singlebuffer
+@pytest.mark.parametrize(
+    "test_params",
+    _generate_promote_test_params(GAP9_L3_SINGLEBUFFER_TRAINING_PROMOTE_MODELS),
+    ids = _promote_param_id,
+)
+def test_gap9_tiled_training_promote_l3_singlebuffer(test_params, deeploy_test_dir, toolchain, toolchain_dir,
+                                                     cmake_args, skipgen, skipsim) -> None:
+    """GAP9 L3 training + PromoteTensorsToL2 (singlebuffer)."""
+    test_name, l1, strategy, include_acts, promote = test_params
+    overrides = GAP9_TRAINING_MODEL_OVERRIDES.get(test_name, {})
+    gap9_cmake_args = cmake_args + [f"NUM_CORES={GAP9_TILED_DEFAULT_CORES}"]
+    cc_stack = overrides.get("cc_stack")
+    if cc_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"CC_STACK_SIZE={cc_stack}"]
+    # Per-model cluster slave-stack size (stacks live in L1; this only shrinks
+    # them -> avoids the L2-stack access penalty, -22..-38% train cycles).
+    slave_stack = overrides.get("slave_stack")
+    if slave_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"SLAVESTACKSIZE={slave_stack}"]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "GAP9",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = gap9_cmake_args,
+        tiling = True,
+        cores = GAP9_TILED_DEFAULT_CORES,
+        l1 = l1,
+        l2 = 1024000,
+        default_mem_level = "L3",
+        double_buffer = False,
+        training = True,
+        training_num_data_inputs = overrides.get("num_data_inputs"),
+        training_tolerance = overrides.get("tolerance"),
+        training_conv_channels_first = overrides.get("conv_channels_first", False),
+        promote_to_l2 = promote,
+        promote_to_l2_strategy = strategy if promote else "cycle-aware",
+        # Per-model headroom (default 200000); MobileNetV1 needs more so its promoted
+        # pool stays below the runtime L2-staging cliff once testData is moved out of L2.
+        promote_to_l2_headroom = overrides.get("promote_headroom", 200000),
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim)
+
+
+@pytest.mark.gap9_tiled
+@pytest.mark.promote
+@pytest.mark.training
+@pytest.mark.l3
+@pytest.mark.doublebuffer
+@pytest.mark.parametrize(
+    "test_params",
+    _generate_promote_test_params(GAP9_L3_DOUBLEBUFFER_TRAINING_PROMOTE_MODELS),
+    ids = _promote_param_id,
+)
+def test_gap9_tiled_training_promote_l3_doublebuffer(test_params, deeploy_test_dir, toolchain, toolchain_dir,
+                                                     cmake_args, skipgen, skipsim) -> None:
+    """GAP9 L3 training + PromoteTensorsToL2 + double-buffering combined (CCT)."""
+    test_name, l1, strategy, include_acts, promote = test_params
+    overrides = GAP9_TRAINING_MODEL_OVERRIDES.get(test_name, {})
+    gap9_cmake_args = cmake_args + [f"NUM_CORES={GAP9_TILED_DEFAULT_CORES}"]
+    cc_stack = overrides.get("cc_stack")
+    if cc_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"CC_STACK_SIZE={cc_stack}"]
+    # Per-model cluster slave-stack size (stacks live in L1; this only shrinks
+    # them -> avoids the L2-stack access penalty, -22..-38% train cycles).
+    slave_stack = overrides.get("slave_stack")
+    if slave_stack is not None:
+        gap9_cmake_args = gap9_cmake_args + [f"SLAVESTACKSIZE={slave_stack}"]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "GAP9",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = gap9_cmake_args,
+        tiling = True,
+        cores = GAP9_TILED_DEFAULT_CORES,
+        l1 = l1,
+        # Promotion budget = l2 - headroom. The physical L2 is 1,572,864 B but the
+        # static section (code, runtime, the L2 test data) differs per model, so
+        # models whose best deployment fills it say so in the overrides.
+        l2 = overrides.get("promote_l2", 1024000),
+        default_mem_level = "L3",
+        double_buffer = True,
+        training = True,
+        training_num_data_inputs = overrides.get("num_data_inputs"),
+        training_tolerance = overrides.get("tolerance"),
+        training_conv_channels_first = overrides.get("conv_channels_first", False),
+        promote_to_l2 = promote,
+        promote_to_l2_strategy = strategy if promote else "cycle-aware",
+        # Headroom 700000 (NOT 500000). Headroom is the L2 left free after
+        # promotion = the tiling staging budget; the rest is promoted. 500000
+        # promotes too aggressively (var_peak ~469 KB, 91 tensors + more DB
+        # buffers) -> the init-time setup deepens the CC master stack past the
+        # razor-thin L1 margin (arena 122000 + cc_stack 8192 = 130192, ~864 B
+        # free) -> RTOS event list corrupted -> FC os_evt_release deadlock at
+        # "Initializing TrainingNetwork" (confirmed by fc/insn ring-trace).
+        # 700000 promotes less (var_peak ~272 KB) so init fits; still the full
+        # DB+promote win (~336M/4-step). DB staging is fine — more free L2 helps.
+        promote_to_l2_headroom = overrides.get("promote_headroom_db", overrides.get("promote_headroom", 700000)),
+        promote_to_l2_fetch_bytes = overrides.get("promote_fetch_bytes"),
+        gen_args = overrides.get("gen_args"),
+    )
+    run_and_assert_test(test_name, config, skipgen, skipsim, metric_section = "GAP9 L3 training promote+DB cycles")

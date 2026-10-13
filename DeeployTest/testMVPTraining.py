@@ -14,9 +14,10 @@ from testUtils.codeGenerateTraining import _load_reference_zo_losses, generateTr
     generateZOTestOutputsHeader  # -- QW
 from testUtils.platformMapping import mapDeployer, mapPlatform, setupMemoryPlatform
 from testUtils.testRunner import TestGeneratorArgumentParser
-from testUtils.tilingUtils import TrainingSBTiler
+from testUtils.tilingUtils import TrainingDBOnlyL3Tiler, TrainingDBTiler, TrainingSBTiler
 from testUtils.trainingUtils import _GRAD_ACC, _infer_data_size, _infer_n_accum, _infer_num_data_inputs, \
-    _infer_total_mb, _load_reference_losses, _mockScheduler, add_training_inference_args
+    _infer_total_mb, _load_reference_losses, _memoryMinimisingScheduler, _mockScheduler, add_training_inference_args, \
+    recomputeScheduler
 from testUtils.typeMapping import inferTypeAndOffset
 
 from Deeploy.AbstractDataTypes import PointerClass
@@ -38,10 +39,41 @@ from Deeploy.MemoryLevelExtension.MemoryLevels import MemoryHierarchy, MemoryLev
 from Deeploy.MemoryLevelExtension.NetworkDeployers.MemoryLevelDeployer import MemoryDeployerWrapper
 from Deeploy.MemoryLevelExtension.OptimizationPasses.MemoryLevelAnnotationPasses import AnnotateDefaultMemoryLevel, \
     AnnotateIOMemoryLevel, PromoteTensorsToL2
+from Deeploy.Targets.GAP9.Platform import GAP9ClusterEngine
 from Deeploy.Targets.PULPOpen.Platform import PULPClusterEngine
 from Deeploy.TilingExtension.TilerExtension import TilerDeployerWrapper
 from Deeploy.EngineExtension.NetworkDeployers.EngineColoringDeployer import \
     EngineColoringDeployerWrapper  # -- QW (GAP9_w_NE16)
+
+
+def _loadFetchBytes(path):
+    """Per-tensor L3<->L2 traffic measured on a run with nothing promoted.
+
+    Residency ranks candidates by traffic saved per byte of L2 occupied, and the
+    traffic a tensor causes depends on the tiling solution: the L3->L2 DMA sits
+    inside the per-tile loop, so an operand re-read on every tile is fetched once
+    per tile. That count does not exist until tiling has run, which is after
+    promotion -- so it is measured in a separate pass over the same graph with
+    every tensor still in L3, which is exactly the condition Q(t) is defined
+    under, and handed back in through this file.
+
+    Absent, promotion falls back to counting consuming nodes, as before.
+    """
+    if not path:
+        return None
+    with open(path) as handle:
+        payload = json.load(handle)
+    traffic = payload.get("traffic", payload)
+    # Q(t) must be the traffic that promoting t REMOVES, i.e. the bytes t moves
+    # across the off-chip boundary. Verified by re-harvesting a promoted build:
+    # promotion drives the L3 figure to ~0 (Autoencoder 685,074 -> 4) while the
+    # L2 figure only falls by the part that stopped coming from L3, and the L1
+    # figure does not move at all -- every tile is still staged into L1, only its
+    # source changes. Scoring against the L2 table therefore mis-states the
+    # objective; the level promotion empties is the one to read.
+    if isinstance(traffic, dict) and any(k in traffic for k in ("L3", "L2")):
+        traffic = traffic.get("L3") or traffic["L2"]
+    return {name: value for name, value in traffic.items() if isinstance(value, int)}
 
 
 def generateTiledTrainingNetwork(args) -> None:
@@ -77,7 +109,7 @@ def generateTiledTrainingNetwork(args) -> None:
         platform.engines[0].enable1xK = True  # -- QW
     log.debug(f"Platform: {platform} (sign: {signProp})")
 
-    clusters = [engine for engine in platform.engines if isinstance(engine, PULPClusterEngine)]
+    clusters = [engine for engine in platform.engines if isinstance(engine, (PULPClusterEngine, GAP9ClusterEngine))]
     for cluster in clusters:
         cluster.n_cores = args.cores
 
@@ -134,7 +166,8 @@ def generateTiledTrainingNetwork(args) -> None:
                 inputTypes[f"input_{graph_idx}"] = _type
                 inputOffsets[f"input_{graph_idx}"] = offset
 
-    # 6. Create deployer with _mockScheduler (required for TilerDeployerWrapper).
+    # 6. Create deployer with the memory-minimising scheduler (the Tiler requires
+    #    a scheduler; this one also picks the order that holds fewest tensors live).
     _DEEPLOYSTATEDIR = os.path.join(args.dumpdir, "deeployStates")
 
     deployer = mapDeployer(platform,
@@ -143,7 +176,9 @@ def generateTiledTrainingNetwork(args) -> None:
                            name = "DeeployTrainingNetwork",
                            deeployStateDir = _DEEPLOYSTATEDIR,
                            inputOffsets = inputOffsets,
-                           scheduler = _mockScheduler)
+                           conv_channels_first = args.convChannelsFirst,
+                           scheduler = recomputeScheduler(args.recomputeSchedule) if args.recomputeSchedule else
+                           (_mockScheduler if args.identitySchedule else _memoryMinimisingScheduler))
 
     # QW: make the deployer engine-color-aware for composite platforms (GAP9 + NE16).
     #     Mirrors testMVP.py:98-100. MUST sit between mapDeployer() and setupMemoryPlatform():
@@ -172,6 +207,15 @@ def generateTiledTrainingNetwork(args) -> None:
     ]
     if getattr(args, 'promoteToL2', False):
         assert args.defaultMemLevel == "L3", "--promoteToL2 only makes sense when --defaultMemLevel L3"
+        # PromoteTensorsToL2 reads these switches from the environment (they started as
+        # measurement hooks); the flags make them part of the generation arguments so a CI
+        # entry can pin them. This process only generates the training network.
+        if args.promoteToL2AliasGroups:
+            os.environ['DEEPLOY_PROMOTE_ALIAS_GROUPS'] = '1'
+        if args.promoteToL2OptimizerTraffic:
+            os.environ['DEEPLOY_PROMOTE_OPTIMIZER_TRAFFIC'] = '1'
+        if args.promoteToL2SkipOpsKeep:
+            os.environ['DEEPLOY_PROMOTE_SKIP_OPS_KEEP'] = args.promoteToL2SkipOpsKeep
         annotation_passes.append(
             PromoteTensorsToL2(
                 l2Size = memoryHierarchy.memoryLevels["L2"].size,
@@ -180,14 +224,20 @@ def generateTiledTrainingNetwork(args) -> None:
                 includeActivations = args.promoteToL2IncludeActivations,
                 maxBufferBytes = args.promoteToL2MaxBufferBytes,
                 minBufferBytes = args.promoteToL2MinBufferBytes,
+                fetchBytes = _loadFetchBytes(getattr(args, 'promoteToL2FetchBytes', None)),
             ))
     deployer = MemoryDeployerWrapper(deployer, annotation_passes)
 
-    # 9. Wrap with tiler (TrainingSBTiler: SB strategy + extended input lifetimes for backward pass).
-    unique_params = f"{args.dumpdir}_L1{args.l1}_L2{args.l2}_{args.defaultMemLevel}"
+    # 9. Wrap with tiler. SB by default; --doublebuffer switches to TrainingDBTiler
+    #    (DB strategy + same TrainingMemoryScheduler input-lifetime extension).
+    unique_params = f"{args.dumpdir}_L1{args.l1}_L2{args.l2}_{args.defaultMemLevel}_DB{args.doublebuffer}"
     testIdentifier = hashlib.md5(unique_params.encode()).hexdigest()[:16]
 
-    deployer = TilerDeployerWrapper(deployer, TrainingSBTiler, testName = testIdentifier, workDir = args.dumpdir)
+    if args.doublebuffer:
+        tilerCls = TrainingDBOnlyL3Tiler if args.defaultMemLevel == "L3" else TrainingDBTiler
+    else:
+        tilerCls = TrainingSBTiler
+    deployer = TilerDeployerWrapper(deployer, tilerCls, testName = testIdentifier, workDir = args.dumpdir)
     deployer.tiler.visualizeMemoryAlloc = args.plotMemAlloc
     deployer.tiler.memoryAllocStrategy = args.memAllocStrategy
     deployer.tiler.searchStrategy = args.searchStrategy
@@ -322,6 +372,9 @@ if __name__ == '__main__':
                         type = str,
                         default = "L2",
                         help = "Default memory level for IO buffers. Default: L2.")
+    parser.add_argument("--doublebuffer",
+                        action = "store_true",
+                        help = "Enable double buffering for tile DMA transfers (TrainingDBTiler).")
     parser.add_argument("--memAllocStrategy",
                         type = str,
                         default = "MiniMalloc",
@@ -364,8 +417,16 @@ if __name__ == '__main__':
     parser.add_argument('--promoteToL2Strategy',
                         type = str,
                         default = 'cycle-aware',
-                        choices = ['cycle-aware', 'greedy-score', 'knapsack-ratio', 'smallest', 'largest', 'random'],
+                        choices = [
+                            'traffic-per-peak', 'cycle-aware', 'greedy-score', 'knapsack-ratio', 'smallest', 'largest',
+                            'random'
+                        ],
                         help = 'Selection strategy for PromoteTensorsToL2')
+    parser.add_argument('--promoteToL2FetchBytes',
+                        type = str,
+                        default = None,
+                        help = 'JSON of measured per-tensor L3<->L2 traffic (from a no-promotion run, '
+                        'DEEPLOY_FETCH_HARVEST); replaces the consuming-node count in the promotion score')
     parser.add_argument('--promoteToL2IncludeActivations',
                         action = 'store_true',
                         default = True,
@@ -382,6 +443,34 @@ if __name__ == '__main__':
                         type = int,
                         default = 131072,
                         help = 'Bytes reserved in L2 for tile staging')
+    parser.add_argument('--promoteToL2AliasGroups',
+                        action = 'store_true',
+                        help = 'Promote pointer-alias closures (Reshape-like views, accumulator in/out) as one '
+                        'candidate; lets their neighbours out of the _SKIP_OPS filter')
+    parser.add_argument('--promoteToL2OptimizerTraffic',
+                        action = 'store_true',
+                        help = 'Add the optimizer\'s L3 accesses to Q(t): +2x size for trainable weights, +1x for '
+                        'gradient accumulators (pays off only when the optimizer shares L2-resident buffers)')
+    parser.add_argument('--promoteToL2SkipOpsKeep',
+                        type = str,
+                        default = None,
+                        help = 'Comma-separated op types that keep excluding their neighbours from promotion '
+                        '(overrides the built-in _SKIP_OPS set)')
+    parser.add_argument('--identitySchedule',
+                        action = 'store_true',
+                        help = "Deploy in the exporter's own node order -- the whole forward, then "
+                        'the whole backward -- instead of the memory-minimising list schedule. '
+                        'Baseline for measuring what the list schedule is worth.')
+    parser.add_argument('--recomputeSchedule',
+                        type = str,
+                        default = None,
+                        help = 'Path to a recompute schedule: JSON {"seq": [[node, is_recompute], ...]} in run '
+                        'order, as emitted by a gradient-checkpointing solve. Replays it on the deployed graph, '
+                        'regenerating each checkpointed activation just before the backward pass reads it '
+                        'instead of keeping it live. Without this the memory-minimising schedule is used.')
+    parser.add_argument('--convChannelsFirst',
+                        action = 'store_true',
+                        help = 'Use channels-first forward convolutions (no NCHW<->NHWC transpose).')
     parser.set_defaults(shouldFail = False)
     args = parser.parse_args()
 

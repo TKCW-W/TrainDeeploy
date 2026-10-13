@@ -247,6 +247,13 @@ class TransposeMatmulInputsPass(ReplaceSequentialPatternPass):
 def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_first: bool = True):
     node = next(iter((match.nodes_map.values())))
 
+    # RW: nodes tagged keep_channels_first (by PULPConvKeepCHWPass for the GAP9
+    # channels-first conv path) must NOT be transposed — they run channels-first
+    # natively. The tag is only ever set by that GAP9 pass, so this is inert for
+    # every other target/network.
+    if node.attrs.get("keep_channels_first", False):
+        return graph
+
     channels_first = node.attrs.get("channels_first", True)
     if (channels_first != default_channels_first):
         tensorIn = node.inputs[0]
@@ -287,6 +294,22 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
         permuteOut = _transformLayoutPermutation(len(tensorOut.shape), spatialDims, channels_first)
         graph.nodes.append(_prependTranspose(tensorOut, node, permuteOut))
 
+        _maxPoolGradXDone = False  # RW merge: devel's shared-transpose path below owns MaxPoolGrad's X
+        if node.op == "MaxPoolGrad" and len(node.inputs) > 1 and node.inputs[1].shape is not None \
+                and len(node.inputs[1].shape) == len(tensorIn.shape):
+            _maxPoolGradXDone = True
+            # MaxPoolGrad(dY, X): the kernel reads X in the same layout as dY. X is the
+            # forward pool's input, which that pool already transposed; read that copy
+            # rather than transposing the (large) activation a second time.
+            x = node.inputs[1]
+            permX = _transformLayoutPermutation(len(x.shape), spatialDims, default_channels_first)
+            shared = next((n for n in graph.nodes if n.op == "Transpose" and n.inputs and n.inputs[0] is x
+                           and list(n.attrs.get("perm", [])) == list(permX) and n.outputs), None)
+            if shared is not None:
+                node.inputs[1] = shared.outputs[0]
+            else:
+                graph.nodes.append(_appendTranspose(x, node, permX))
+
         if node.op in ["Conv", "RequantizedConv", "RequantizedDualConv"]:  # QW exp5: +RequantizedDualConv (inputs[1:] = weight, mul, add, wmul, bmul) -- QW
             # QW (exp16a): a PRE-ENCODED NE16 weight is already in the accelerator's bit-serial
             #     layout -- it is NOT a logical [cout, cin, *spatial] tensor and must never be
@@ -317,7 +340,7 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
         #     MaxPoolGrad: inputs[1] = forward X (recompute source); MaxPoolGradMask (Part-4):
         #     inputs[1] = the argmax mask (pooled shape). Both are 4D activations that must
         #     match the NHWC layout, else the channel-tiler tiles the wrong axis. -- QW
-        if node.op in ("MaxPoolGrad", "MaxPoolGradMask"):
+        if node.op == "MaxPoolGradMask" or (node.op == "MaxPoolGrad" and not _maxPoolGradXDone):  # RW merge: no double transpose
             # MaxPoolGrad has a SECOND activation input (inputs[1] = the forward input X,
             # used to recompute the argmax). The HWC kernel reads it in NHWC, so it must be
             # transposed like the primary input. Without this, X stays NCHW while dY/dX are

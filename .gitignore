@@ -58,6 +58,12 @@ DeeployTest/Tests/**/pactIntegerizationProto
 DeeployTest/Tests/**/quantlib
 DeeployTest/Tests/**/*.py
 DeeployTest/Tests/**/*.json
+# Recompute schedules are inputs, not generated artefacts: a test that names one
+# and cannot find it fails at generation, which is how it reached CI unnoticed.
+!DeeployTest/Tests/**/recompute_*.json
+# Measured L3<->L2 traffic for traffic-per-peak promotion: an input the CI
+# entries name, for the same reason.
+!DeeployTest/Tests/**/fetch_bytes.json
 DeeployTest/Tests/**/generateTest.py
 DeeployTest/out.txt
 
@@ -67,7 +73,14 @@ CHANGELOG_GEN.md
 .pyusbip/
 .cache/
 
-CLAUDE.mdDeeployTest/frozenbn_grid.log
+CLAUDE.md
+# Local build/run artifacts (this session)
+build_logs/
+.gap9_ccache/
+.gap9_pyenv/
+activate_traindeeploy_convgradw.sh
+run_gap9_in_container.sh
+DeeployTest/frozenbn_grid.log
 
 # -- QW 2026-10-12: private progress notes (kept locally, not shared). Shared documentation is
 #    HandoverDocuments/ and SpeechNet_Test/README.md; logs, results and scripts stay tracked.

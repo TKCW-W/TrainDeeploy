@@ -20,8 +20,46 @@ _PERF_RESULTS: List[Dict[str, Any]] = []
 
 # Inference harness format
 _RUNTIME_CYCLES_RE = re.compile(r"Runtime:\s*(\d+)\s*cycles")
-# Training harness format: train + optimizer step cycles + (optional) weight sram
-_BENCH_RE = re.compile(r"BENCH\s+train_cycles=(\d+)(?:\s+opt_cycles=(\d+))?(?:\s+weight_sram=(\d+))?")
+# Training harness format: train + optimizer step cycles + (optional) total bytes
+# of the trainable weight tensors. NOTE: a logical sum over the weight slots of
+# DeeployNetwork_inputs[], independent of which memory level those tensors
+# actually live in -- it is a parameter-count cross-check, not a footprint.
+_BENCH_RE = re.compile(r"BENCH\s+train_cycles=(\d+)(?:\s+opt_cycles=(\d+))?(?:\s+trainable_bytes=(\d+))?")
+
+# ---------------------------------------------------------------------------
+# Known failures
+#
+# These run in full -- they are compiled, simulated and numerically compared --
+# but their failure is recorded as expected. strict=True means an unexpected
+# PASS fails the run, so an entry cannot quietly rot here once the underlying
+# problem is fixed: CI will tell you to delete it.
+#
+# None of these ever passed. They only became visible when the loss comparison
+# started running at all (it had been dead code: the guard `pi_core_id() != 0`
+# never holds on GAP9, whose cluster controller reports core id 8). Marking them
+# records a pre-existing state, it does not accept a regression.
+#
+# Each entry is (test-function substring, parameter-id substring, reason).
+#
+# ResNet-8 promote (SB and DB) used to be listed here as an "FP32 accumulation
+# order" drift (3 of 4 steps off). It was the promoted-tile offset bug fixed in
+# SingleBufferingTilingCodeGeneration._promotedByteOffsets; both pass now.
+# ---------------------------------------------------------------------------
+# CCT_QLORA_FT (L2 and L3) was listed until the int8 Gemm was fixed: its template
+# passed 9 of the kernel's 12 arguments (no bias stride, scale or zero point), the
+# kernel ignored transA/transB, and GAP9 had no prototype for it, so the float scale
+# went through an implicit declaration. It passes 0/4 now.
+# ---------------------------------------------------------------------------
+_KNOWN_FAILURES = []
+
+
+def pytest_collection_modifyitems(config, items):
+    """Attach xfail(strict=True) to the known failures listed above."""
+    for item in items:
+        for func_part, param_part, reason in _KNOWN_FAILURES:
+            if func_part in item.nodeid and param_part in item.nodeid:
+                item.add_marker(pytest.mark.xfail(strict = True, reason = reason))
+                break
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -89,6 +127,9 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "doublebuffer: mark test as double-buffer configuration")
     config.addinivalue_line("markers", "l2: mark test as L2 default memory level")
     config.addinivalue_line("markers", "l3: mark test as L3 default memory level")
+    config.addinivalue_line(
+        "markers", "recompute: mark test as replaying a gradient-checkpointing schedule "
+        "(activations regenerated before the backward pass instead of held live)")
     config.addinivalue_line("markers", "wmem: mark test as using Neureka weight memory")
     config.addinivalue_line("markers", "promote: mark test as exercising the L3->L2 tensor promotion pass")
     config.addinivalue_line("markers", "dma: mark test as DMA test")
@@ -192,7 +233,7 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
 
     Two harness formats are recognised:
       * inference  : ``Runtime: N cycles``
-      * training   : ``BENCH train_cycles=N opt_cycles=N weight_sram=N``
+      * training   : ``BENCH train_cycles=N opt_cycles=N trainable_bytes=N``
     """
     if report.when != "call":
         return
@@ -225,7 +266,7 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
         if bench.group(2):
             entry["opt_cycles"] = int(bench.group(2))
         if bench.group(3):
-            entry["weight_sram"] = int(bench.group(3))
+            entry["trainable_bytes"] = int(bench.group(3))
     elif runtime is not None:
         entry["runtime_cycles"] = int(runtime.group(1))
     else:
@@ -249,8 +290,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
             extras = f"train={r['train_cycles']:>12,} cyc"
             if "opt_cycles" in r:
                 extras += f"  opt={r['opt_cycles']:>10,} cyc"
-            if "weight_sram" in r:
-                extras += f"  weight_sram={r['weight_sram']:>8,} B"
+            if "trainable_bytes" in r:
+                extras += f"  trainable_bytes={r['trainable_bytes']:>8,} B"
             terminalreporter.write_line(f"  [{mark}] {r['nodeid']:60s}  {extras}")
         elif "runtime_cycles" in r:
             terminalreporter.write_line(f"  [{mark}] {r['nodeid']:60s}  runtime={r['runtime_cycles']:>12,} cyc")
@@ -269,7 +310,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
         lines += [
             "### Training",
             "",
-            "| Test | Status | train_cycles | opt_cycles | weight_sram |",
+            "| Test | Status | train_cycles | opt_cycles | trainable_bytes |",
             "|---|:---:|---:|---:|---:|",
         ]
         for r in results:
@@ -277,8 +318,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
                 continue
             status = ":white_check_mark:" if r["outcome"] == "passed" else ":x:"
             opt = f"{r['opt_cycles']:,}" if "opt_cycles" in r else "—"
-            sram = f"{r['weight_sram']:,}" if "weight_sram" in r else "—"
-            lines.append(f"| `{r['nodeid']}` | {status} | {r['train_cycles']:,} | {opt} | {sram} |")
+            tb = f"{r['trainable_bytes']:,}" if "trainable_bytes" in r else "—"
+            lines.append(f"| `{r['nodeid']}` | {status} | {r['train_cycles']:,} | {opt} | {tb} |")
         lines.append("")
 
     if has_inference:

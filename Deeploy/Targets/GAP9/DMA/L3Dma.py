@@ -6,8 +6,7 @@ import math
 from typing import Dict, Tuple
 
 from Deeploy.DeeployTypes import NetworkContext, NodeTemplate, OperatorRepresentation, VariableBuffer
-from Deeploy.TilingExtension.AsyncDma import AsyncDma, BlockingDmaFromAsyncDmaAdapter, DmaDirection, Future, \
-    PerTensorWaitingStrategy
+from Deeploy.TilingExtension.AsyncDma import AsyncDma, DmaDirection, Future, PerTensorWaitingStrategy
 
 
 class GAP9L3DmaFuture(Future):
@@ -21,6 +20,7 @@ class GAP9L3DmaFuture(Future):
     _waitTemplate = NodeTemplate("""
     if (${name}.size != 0) {
         pi_cl_ram_copy_wait(&${name});
+        ${name}.size = 0;
     }""")
 
 
@@ -29,7 +29,7 @@ class GAP9L3Dma(AsyncDma):
     _transferTemplates = {
         2:
             NodeTemplate(
-                "pi_cl_ram_copy_2d(get_ram_ptr(), ${ext}, ${loc}, ${transfer_size}, ${stride}, ${length}, ${ext2loc}, &${future});"
+                "pi_cl_ram_copy_2d(get_ram_ptr(), (uint32_t) ${ext}, ${loc}, ${transfer_size}, ${stride}, ${length}, ${ext2loc}, &${future});"
             )
     }
     _waitingStrategy = PerTensorWaitingStrategy(GAP9L3DmaFuture)
@@ -60,5 +60,8 @@ class GAP9L3Dma(AsyncDma):
         return operatorRepresentation
 
 
-# Blocking adapter for L3 DMA (used in GAP9 L3 tiling)
-gap9L3DmaHack = BlockingDmaFromAsyncDmaAdapter(GAP9L3Dma())
+# Async L3 DMA for GAP9 L3 tiling. The Anydim adapter now serializes the
+# decomposed sub-transfers on the shared per-tensor request handle (see
+# TilingExtension/AsyncDma.py, port of pulp-platform/Deeploy#198), so the
+# previous BlockingDmaFromAsyncDmaAdapter wrapper is no longer needed.
+gap9L3DmaHack = GAP9L3Dma()

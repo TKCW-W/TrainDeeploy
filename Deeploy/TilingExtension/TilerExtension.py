@@ -215,6 +215,22 @@ class Tiler():
                 sz = _bufBytes(buf)
                 if sz > 0:
                     promotedConsts.append((buf.name, sz))
+            # Training graphs carry their weights and gradient accumulators as graph
+            # inputs/outputs: globalObjects of type VariableBuffer, not ConstantBuffer.
+            # When promoted they are malloc'd standalone at this level and alive for the
+            # whole schedule, exactly like promoted constants -- draw them the same way,
+            # otherwise the L2 panel hides them (Autoencoder: 603 KB of 1.07 MB).
+            for buf in ctxt.globalObjects.values():
+                if not isinstance(buf, VariableBuffer) or isinstance(
+                        buf, (ConstantBuffer, TransientBuffer, _ReferenceBuffer)):
+                    continue
+                if 'PROMOTED_POOL' in buf.name:
+                    continue  # the pool is drawn through its packed activations below
+                if not _eligible(buf):
+                    continue
+                sz = _bufBytes(buf)
+                if sz > 0:
+                    promotedConsts.append((buf.name, sz))
             for buf in ctxt.localObjects.values():
                 if not isinstance(buf, VariableBuffer):
                     continue
@@ -406,7 +422,25 @@ class Tiler():
             if not promoted:
                 continue
 
-            blocks = [MemoryBlock(b.name, level, b._lifetime, None) for b in promoted]
+            # A promoted view (out._alias = in.name, from Reshape-like ops) shares the storage
+            # of its root: extend the root's lifetime over its views, pack only the roots, and
+            # hand each view the root's slot afterwards. Without this every view would get its
+            # own pool slot and the group would cost its size twice.
+            byName = {b.name: b for b in promoted}
+            views: Dict[str, str] = {}
+            for b in promoted:
+                if hasattr(b, "_alias"):
+                    try:
+                        root = ctxt.dealiasBuffer(b.name)
+                    except Exception:
+                        root = None
+                    if root in byName and root != b.name:
+                        views[b.name] = root
+            lifetimes = {b.name: tuple(b._lifetime) for b in promoted}
+            for v, r in views.items():
+                lifetimes[r] = (min(lifetimes[r][0], lifetimes[v][0]), max(lifetimes[r][1], lifetimes[v][1]))
+
+            blocks = [MemoryBlock(b.name, level, lifetimes[b.name], None) for b in promoted if b.name not in views]
             capacity = self.memoryHierarchy.memoryLevels[level].size
 
             packed = self.minimalloc(blocks, ctxt, None, capacity, level)
@@ -427,6 +461,7 @@ class Tiler():
             poolBuf._memoryLevel = level
             ctxt.globalObjects.move_to_end(poolBuf.name, last = False)
 
+            packedByName = {blk.name: blk for blk in packed if blk._addrSpace is not None}
             for blk in packed:
                 if blk._addrSpace is None:
                     continue
@@ -436,6 +471,16 @@ class Tiler():
                 buf._packedIntoPool = poolName
                 buf.allocTemplate = NodeTemplate(" ${name} = (${type.typeName}) " +
                                                  f"((char*){str(poolBuf._instance)} + {offset});")
+                buf.deallocTemplate = _deallocTemplate
+            for v, r in views.items():
+                if r not in packedByName:
+                    continue
+                blk = packedByName[r]
+                buf = ctxt.lookup(v)
+                buf._addrSpace = blk._addrSpace
+                buf._packedIntoPool = poolName
+                buf.allocTemplate = NodeTemplate(" ${name} = (${type.typeName}) " +
+                                                 f"((char*){str(poolBuf._instance)} + {blk._addrSpace[0]});")
                 buf.deallocTemplate = _deallocTemplate
 
             log.info(f"  [PromotedPool] Packed {len(promoted)} activations at {level} "
@@ -494,6 +539,12 @@ class Tiler():
 
             maxAddr[memoryLevel] = currentMax
             self._worstCaseBufferSize[memoryLevel] = currentMax
+
+        import os as _os_dbg
+        if _os_dbg.environ.get("DEEPLOY_ARENA_DEBUG"):
+            for _lv, _pl in memoryMap.items():
+                _n = sum(len(x) for x in _pl)
+                print(f"  [arena] level={_lv} patterns={len(_pl)} blocks={_n} maxAddr={maxAddr.get(_lv)}")
 
         for level, addrSpace in maxAddr.items():
             if addrSpace == 0:
@@ -637,6 +688,14 @@ class Tiler():
                     str(memoryBlock.lifetime[1] + 1),
                     str(_alignedSize)
                 ])
+
+        _dumpBase = os.environ.get("DEEPLOY_MINIMALLOC_DUMP")
+        if _dumpBase:
+            import shutil as _sh
+            _n = 0
+            while os.path.exists(f"{_dumpBase}_{memoryLevel}_{_n}.csv"):
+                _n += 1
+            _sh.copyfile(f"{self._minimalloc_input}.csv", f"{_dumpBase}_{memoryLevel}_{_n}.csv")
 
         try:
             minimallocInstallDir = os.environ["MINIMALLOC_INSTALL_DIR"]
@@ -2017,6 +2076,87 @@ class Tiler():
                                         1), f"Invalid memory map! Buffer {tensor.name} is not alive at step {stepIdx}!"
 
 
+def harvestFetchTraffic(ctxt, tilingSolution, layerBinding, level: str):
+    """Bytes moved into `level` per tensor, over the whole tile loop.
+
+    Q(t) in the residency stage is the traffic saved by promoting t, which is the
+    traffic incurred while t is NOT promoted -- so this is only meaningful when
+    read off a solution in which everything still lives at the default level.
+
+    Returns {tensorName: bytes}. Tensors whose tile count cannot be established
+    are omitted rather than guessed.
+    """
+    import math
+    import os as _os
+    _dbg = [] if _os.environ.get("DEEPLOY_HARVEST_DEBUG") else None
+    traffic = {}
+    diag = {"patterns": 0, "nodes": 0, "noTileCount": 0, "noShape": 0}
+    for layer, pattern in zip(layerBinding.values(), tilingSolution):
+        diag["patterns"] += 1
+        # tilingSolution holds PatternMemoryConstraints; the per-node constraints
+        # are one level down.
+        nodeConstraints = getattr(pattern, "nodeConstraints", None)
+        if nodeConstraints is None:
+            nodeConstraints = [pattern]
+        for nodeConstraint in nodeConstraints:
+            diag["nodes"] += 1
+            constraints = getattr(nodeConstraint, "tensorMemoryConstraints", None)
+            if not constraints:
+                continue
+
+            # Tile count comes from an output tensor: outputs are what the tile loop
+            # is indexed over, so ceil(full / tile) per dimension is the trip count.
+            numTiles = None
+            for outTensor in layer.node.outputs:
+                entry = constraints.get(outTensor.name)
+                if entry is None:
+                    continue
+                mc = entry.memoryConstraints.get(level)
+                if mc is None or mc.shape is None:
+                    continue
+                try:
+                    full = ctxt.lookup(outTensor.name).shape
+                except Exception:
+                    continue
+                if len(full) != len(mc.shape):
+                    continue
+                count = 1
+                for fullDim, tileDim in zip(full, mc.shape):
+                    if not isinstance(tileDim, int) or tileDim <= 0:
+                        count = None
+                        break
+                    count *= max(1, math.ceil(fullDim / tileDim))
+                if count is not None:
+                    numTiles = count
+                    break
+            if numTiles is None:
+                diag["noTileCount"] += 1
+                continue
+            diag.setdefault("tileCounts", []).append(numTiles)
+
+            for name, entry in constraints.items():
+                if _dbg is not None and len(_dbg) < 40:
+                    try:
+                        _b = ctxt.lookup(name)
+                        _dbg.append((name, type(_b).__name__, getattr(_b, 'name', None)))
+                    except Exception as _e:
+                        _dbg.append((name, 'LOOKUP-FAILED', str(_e)[:40]))
+                mc = entry.memoryConstraints.get(level)
+                if mc is None or not isinstance(mc.size, int):
+                    continue
+                try:
+                    width = ctxt.lookup(name)._type.referencedType.typeWidth // 8
+                except Exception:
+                    width = 4
+                # multiBufferCoefficient is how many buffers are allocated, not how
+                # many times the data moves; it must not scale the traffic.
+                traffic[name] = traffic.get(name, 0) + numTiles * mc.size * width
+    if _dbg is not None:
+        diag["sample"] = _dbg
+    traffic["__diag__"] = diag
+    return traffic
+
+
 class TilerDeployerWrapper(NetworkDeployerWrapper):
     """Wrapper for network deployers that adds tiling capabilities.
 
@@ -2170,6 +2310,23 @@ class TilerDeployerWrapper(NetworkDeployerWrapper):
             memoryMap = self.tiler.computeMemoryMap(self.ctxt, tilingSolution)
 
         assert tilingSolution is not None and memoryMap is not None
+
+        _harvestPath = os.environ.get("DEEPLOY_FETCH_HARVEST")
+        if _harvestPath:
+            import json as _json
+
+            # Only the training graph reaches this with the variable set; the
+            # optimizer codegen runs as a second subprocess with it stripped
+            # (see run_training_codegen in testUtils/trainingUtils.py).
+            _out = {}
+            for _lvl in self.Platform.memoryHierarchy.memoryLevels.keys():
+                _out[_lvl] = harvestFetchTraffic(self.ctxt, tilingSolution, self.layerBinding, _lvl)
+            _users = {}
+            for _n, _b in list(self.ctxt.localObjects.items()) + list(self.ctxt.globalObjects.items()):
+                _users[_n] = len(getattr(_b, "_users", []) or [])
+            with open(_harvestPath, "w") as _fh:
+                _json.dump({"traffic": _out, "users": _users}, _fh)
+            log.info(f" > Fetch traffic written to {_harvestPath}")
 
         log.debug(" - Test Tiling Solution Correctness")
         self.tiler.testTilingSolutionCorrectness(tilingSolution)

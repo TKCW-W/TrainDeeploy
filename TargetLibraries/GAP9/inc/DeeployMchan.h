@@ -42,22 +42,33 @@
 // mchan_transfer_push_1d/2d / get_id / wait / free)
 #include "mchan.h"
 
-// -- QW: the generated tiling-DMA + reused-PULPOpen op templates also emit the Deeploy pulp
-//    Mchan API (mchan_channel_alloc/free/wait, mchan_transfer_1d/2d_*) which GAP9's mchan.h
-//    does NOT provide. GAP9 IS Mchan v7 (MCHAN_VERSION==7 above => MCHAN_TRANSFER_LEN_SIZE 17,
-//    identical CMD_FLAG encoding to mchan_v7.h), so mchan_v7.h drives the SAME hardware
-//    correctly and its macros redefine identically (legal, no clash) while its function names
-//    are disjoint from GAP9's mchan.h. Include it to supply the channel API. mchan_v7.h also
-//    defines MCHAN_CHANNEL_ID_MAX, so the manual fallback below is now belt-and-braces. -- QW
-// -- QW: mchan_v7.h calls assert() and relies on the includer providing it (Siracusa does via
-//    its toolchain; the GAP9 freestanding toolchain does not, giving an implicit-decl error).
-//    These are non-essential debug bounds checks — provide a no-op if assert is unavailable. -- QW
-#include <assert.h>
+// GAP9's mchan.h carries the older push/wait API used by dory_dma.c. The tiling
+// codegen (MchanDma.py) emits the channel API instead -- mchan_channel_alloc /
+// _wait / _free, mchan_transfer_1d, mchan_transfer_2d_ext_strided -- which only
+// PULPOpen's mchan_v7.h defines. GAP9 *is* MCHAN v7, and PULPOpen/inc is
+// already on the include path, so pull in the definitions rather than
+// duplicating them. Every macro mchan_v7.h requires (MCHAN_BASE_ADDR,
+// MCHAN_EVENT/POLLED, MCHAN_EVENT_BIT) is set above. mchan_v7.h asserts on the
+// channel id, but neither "assert.h" nor <assert.h> yields an assert() macro
+// here: the GAP9 SDK ships rtos/pmsis/tools/assert/include/assert.h ahead of
+// the toolchain's on the include path, and it declares only pi_assert. With
+// -Werror the implicit declaration is fatal. Supply the macro rather than
+// reordering the SDK's include path; the checks guard a channel id the codegen
+// already bounds, and this is a DMA hot path where a runtime check would not be
+// wanted anyway.
 #ifndef assert
-#define assert(x) ((void)0)
+#define assert(cond) ((void)0)
 #endif
+
 #include "mchan_v7.h"
 
+// GAP9 MCHAN v7 exposes 16 hardware channels (ids 0..15). The generated
+// DMA code (MchanDma.py template) guards channel waits with
+// `channel <= MCHAN_CHANNEL_ID_MAX`, but GAP9's mchan.h does not define this
+// macro (only PULPOpen's mchan_v6/v7.h do). Define it here so the generated
+// TrainingNetwork.c compiles.
+// MCHAN_CHANNEL_ID_MAX now comes from mchan_v7.h; kept guarded in case that
+// header stops defining it.
 #ifndef MCHAN_CHANNEL_ID_MAX
 #define MCHAN_CHANNEL_ID_MAX (15)
 #endif
