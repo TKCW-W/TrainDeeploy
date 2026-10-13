@@ -75,6 +75,11 @@ if(POWER_MEASUREMENT)
   endif()
 endif()
 
+# RW: training harnesses run gvsoc at 370 MHz by default; -DGVSOC_DEFAULT_FREQ=ON keeps the SDK clocks.
+if(GVSOC_DEFAULT_FREQ)
+  target_compile_definitions(${ProjectId} PRIVATE GVSOC_DEFAULT_FREQ)
+endif()
+
 if(CC_STACK_SIZE)
   target_compile_definitions(${ProjectId} PRIVATE CC_STACK_SIZE=${CC_STACK_SIZE})
 endif()

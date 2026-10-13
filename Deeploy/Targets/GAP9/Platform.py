@@ -184,8 +184,8 @@ from Deeploy.Targets.NE16.Tiler import NE16DualBiasTilingReadyBindings, NE16Dual
 GAP9_NE16DualPerturbEncodeMapper = NodeMapper(NE16DualPerturbEncodeParser(), NE16DualPerturbEncodeTilingReadyBindings)  # -- QW
 GAP9_NE16DualBiasMapper = NodeMapper(NE16DualBiasParser(), NE16DualBiasTilingReadyBindings)  # -- QW
 # RW merge 2026-10-13: Qiwen's argmax-mask MaxPool backward (exp3) on GAP9 too, same PULP tiling-ready bindings.
-from Deeploy.Targets.PULPOpen.Tiler import PULPMaxPoolArgmaxTilingReadyBindings as _PULPMaxPoolArgmaxTRB, \
-    PULPMaxPoolGradMaskTilingReadyBindings as _PULPMaxPoolGradMaskTRB
+from Deeploy.Targets.GAP9.Tiler import GAP9MaxPoolArgmaxTilingReadyBindings as _PULPMaxPoolArgmaxTRB, \
+    GAP9MaxPoolGradMaskTilingReadyBindings as _PULPMaxPoolGradMaskTRB  # RW: GAP9 transformer (L3-safe)
 GAP9_MaxPoolArgmaxMapper = NodeMapper(MaxPool2DParser(), _PULPMaxPoolArgmaxTRB)
 GAP9_MaxPoolGradMaskMapper = NodeMapper(MaxPoolGradParser(), _PULPMaxPoolGradMaskTRB)
 

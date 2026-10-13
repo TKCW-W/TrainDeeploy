@@ -239,3 +239,14 @@ GAP9InPlaceAccumulatorV2TilingReadyBindings = TilingReadyNodeBindings(
 
 GAP9LayernormGradTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = [GAP9LayernormGradBinding],
                                                                tileConstraint = LayernormGradTileConstraint())
+
+
+# RW 2026-10-13: argmax-mask MaxPool with the GAP9 transformer (see Bindings.py).
+from Deeploy.Targets.GAP9.Bindings import GAP9MaxPoolArgmaxBindings, GAP9MaxPoolGradMaskBindings
+from Deeploy.Targets.PULPOpen.TileConstraints.MaxPoolTileConstraint import MaxPoolCTileConstraint as _MaxPoolCTC
+from Deeploy.Targets.PULPOpen.TileConstraints.MaxPoolGradTileConstraint import MaxPoolGradCTileConstraint as _MaxPoolGradCTC
+
+GAP9MaxPoolArgmaxTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9MaxPoolArgmaxBindings,
+                                                               tileConstraint = _MaxPoolCTC())
+GAP9MaxPoolGradMaskTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9MaxPoolGradMaskBindings,
+                                                                 tileConstraint = _MaxPoolGradCTC())

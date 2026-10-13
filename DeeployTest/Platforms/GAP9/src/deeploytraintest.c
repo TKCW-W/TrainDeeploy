@@ -470,6 +470,18 @@ int main(void) {
   pi_gpio_pin_write(GPIOs, 0);
 #endif
 
+#if !defined(POWER_MEASUREMENT) && !defined(GVSOC_DEFAULT_FREQ)
+  /* RW 2026-10-13 (from the Mamba harness, AI_AGENT/Mamba/board_bringup_2026-10-06.md 2.1): run gvsoc at the
+   * EVK operating point. At the SDK default (cluster 50 MHz) every PSRAM wait is ~7x cheaper in cycles
+   * (FEMBA: 65.0 M gvsoc-default vs 107.8 M gvsoc@370 vs 108.8 M board). -DGVSOC_DEFAULT_FREQ = old clocks. */
+  pi_freq_set(PI_FREQ_DOMAIN_FC, 370 * 1000 * 1000);
+  pi_freq_set(PI_FREQ_DOMAIN_CL, 370 * 1000 * 1000);
+  pi_freq_set(PI_FREQ_DOMAIN_PERIPH, 370 * 1000 * 1000);
+  pi_pmu_voltage_set(PI_PMU_VOLTAGE_DOMAIN_CHIP, 800);
+  printf("[FREQ] FC=%d CL=%d PE=%d Hz\r\n", pi_freq_get(PI_FREQ_DOMAIN_FC), pi_freq_get(PI_FREQ_DOMAIN_CL),
+         pi_freq_get(PI_FREQ_DOMAIN_PERIPH));
+#endif
+
   BISECT(3); /* freq/voltage set */
 
   mem_init();
@@ -563,6 +575,13 @@ int main(void) {
 #endif
 
   BISECT(8); /* weight copy done — about to enter ROI */
+
+#ifdef BN_FROZEN_STATS /* RW 2026-10-13: Qiwen's frozen-stat BN, as in Siracusa/src/deeploytraintest.c. Without it
+                          the GAP9 BP harness normalised with batch-1 statistics (SpeechNet loss 1.4856 vs 0.011451). */
+  extern uint32_t g_bn_frozen_stats;
+  g_bn_frozen_stats = 1u;
+  printf("[BN_FROZEN_STATS] training BN uses frozen running statistics (train==inference)\r\n");
+#endif
 
   printf("Starting training (%u optimizer steps x %u accum steps)...\r\n",
          (unsigned)N_TRAIN_STEPS, (unsigned)N_ACCUM_STEPS);

@@ -628,3 +628,20 @@ GAP9LayernormGradBinding = NodeBinding(
         PointerClass(float32_t)
     ], [PointerClass(float32_t), PointerClass(float32_t),
         PointerClass(float32_t)]), FloatLayernormTemplate.referenceGradTemplate, GAP9Transformer)
+
+
+# RW 2026-10-13: Qiwen's argmax-mask MaxPool forward/backward (exp3) with the GAP9 transformer. Registering the
+# PULPOpen bindings directly gives PULPOpen's L3 tiling code on GAP9: correct in L2-resident mode, wrong in
+# L3 mode (SpeechNet BP loss 1.4856 vs 0.011451).
+from Deeploy.Targets.Generic.TypeCheckers import MaxPoolGradChecker as _MaxPoolGradChecker
+from Deeploy.Targets.PULPOpen.TypeCheckers import PULPMaxPoolChecker as _PULPMaxPoolChecker
+
+GAP9MaxPoolArgmaxBindings = [
+    NodeBinding(_PULPMaxPoolChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatMaxPoolTemplate.argmaxTemplate, GAP9Transformer)
+]
+
+GAP9MaxPoolGradMaskBindings = [
+    NodeBinding(_MaxPoolGradChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+                FloatMaxPoolTemplate.referenceGradMaskTemplate, GAP9Transformer)
+]

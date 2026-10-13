@@ -315,6 +315,17 @@ int main(void) {                 // -- QW
     return -1;                   // -- QW
 
 #ifndef NOFLASH                  // -- QW
+#if !defined(POWER_MEASUREMENT) && !defined(GVSOC_DEFAULT_FREQ)
+  /* RW 2026-10-13 (from the Mamba harness, AI_AGENT/Mamba/board_bringup_2026-10-06.md 2.1): run gvsoc at the
+   * EVK operating point. At the SDK default (cluster 50 MHz) every PSRAM wait is ~7x cheaper in cycles
+   * (FEMBA: 65.0 M gvsoc-default vs 107.8 M gvsoc@370 vs 108.8 M board). -DGVSOC_DEFAULT_FREQ = old clocks. */
+  pi_freq_set(PI_FREQ_DOMAIN_FC, 370 * 1000 * 1000);
+  pi_freq_set(PI_FREQ_DOMAIN_CL, 370 * 1000 * 1000);
+  pi_freq_set(PI_FREQ_DOMAIN_PERIPH, 370 * 1000 * 1000);
+  pi_pmu_voltage_set(PI_PMU_VOLTAGE_DOMAIN_CHIP, 800);
+  printf("[FREQ] FC=%d CL=%d PE=%d Hz\r\n", pi_freq_get(PI_FREQ_DOMAIN_FC), pi_freq_get(PI_FREQ_DOMAIN_CL),
+         pi_freq_get(PI_FREQ_DOMAIN_PERIPH));
+#endif
   mem_init();                    // -- QW
   open_fs();                     // -- QW
 #endif                           // -- QW
