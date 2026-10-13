@@ -229,6 +229,48 @@ void PULP_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
   uint32_t im2col_size_per_core = C * P * Q;
   float32_t *im2col_buffer = pContextBuffer + core_id * im2col_size_per_core;
 
+  // RW 2026-10-13: single input channel (SpeechNet block 0: 1x4 kernel, 14x700 input). The im2col copy
+  // costs as much as the P*Q MACs it feeds, and the tiler cuts F to 1-2 channels per tile, so every tile
+  // rebuilds it. Read the input directly instead. Same summation order (k = p*Q + q); padded taps are
+  // skipped, which the im2col path adds as 0*w (= +-0, no effect on a sum that starts at +0.0f), so the
+  // result is bit-identical.
+  if (C == 1) {
+    for (uint32_t h_out = h_out_start; h_out < h_out_stop; h_out++) {
+      int32_t h_in_start = h_out * SP - pad_top;
+      for (uint32_t w_out = 0; w_out < W_out; w_out++) {
+        int32_t w_in_start = w_out * SQ - pad_left;
+        float32_t *out = pDstC + (h_out * W_out + w_out) * F_total;
+        // valid tap range, computed once per pixel: no branches inside the MAC loops
+        int32_t q_lo = w_in_start < 0 ? -w_in_start : 0;
+        int32_t q_hi = (int32_t)W - w_in_start;
+        if (q_hi > (int32_t)Q) {
+          q_hi = (int32_t)Q;
+        }
+        int32_t p_lo = h_in_start < 0 ? -h_in_start : 0;
+        int32_t p_hi = (int32_t)H - h_in_start;
+        if (p_hi > (int32_t)P) {
+          p_hi = (int32_t)P;
+        }
+        for (uint32_t f = ch_out_start; f < ch_out_stop; f++) {
+          const float32_t *wf = weight_ptr + (f - ch_out_start) * kernel_size;
+          float32_t sum = 0.0f;
+          for (int32_t p = p_lo; p < p_hi; p++) {
+            const float32_t *row = pSrcA + (h_in_start + p) * (int32_t)W + w_in_start;
+            const float32_t *wr = wf + p * (int32_t)Q;
+            for (int32_t q = q_lo; q < q_hi; q++) {
+              sum += row[q] * wr[q];
+            }
+          }
+          if (has_bias) {
+            sum += pSrcBias[f];
+          }
+          out[f] = sum;
+        }
+      }
+    }
+    return;
+  }
+
   // Compute the output
   if (has_bias) {
     for (uint32_t h_out = h_out_start; h_out < h_out_stop; h_out++) {
