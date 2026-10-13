@@ -14,6 +14,7 @@ extern struct pi_device ram;
 void open_fs();
 void mem_init();
 struct pi_device *get_ram_ptr();
+struct pi_device *get_flash_ptr();  // RW 2026-10-13
 // PSRAM page-wrap guard (see gap9_ram_copy_2d in dory_mem.c). 1 KB is stricter than the
 // 2 KB wrap measured on the EVK; every 2 KB boundary is also a 1 KB one. (RW, from aac64970)
 #define GAP9_RAM_PAGE 1024u

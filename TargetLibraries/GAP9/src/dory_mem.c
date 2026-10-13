@@ -77,6 +77,8 @@ void mem_init() {
 }
 
 struct pi_device *get_ram_ptr() { return &ram; }
+// RW 2026-10-13: the external flash holding readfs_flash (ZO weight persistence, deeploymezotest.c)
+struct pi_device *get_flash_ptr() { return &flash; }
 
 void *ram_malloc(size_t size) {
   void *ptr = NULL;

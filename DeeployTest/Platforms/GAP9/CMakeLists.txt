@@ -123,6 +123,12 @@ if(MEZO_TRAINING)  # QW: MeZO (ZO) compile-time defines — parallel block along
     if(MEZO_STACKS_L2)  # RW: old behaviour -- cluster slave stacks in an L2 buffer (default: L1)
         target_compile_definitions(${ProjectId} PRIVATE MEZO_STACKS_L2)
     endif()
+    if(ZO_PERSIST)  # RW 2026-10-13: write the trained weights to a reserved flash region
+        target_compile_definitions(${ProjectId} PRIVATE ZO_PERSIST)
+    endif()
+    if(ZO_RESUME)  # RW 2026-10-13: start from the weights saved there by the previous round
+        target_compile_definitions(${ProjectId} PRIVATE ZO_RESUME)
+    endif()
     if(ZO_ECO)  # RW 2026-10-13: ECO error feedback in the ZO update (ZORuntime.h); ZO_ECO_BETA / ZO_ECO_SR optional
         target_compile_definitions(${ProjectId} PRIVATE ZO_ECO)
         if(ZO_ECO_BETA)

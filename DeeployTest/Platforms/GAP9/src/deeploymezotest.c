@@ -336,6 +336,134 @@ static void dump_zo_weights(uint32_t step) {  // -- QW
 }                                                                          // -- QW
 #endif /* DUMP_WEIGHTS -- QW */
 
+/* RW 2026-10-13: device-resident weights across fine-tuning rounds.
+ * ZO_PERSIST: after the last update the trainable tensors are written to a reserved region at the END of the
+ *   external flash (the readfs image sits at its start), behind a header with magic, tensor count, a hash of the
+ *   tensor sizes, the accumulated step count and the round number, and a CRC-32 of the payload; the write is read
+ *   back and checked.
+ * ZO_RESUME: before training, a valid region (magic, same tensor layout, CRC) replaces the initial weights from
+ *   readfs; otherwise the readfs weights are used and the reason is printed. A full reflash may erase the region,
+ *   which then simply fails the check. The UART weight dump is no longer needed to carry weights between rounds. */
+#if (defined(ZO_PERSIST) || defined(ZO_RESUME)) && defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+#define ZOP_MAGIC 0x5A4F5754u /* "ZOWT" */
+#define ZOP_REGION (256u * 1024u)
+#ifndef ZOP_FLASH_SIZE
+#define ZOP_FLASH_SIZE (64u * 1024u * 1024u)
+#endif
+typedef struct {
+  uint32_t magic, version, n_tensors, payload_bytes, layout_hash, steps_total, round, crc;
+} zop_hdr_t;
+
+static uint32_t zop_crc32(const uint8_t *p, uint32_t n, uint32_t crc) {
+  crc = ~crc;
+  for (uint32_t i = 0; i < n; i++) {
+    crc ^= p[i];
+    for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+  }
+  return ~crc;
+}
+
+static uint32_t zop_layout(uint32_t *payload) {
+  uint32_t h = 2166136261u, tot = 0;
+  for (uint32_t wi = 0; wi < (uint32_t)TRAINING_NUM_WEIGHT_INPUTS; wi++) {
+    uint32_t b = DeeployNetwork_inputs_bytes[(uint32_t)TRAINING_NUM_DATA_INPUTS + wi];
+    h = (h ^ b) * 16777619u;
+    tot += (b + 3u) & ~3u;
+  }
+  *payload = tot;
+  return h;
+}
+
+static uint32_t zop_addr(struct pi_device *fl) {
+  struct pi_flash_info info;
+  pi_flash_ioctl(fl, PI_FLASH_IOCTL_INFO, &info);
+  uint32_t region = (ZOP_REGION + info.sector_size - 1u) / info.sector_size * info.sector_size;
+  /* the driver reports size 0 for the EVK octo-SPI flash; the device (and gapy --flash-size) has 64 MiB */
+  uint32_t size = (info.size != 0u && info.size < ZOP_FLASH_SIZE) ? info.size : ZOP_FLASH_SIZE;
+  return size - region;
+}
+
+/* copy one weight tensor between its network buffer (L2 or L3) and an L2 staging pointer */
+static void zop_xfer(uint32_t wi, uint8_t *stage, int to_net) {
+  uint32_t idx = (uint32_t)TRAINING_NUM_DATA_INPUTS + wi;
+  void *buf = DeeployNetwork_inputs[idx];
+  uint32_t bytes = DeeployNetwork_inputs_bytes[idx];
+  if (IS_L2(buf)) {
+    if (to_net) memcpy(buf, stage, bytes); else memcpy(stage, buf, bytes);
+  } else {
+    if (to_net) ram_write(buf, stage, bytes); else ram_read(stage, buf, bytes);
+  }
+}
+#endif
+
+#if defined(ZO_PERSIST) && defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+static uint32_t g_zop_steps_before = 0, g_zop_round = 1;
+static int zop_save(uint32_t steps_done) {
+  struct pi_device *fl = get_flash_ptr();
+  uint32_t payload; zop_hdr_t h = {ZOP_MAGIC, 1u, TRAINING_NUM_WEIGHT_INPUTS, 0, 0, 0, 0, 0};
+  h.layout_hash = zop_layout(&payload); h.payload_bytes = payload;
+  h.steps_total = g_zop_steps_before + steps_done; h.round = g_zop_round;
+  uint32_t tot = sizeof(h) + payload;
+  uint8_t *img = (uint8_t *)pi_l2_malloc(tot);
+  if (!img) { printf("[ZOP] save: no L2 for %u B\r\n", (unsigned)tot); return -1; }
+  memset(img, 0, tot);
+  uint32_t off = sizeof(h);
+  for (uint32_t wi = 0; wi < (uint32_t)TRAINING_NUM_WEIGHT_INPUTS; wi++) {
+    zop_xfer(wi, img + off, 0);
+    off += (DeeployNetwork_inputs_bytes[(uint32_t)TRAINING_NUM_DATA_INPUTS + wi] + 3u) & ~3u;
+  }
+  h.crc = zop_crc32(img + sizeof(h), payload, 0);
+  memcpy(img, &h, sizeof(h));
+  uint32_t a = zop_addr(fl);
+  pi_flash_erase(fl, a, (int)tot);
+  pi_flash_program(fl, a, img, tot);
+  memset(img, 0, tot);
+  pi_flash_read(fl, a, img, tot);  /* read back and verify */
+  zop_hdr_t r; memcpy(&r, img, sizeof(r));
+  int ok = r.magic == ZOP_MAGIC && r.crc == zop_crc32(img + sizeof(r), payload, 0);
+  printf("[ZOP] saved round %u (%u steps total) %u B at flash 0x%08x crc %08x: %s\r\n", (unsigned)h.round,
+         (unsigned)h.steps_total, (unsigned)tot, (unsigned)a, (unsigned)h.crc, ok ? "verified" : "VERIFY FAILED");
+  pi_l2_free(img, tot);
+  return ok ? 0 : -1;
+}
+#endif
+
+#if defined(ZO_RESUME) && defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+static void zop_resume(void) {
+  struct pi_device *fl = get_flash_ptr();
+  uint32_t payload, layout = zop_layout(&payload), a = zop_addr(fl);
+  zop_hdr_t h; pi_flash_read(fl, a, &h, sizeof(h));
+  const char *why = NULL;
+  if (h.magic != ZOP_MAGIC) why = "no saved weights";
+  else if (h.n_tensors != TRAINING_NUM_WEIGHT_INPUTS || h.layout_hash != layout || h.payload_bytes != payload)
+    why = "saved weights have a different tensor layout";
+  uint8_t *img = NULL;
+  if (!why) {
+    img = (uint8_t *)pi_l2_malloc(payload);
+    if (!img) why = "no L2 for the payload";
+    else {
+      pi_flash_read(fl, a + sizeof(h), img, payload);
+      if (zop_crc32(img, payload, 0) != h.crc) why = "CRC mismatch";
+    }
+  }
+  if (why) {
+    printf("[ZOP] resume: %s -> initial weights from readfs\r\n", why);
+  } else {
+    uint32_t off = 0;
+    for (uint32_t wi = 0; wi < (uint32_t)TRAINING_NUM_WEIGHT_INPUTS; wi++) {
+      zop_xfer(wi, img + off, 1);
+      off += (DeeployNetwork_inputs_bytes[(uint32_t)TRAINING_NUM_DATA_INPUTS + wi] + 3u) & ~3u;
+    }
+    printf("[ZOP] resumed round %u weights (%u steps so far, crc %08x)\r\n", (unsigned)h.round,
+           (unsigned)h.steps_total, (unsigned)h.crc);
+#ifdef ZO_PERSIST
+    g_zop_steps_before = h.steps_total; g_zop_round = h.round + 1u;
+#endif
+  }
+  if (img) pi_l2_free(img, payload);
+}
+#endif
+
 /* RW 2026-10-13: weight-update self-check (FPU-free, FC only). A ZO round once reported "Errors: 0 out of
  * 21600" with every weight bit-identical to the pretrained one (the loss tolerance cannot see a missing
  * update: lr 3e-6 moves the losses by < 1e-3). wchk_hash() hashes the raw bits of one trainable tensor;
@@ -464,6 +592,9 @@ int main(void) {                 // -- QW
   }                                                                         // -- QW
 #endif                                                                      // -- QW
 
+#if defined(ZO_RESUME) && defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+  zop_resume();  // RW 2026-10-13: previous round's device weights from flash, if present
+#endif
   ZTRACE("Starting ZO training (%u update steps x %u accum steps)...\r\n",  // -- QW
          (unsigned)N_TRAIN_STEPS, (unsigned)N_ACCUM_STEPS);                 // -- QW
 
@@ -641,6 +772,9 @@ int main(void) {                 // -- QW
 #endif
 
   } /* end update_step loop -- QW */
+#if defined(ZO_PERSIST) && defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
+  zop_save((uint32_t)N_TRAIN_STEPS);  // RW 2026-10-13: keep the weights on the device for the next round
+#endif
 
 #ifdef DUMP_WEIGHTS
   /* QW: dump the final on-device ZO-updated weights (after the last update step) so
