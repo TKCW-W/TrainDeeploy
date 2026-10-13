@@ -112,6 +112,11 @@ void PULP_BatchNormGrad_fp32(const float32_t *dY, const float32_t *X,
 
 // --- Forward + non-conv gradient kernels also linked from PULPOpen/src but
 //     not surfaced by any GAP9-reachable header (same implicit-decl risk). ---
+// RW 2026-10-13: channels-last frozen-stat BatchNormInternal (PULPOpen/src/BatchNorm.c)
+void PULP_BatchNormInternalHWC_fp32(const float32_t *X, const float32_t *gamma, const float32_t *beta,
+                                    const float32_t *running_mean, const float32_t *running_var, float32_t *Y,
+                                    float32_t *saved_mean, float32_t *saved_inv_std, uint32_t P, uint32_t C,
+                                    float32_t epsilon);
 void PULP_BatchNormInternal_fp32(
     const float32_t *X, const float32_t *gamma, const float32_t *beta,
     const float32_t *running_mean, const float32_t *running_var, float32_t *Y,

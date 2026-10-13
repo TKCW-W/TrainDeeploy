@@ -13,7 +13,7 @@ from Deeploy.Targets.Generic.TileConstraints.NOPTileConstraint import NOPTileCon
 from Deeploy.Targets.Generic.TileConstraints.RQSiGELUTileConstraint import RQSiGELUTileConstraint
 from Deeploy.Targets.Generic.TileConstraints.RQSiHardswishTileConstraint import RQSiHardswishTileConstraint
 from Deeploy.Targets.Generic.TileConstraints.TransposeTileConstraint import TransposeTileConstraint
-from Deeploy.Targets.Generic.TileConstraints.UnaryTileConstraint import UnaryTileConstraint
+from Deeploy.Targets.Generic.TileConstraints.UnaryTileConstraint import UnaryRowTileConstraint, UnaryTileConstraint
 from Deeploy.Targets.PULPOpen.Bindings import BasicDequantBindings, BasicQuantBindings, PULPAddBindings, \
     PULPAveragePool2DBindings, PULPAveragePoolGrad2DBindings, PULPBatchNormalizationGradBindings, \
     PULPBatchNormInternalBindings, PULPConcatBindings, PULPFloatConv2DBindings, PULPFloatConvGradBBindings, \
@@ -169,7 +169,7 @@ PULPTransposeTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPTr
 # NodeBindings carry no tileConstraint on their template and the tiler aborts with
 # `AttributeError: '_DequantTemplate' object has no attribute 'tileConstraint'`.
 PULPDequantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = BasicDequantBindings,
-                                                         tileConstraint = UnaryTileConstraint())
+                                                         tileConstraint = UnaryRowTileConstraint())  # RW 2026-10-13
 
 PULPQuantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = BasicQuantBindings,
                                                        tileConstraint = UnaryTileConstraint())
@@ -272,7 +272,8 @@ PULPRQSPerturbRademacherTilingReadyBindings = TilingReadyNodeBindings(nodeBindin
 # -- QW: Quant/Dequant tiling-ready bindings (UnaryTileConstraint) for the unfolded-BN mixed quant graph
 from Deeploy.Targets.PULPOpen.Bindings import BasicQuantBindings as _BQB2, BasicDequantBindings as _BDB2  # -- QW
 PULPQuantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings=_BQB2, tileConstraint=UnaryTileConstraint())  # -- QW
-PULPDequantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings=_BDB2, tileConstraint=UnaryTileConstraint())  # -- QW
+# PULPDequantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings=_BDB2, tileConstraint=UnaryTileConstraint())  # -- QW
+PULPDequantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings=_BDB2, tileConstraint=UnaryRowTileConstraint())  # RW 2026-10-13: row tiles (contiguous DMA); this later definition is the one in effect
 
 # -- QW (dual_pass_fusion exp5): tiling-ready binding for the fused dual-pass QZO conv -- QW
 from Deeploy.Targets.PULPOpen.Bindings import PULPDualConv2DBindings as _PULPDualConv2DBindings  # -- QW

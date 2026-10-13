@@ -391,3 +391,54 @@ void PULP_BatchNormGrad_fp32(const float32_t *dY, const float32_t *X,
     }
   }
 }
+
+/*
+ * RW 2026-10-13: BatchNormInternal on a channels-last tile X[P][C] (P = N*H*W pixels), emitted for frozen-stat BN
+ * (NCHWtoNHWCBatchNormInternalPass, MeZO graphs with -D BN_FROZEN_STATS=ON). Output element by element as the
+ * NCHW kernel computes it -- (x - mean) * inv_std * gamma + beta -- so the result is bit-identical; the pixels
+ * are split across the cores. With g_bn_frozen_stats == 0 the statistics would come from this tile only, which
+ * is only right for an untiled tensor: the pass never emits this kernel in that configuration.
+ */
+
+void PULP_BatchNormInternalHWC_fp32(const float32_t *X, const float32_t *gamma, const float32_t *beta,
+                                    const float32_t *running_mean, const float32_t *running_var, float32_t *Y,
+                                    float32_t *saved_mean, float32_t *saved_inv_std, uint32_t P, uint32_t C,
+                                    float32_t epsilon) {
+  const int32_t core_id = pi_core_id();
+  const uint32_t chunk = (P + NUM_CORES - 1) / NUM_CORES;
+  const uint32_t p0 = MIN(chunk * (uint32_t)core_id, P), p1 = MIN(p0 + chunk, P);
+
+  // channel-outer, pixel-inner with stride C (L1, no per-pixel constant arrays on the 768 B slave stack)
+  for (uint32_t c = 0; c < C; c++) {
+    float32_t mean, inv_std;
+    if (g_bn_frozen_stats) {
+      mean = running_mean[c];
+      inv_std = 1.0f / sqrtf(running_var[c] + epsilon);
+    } else {
+      float32_t s = 0.0f, v = 0.0f;
+      for (uint32_t p = 0; p < P; p++) s += X[p * C + c];
+      s *= 1.0f / (float32_t)P;
+      for (uint32_t p = 0; p < P; p++) {
+        const float32_t d = X[p * C + c] - s;
+        v += d * d;
+      }
+      v *= 1.0f / (float32_t)P;
+      mean = s;
+      inv_std = 1.0f / sqrtf(v + epsilon);
+    }
+    const float32_t g = gamma[c], b = beta[c];
+    const float32_t *x = X + p0 * C + c;
+    float32_t *y = Y + p0 * C + c;
+    for (uint32_t p = p0; p < p1; p++) {
+      *y = (*x - mean) * inv_std * g + b;
+      x += C;
+      y += C;
+    }
+#ifndef BN_HWC_NO_SAVED
+    if ((uint32_t)core_id == c % NUM_CORES) {
+      saved_mean[c] = mean;
+      saved_inv_std[c] = inv_std;
+    }
+#endif
+  }
+}

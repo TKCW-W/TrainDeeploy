@@ -123,6 +123,10 @@ def main(tiling_enabled: bool = True, default_platform: str = 'Siracusa', defaul
     cmake_args = [f'-DNUM_CORES={args.cores}', f'-DSIMULATOR={simulator}']
     if args.cmake:
         cmake_args.extend(args.cmake)
+    # RW 2026-10-13: frozen-stat BN is a per-element affine map, so the generator may run it channels-last
+    # (BatchNormInternal NHWC, no layout transposes around it). Only with -D BN_FROZEN_STATS=ON.
+    if any('BN_FROZEN_STATS=ON' in a for a in cmake_args):
+        os.environ['DEEPLOY_BN_FROZEN_NHWC'] = '1'
 
     gen_args = [f'--cores={args.cores}']
     if args.enable_1xk:  # -- QW

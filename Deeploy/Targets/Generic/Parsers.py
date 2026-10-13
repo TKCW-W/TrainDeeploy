@@ -3194,6 +3194,7 @@ class BatchNormInternalParser(NodeParser):
         self.operatorRepresentation['epsilon'] = float(node.attrs.get('epsilon', 1e-5))
         self.operatorRepresentation['momentum'] = float(node.attrs.get('momentum', 0.9))
         self.operatorRepresentation['training_mode'] = int(node.attrs.get('training_mode', 1))
+        self.operatorRepresentation['nhwc'] = int(node.attrs.get('bn_nhwc', 0))  # RW 2026-10-13: frozen-stat NHWC
         return True
 
     def parseNodeCtxt(self,
@@ -3217,9 +3218,12 @@ class BatchNormInternalParser(NodeParser):
         # Spatial shape from input[0]
         input_shape = ctxt.lookup(node.inputs[0].name).shape
         N = int(input_shape[0])
-        C = int(input_shape[1])
-        H_in = int(input_shape[2])
-        W_in = int(input_shape[3])
+        if self.operatorRepresentation.get('nhwc', 0):  # RW 2026-10-13: [N, H, W, C]
+            H_in, W_in, C = int(input_shape[1]), int(input_shape[2]), int(input_shape[3])
+        else:
+            C = int(input_shape[1])
+            H_in = int(input_shape[2])
+            W_in = int(input_shape[3])
         self.operatorRepresentation['N'] = N
         self.operatorRepresentation['C'] = C
         self.operatorRepresentation['H_in'] = H_in

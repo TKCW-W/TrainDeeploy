@@ -34,6 +34,12 @@
  * @param momentum       EMA coefficient (currently unused — running stats not
  * updated)
  */
+// RW 2026-10-13: channels-last frozen-stat BatchNormInternal, X[P][C] (see BatchNorm.c)
+void PULP_BatchNormInternalHWC_fp32(const float32_t *X, const float32_t *gamma, const float32_t *beta,
+                                    const float32_t *running_mean, const float32_t *running_var, float32_t *Y,
+                                    float32_t *saved_mean, float32_t *saved_inv_std, uint32_t P, uint32_t C,
+                                    float32_t epsilon);
+
 void PULP_BatchNormInternal_fp32(
     const float32_t *X, const float32_t *gamma, const float32_t *beta,
     const float32_t *running_mean, const float32_t *running_var, float32_t *Y,

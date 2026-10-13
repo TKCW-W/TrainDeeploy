@@ -5,6 +5,7 @@
 from functools import partial
 from typing import List, Optional, Sequence, Tuple, TypeVar, Union
 
+import os
 import numpy as np
 import onnx_graphsurgeon as gs
 
@@ -282,6 +283,9 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
             #     passes CANCEL the round-trip transposes (NHWC→NCHW→Quant→NCHW→NHWC) that otherwise
             #     scramble C>1 inter-block quant on device (block-0 C=1 hid it; block-1 C=8 exposed it). -- QW
             spatialDims = len(tensorIn.shape) - 2
+        elif node.op == "BatchNormInternal":  # RW 2026-10-13: frozen-stat BN, elementwise per channel
+            spatialDims = len(tensorIn.shape) - 2
+            node.attrs["bn_nhwc"] = 1
         elif node.op == "Pad":
             spatialDims = 2  # Hack based on current status
         else:
@@ -380,6 +384,54 @@ class NCHWtoNHWCDequantPass(ReplaceSequentialPatternPass):  # QW -- QW
         graph = _singleNodePattern(op = "Dequant")
         name = "_NCHW_TO_NHWC_DEQUANT_PASS"
         super().__init__(graph, partial(_NCHWtoNHWC_fun, default_channels_first = default_channels_first), name)
+
+
+def _bnFrozenNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_first: bool = True):
+    # RW 2026-10-13: only when the generator was asked for frozen-stat BN (DEEPLOY_BN_FROZEN_NHWC, set by the MeZO
+    # runner for -D BN_FROZEN_STATS=ON) and nothing reads the statistics outputs (forward-only graphs; BP graphs
+    # feed saved_mean / saved_inv_std to BatchNormalizationGrad and keep NCHW). Then BN is an elementwise
+    # per-channel affine map and channels-last lets the transposes around it cancel with the conv's / pool's.
+    node = next(iter((match.nodes_map.values())))
+    if os.environ.get("DEEPLOY_BN_FROZEN_NHWC", "0") != "1":
+        return graph
+    if len(node.inputs[0].shape) != 4 or any(len(o.outputs) > 0 for o in node.outputs[1:]):
+        return graph
+    return _NCHWtoNHWC_fun(graph, match, name, default_channels_first)
+
+
+def _dequantNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_first: bool = True):
+    # RW 2026-10-13: per-tensor Dequant between a channels-last conv and a channels-last BN; 4-D only.
+    node = next(iter((match.nodes_map.values())))
+    if os.environ.get("DEEPLOY_BN_FROZEN_NHWC", "0") != "1" or len(node.inputs[0].shape) != 4:
+        return graph
+    if not all(c.op == "BatchNormInternal" for c in node.outputs[0].outputs):
+        return graph
+    return _NCHWtoNHWC_fun(graph, match, name, default_channels_first)
+
+
+@contextagnostic
+class NCHWtoNHWCBatchNormInternalPass(Pass):
+    # A plain node walk: the single-node pattern matcher does not match BatchNormInternal's five outputs.
+
+    def __init__(self, default_channels_first: bool = True):
+        super().__init__()
+        self.default_channels_first = default_channels_first
+        self.name = "_NCHW_TO_NHWC_BATCHNORMINTERNAL_PASS"
+
+    def run_pass(self, graph: gs.Graph) -> gs.Graph:
+        for node in [n for n in graph.nodes if n.op == "BatchNormInternal"]:
+            graph = _bnFrozenNHWC_fun(graph, Match(None, {"bn": node}), self.name, self.default_channels_first)
+        graph.cleanup().toposort()
+        return graph
+
+
+@contextagnostic
+class NCHWtoNHWCDequantBeforeBNPass(ReplaceSequentialPatternPass):
+
+    def __init__(self, default_channels_first: bool = True):
+        graph = _singleNodePattern(op = "Dequant")
+        name = "_NCHW_TO_NHWC_DEQUANT_BEFORE_BN_PASS"
+        super().__init__(graph, partial(_dequantNHWC_fun, default_channels_first = default_channels_first), name)
 
 
 @contextagnostic
@@ -557,6 +609,8 @@ class PULPNCHWtoNHWCPass(SequentialPass):
             #     were NOT the root cause. Left the pass class defined for future use. -- QW
             PULPNCHWtoNHWCDwConvPass(default_channels_first),
             NCHWtoNHWCConvPass(default_channels_first),
+            NCHWtoNHWCDequantBeforeBNPass(default_channels_first),  # RW 2026-10-13: before the BN pass (checks its consumer)
+            NCHWtoNHWCBatchNormInternalPass(default_channels_first),  # RW 2026-10-13: frozen-stat BN only
         ]
         super().__init__(*passes)
 
