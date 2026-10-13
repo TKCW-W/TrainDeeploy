@@ -138,7 +138,7 @@ elseif(platform STREQUAL GAP9 OR platform STREQUAL GAP9_w_NE16)  # -- QW
   # RW 2026-10-13: the generated network code (inlined Quant/Dequant/RequantShift/SCE/transpose loops and
   # every closure) was still built at the SDK's -Os; with the slave stacks in L2 its spills cost L2 latency.
   # Same trick as TargetLibraries/GAP9: per-source -O3 is appended last and wins over -Os.
-  option(GAP9_NETWORK_O3 "Compile the generated GAP9 network sources at -O3" ON)
+  option(GAP9_NETWORK_O3 "Compile the generated GAP9 network sources at -O3 (+~35 KB of L2 code; ResNet8 no longer fits L2)" OFF)
   if(GAP9_NETWORK_O3)
     if(TRAINING OR MEZO_TRAINING)
       set_source_files_properties(${GENERATED_SOURCE}/TrainingNetwork.c ${GENERATED_SOURCE}/OptimizerNetwork.c
