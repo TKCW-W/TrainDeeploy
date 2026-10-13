@@ -251,3 +251,16 @@ GAP9MaxPoolArgmaxTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GA
                                                                tileConstraint = _MaxPoolCTC())
 GAP9MaxPoolGradMaskTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9MaxPoolGradMaskBindings,
                                                                  tileConstraint = _MaxPoolGradCTC())
+
+
+# RW 2026-10-13: Qiwen's flat int8 conv kernel (PULPOpen FlatConv.c / FlatConvTemplate) with the GAP9 transformer.
+from Deeploy.Targets.PULPOpen.Templates import FlatConvTemplate as _FCT
+from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker as _PCC
+from Deeploy.AbstractDataTypes import PointerClass as _PC
+from Deeploy.CommonExtensions.DataTypes import int8_t as _i8, int32_t as _i32
+from Deeploy.DeeployTypes import NodeBinding as _NB
+from Deeploy.Targets.GAP9.Bindings import GAP9Transformer as _G9T
+GAP9RQSConv2DFlatTilingReadyBindings = TilingReadyNodeBindings(
+    nodeBindings = [_NB(_PCC([_PC(_i8), _PC(_i8), _PC(_i32), _PC(_i32), _PC(_i32)], [_PC(_i8)]),
+                        _FCT.referenceTemplate, _G9T)],
+    tileConstraint = RQConv2DTileConstraint())

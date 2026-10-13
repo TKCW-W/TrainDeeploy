@@ -103,6 +103,12 @@ GAP9_FPConv2DMapper = NodeMapper(PULPFPConv2DParser(), GAP9Conv2DTilingReadyBind
 GAP9_FPConv2DCHWMapper = NodeMapper(PULPFPConv2DCHWParser(), GAP9Conv2DCHWTilingReadyBindings)
 GAP9_FPDWConv2DCHWMapper = NodeMapper(PULPFPDWConv2DCHWParser(), GAP9DWConv2DCHWTilingReadyBindings)
 GAP9_Conv2DMapper = NodeMapper(PULPConv2DParser(), GAP9RQSConv2DTilingReadyBindings)
+# RW 2026-10-13: Qiwen's flat int8 conv (exp5a, FlatConv.c: pixels split evenly over the cores, sdotp4 + requant
+# inline) on GAP9, for A/B measurements: DEEPLOY_RQCONV_FLAT=1 binds every RequantizedConv to it.
+import os as _os
+if _os.environ.get("DEEPLOY_RQCONV_FLAT", "0") == "1":
+    from Deeploy.Targets.GAP9.Tiler import GAP9RQSConv2DFlatTilingReadyBindings
+    GAP9_Conv2DMapper = NodeMapper(PULPConv2DParser(), GAP9RQSConv2DFlatTilingReadyBindings)
 GAP9_FPDWConv2DMapper = NodeMapper(PULPFPDWConv2DParser(), GAP9DWConv2DTilingReadyBindings)
 GAP9_DWConv2DMapper = NodeMapper(PULPDWConv2DParser(), GAP9RQSDWConv2DTilingReadyBindings)
 GAP9_GEMMMapper = NodeMapper(PULPGEMMParser(), GAP9RQSGEMMTilingReadyBindings)
