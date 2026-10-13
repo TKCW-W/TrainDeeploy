@@ -121,7 +121,9 @@ static void RunOptimizerNetworkWrapper(void *args)  { (void)args; RunOptimizerNe
 #endif                           // -- QW
 
 #define MAINSTACKSIZE 12000      // -- QW
+#ifndef SLAVESTACKSIZE           // RW: overridable (-D SLAVESTACKSIZE=N), like deeploytraintest.c
 #define SLAVESTACKSIZE 3800      // -- QW
+#endif
 
 // -- QW: relocate the cluster slave stacks from L1 to L2. GAP9's SDK only pi_cl_l1_malloc's
 //    the stacks when task->stacks == NULL (cluster.c:440-444), consuming ~30KB of the 128KB
@@ -298,6 +300,13 @@ int main(void) {                 // -- QW
   struct pi_cluster_conf conf;   // -- QW
   pi_cluster_conf_init(&conf);   // -- QW
   conf.id = 0;                   // -- QW
+  // RW 2026-10-13 (from deeploytraintest.c): size the cluster-controller stack explicitly. It is carved from
+  // L1; the slave stacks already live in L2 here, so with CC_STACK_SIZE=4096 SLAVESTACKSIZE=512 (the GAP9 CI
+  // configuration) the tiler gets ~122 KB of L1 instead of ~110 KB.
+#ifndef CC_STACK_SIZE
+#define CC_STACK_SIZE 8192
+#endif
+  conf.cc_stack_size = CC_STACK_SIZE;
   pi_open_from_conf(&cluster_dev, &conf);  // -- QW
   if (pi_cluster_open(&cluster_dev))       // -- QW
     return -1;                   // -- QW

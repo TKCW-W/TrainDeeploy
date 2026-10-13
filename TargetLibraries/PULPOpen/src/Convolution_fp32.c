@@ -177,6 +177,100 @@ void PULP_Conv2d_Im2Col_fp32_fp32_fp32_CHW(
   pulp_conv2d_fp32_fw_cl(&conv_args);
 }
 
+// RW 2026-10-13: direct convolution for a single input channel (SpeechNet block 0: 14x700 input, 1x4 kernel).
+// The im2col path costs as much copying as the P*Q MACs it feeds, and inlined into the 17-argument im2col kernel
+// it ran out of registers: every pixel reloaded ~10 values from the stack, which on GAP9 (slave stacks in L2)
+// made the node 3.1x slower than with L1 stacks. Here the loop nest keeps its state in registers: channel
+// outer (weights loaded once), output pixels inner, the row split into left edge / interior / right edge
+// ranges so the interior MAC loop has fixed bounds and no branch (a version with the bound checks inside the
+// MAC loop was miscompiled by the Siracusa clang at -O3 -ffast-math). Per output the taps are summed in
+// k = p*Q + q order with padded taps skipped (the im2col path adds them as 0*w = +-0), so the result is
+// bit-identical to the im2col path.
+typedef struct {
+  const float32_t *in;
+  const float32_t *w;
+  const float32_t *bias;
+  float32_t *out;
+  int32_t H, W, F, P, Q, SP, SQ, pad_top, pad_left, f0, f1, h0, h1, W_out;
+} conv1ch_args_t;
+
+// n interior outputs of one row and one channel, P == 1: everything lives in registers (<= 8 arguments).
+// Accumulation order per output is q = 0..Q-1, as in the general path; bias added last (has_b only).
+static void __attribute__((noinline)) conv1ch_row_interior(const float32_t *in, const float32_t *wf,
+                                                           float32_t *o, int32_t n, int32_t Q, int32_t in_step,
+                                                           int32_t out_step, const float32_t *bias) {
+  for (int32_t i = 0; i < n; i++) {
+    float32_t sum = 0.0f;
+    for (int32_t q = 0; q < Q; q++) {
+      sum += in[q] * wf[q];
+    }
+    *o = bias ? sum + *bias : sum;
+    in += in_step;
+    o += out_step;
+  }
+}
+
+static void __attribute__((noinline)) conv1ch_rows(const conv1ch_args_t *a) {
+  const int32_t H = a->H, W = a->W, F = a->F, P = a->P, Q = a->Q, SP = a->SP, SQ = a->SQ;
+  const int32_t W_out = a->W_out, K = a->P * a->Q;
+  // interior output columns: the whole 1..Q window lies inside the input row
+  int32_t w_lo = (a->pad_left + SQ - 1) / SQ;
+  int32_t w_hi = (W + a->pad_left - Q) / SQ + 1;
+  if (w_hi > W_out) w_hi = W_out;
+  if (w_lo > w_hi) w_lo = w_hi;
+  for (int32_t h = a->h0; h < a->h1; h++) {
+    const int32_t h_in0 = h * SP - a->pad_top;
+    const int32_t p_lo = h_in0 < 0 ? -h_in0 : 0;
+    const int32_t p_hi = (H - h_in0) < P ? (H - h_in0) : P;
+    for (int32_t f = a->f0; f < a->f1; f++) {
+      const float32_t *wf = a->w + (f - a->f0) * K;
+      const float32_t b = a->bias ? a->bias[f] : 0.0f;
+      const int32_t has_b = a->bias != NULL;
+      float32_t *o = a->out + (h * W_out) * F + f;
+      if (P == 1 && p_lo == 0 && p_hi == 1 && w_hi > w_lo) {
+        // dominant case: interior columns through the register-only helper, edges below
+        conv1ch_row_interior(a->in + h_in0 * W + w_lo * SQ - a->pad_left, wf, o + w_lo * F, w_hi - w_lo, Q, SQ, F,
+                             has_b ? &a->bias[f] : NULL);
+      }
+      for (int32_t part = 0; part < 3; part++) {
+        if (part == 1 && P == 1 && p_lo == 0 && p_hi == 1) {
+          continue;  // done by conv1ch_row_interior
+        }
+        const int32_t ws = part == 0 ? 0 : (part == 1 ? w_lo : w_hi);
+        const int32_t we = part == 0 ? w_lo : (part == 1 ? w_hi : W_out);
+        for (int32_t wo = ws; wo < we; wo++) {
+          const int32_t w_in0 = wo * SQ - a->pad_left;
+          int32_t q_lo = 0, q_hi = Q;
+          if (part != 1) {
+            q_lo = w_in0 < 0 ? -w_in0 : 0;
+            q_hi = (W - w_in0) < Q ? (W - w_in0) : Q;
+          }
+          float32_t sum = 0.0f;
+          for (int32_t p = p_lo; p < p_hi; p++) {
+            const float32_t *row = a->in + (h_in0 + p) * W + w_in0;
+            const float32_t *wr = wf + p * Q;
+            for (int32_t q = q_lo; q < q_hi; q++) {
+              sum += row[q] * wr[q];
+            }
+          }
+          o[wo * F] = has_b ? sum + b : sum;
+        }
+      }
+    }
+  }
+}
+
+static inline void Conv2d_1ch_fp32_HWC_rows(const float32_t *in, const float32_t *w, const float32_t *bias,
+                                            float32_t *out, uint32_t H, uint32_t W, uint32_t F, uint32_t P,
+                                            uint32_t Q, uint32_t SP, uint32_t SQ, uint32_t pad_top,
+                                            uint32_t pad_left, uint32_t f0, uint32_t f1, uint32_t h0, uint32_t h1,
+                                            uint32_t W_out) {
+  conv1ch_args_t a = {in, w, bias, out, (int32_t)H, (int32_t)W, (int32_t)F, (int32_t)P, (int32_t)Q,
+                      (int32_t)SP, (int32_t)SQ, (int32_t)pad_top, (int32_t)pad_left, (int32_t)f0, (int32_t)f1,
+                      (int32_t)h0, (int32_t)h1, (int32_t)W_out};
+  conv1ch_rows(&a);
+}
+
 void PULP_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
     const float32_t *__restrict__ pSrcA, uint32_t H, uint32_t W, uint32_t C,
     const float32_t *__restrict__ pSrcB, uint32_t F_total, uint32_t P,
@@ -229,45 +323,10 @@ void PULP_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
   uint32_t im2col_size_per_core = C * P * Q;
   float32_t *im2col_buffer = pContextBuffer + core_id * im2col_size_per_core;
 
-  // RW 2026-10-13: single input channel (SpeechNet block 0: 1x4 kernel, 14x700 input). The im2col copy
-  // costs as much as the P*Q MACs it feeds, and the tiler cuts F to 1-2 channels per tile, so every tile
-  // rebuilds it. Read the input directly instead. Same summation order (k = p*Q + q); padded taps are
-  // skipped, which the im2col path adds as 0*w (= +-0, no effect on a sum that starts at +0.0f), so the
-  // result is bit-identical.
+  // RW 2026-10-13: single input channel (SpeechNet block 0) -> register-light direct kernel, see above.
   if (C == 1) {
-    for (uint32_t h_out = h_out_start; h_out < h_out_stop; h_out++) {
-      int32_t h_in_start = h_out * SP - pad_top;
-      for (uint32_t w_out = 0; w_out < W_out; w_out++) {
-        int32_t w_in_start = w_out * SQ - pad_left;
-        float32_t *out = pDstC + (h_out * W_out + w_out) * F_total;
-        // valid tap range, computed once per pixel: no branches inside the MAC loops
-        int32_t q_lo = w_in_start < 0 ? -w_in_start : 0;
-        int32_t q_hi = (int32_t)W - w_in_start;
-        if (q_hi > (int32_t)Q) {
-          q_hi = (int32_t)Q;
-        }
-        int32_t p_lo = h_in_start < 0 ? -h_in_start : 0;
-        int32_t p_hi = (int32_t)H - h_in_start;
-        if (p_hi > (int32_t)P) {
-          p_hi = (int32_t)P;
-        }
-        for (uint32_t f = ch_out_start; f < ch_out_stop; f++) {
-          const float32_t *wf = weight_ptr + (f - ch_out_start) * kernel_size;
-          float32_t sum = 0.0f;
-          for (int32_t p = p_lo; p < p_hi; p++) {
-            const float32_t *row = pSrcA + (h_in_start + p) * (int32_t)W + w_in_start;
-            const float32_t *wr = wf + p * (int32_t)Q;
-            for (int32_t q = q_lo; q < q_hi; q++) {
-              sum += row[q] * wr[q];
-            }
-          }
-          if (has_bias) {
-            sum += pSrcBias[f];
-          }
-          out[f] = sum;
-        }
-      }
-    }
+    Conv2d_1ch_fp32_HWC_rows(pSrcA, weight_ptr, has_bias ? pSrcBias : NULL, pDstC, H, W, F_total, P, Q, SP, SQ,
+                             pad_top, pad_left, ch_out_start, ch_out_stop, h_out_start, h_out_stop, W_out);
     return;
   }
 
