@@ -70,7 +70,11 @@
 #include "testoutputs.h"        // -- QW
 
 // RW 2026-10-13: ZO_QUIET (see ZTRACE below) -- print only mismatching / every 500th loss comparison
-#ifdef ZO_QUIET
+#if defined(ZO_ECO)
+// RW 2026-10-13: the fixture's reference losses are the plain-ZO trajectory, so with ECO nearly every comparison
+// "fails"; printing them all cost ~85 s of 115200-baud UART per 120-epoch board run. Print every 500th + the last.
+#define ZO_PRINT_CMP(i, n, bad) ((i) % 500u == 0u || (i) + 1u == (n))
+#elif defined(ZO_QUIET)
 #define ZO_PRINT_CMP(i, n, bad) ((bad) || (i) % 500u == 0u || (i) + 1u == (n))
 #else
 #define ZO_PRINT_CMP(i, n, bad) 1
