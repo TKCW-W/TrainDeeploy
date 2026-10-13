@@ -318,7 +318,12 @@ def _NCHWtoNHWC_fun(graph: gs.Graph, match: Match, name: str, default_channels_f
             # QW (exp16a): a PRE-ENCODED NE16 weight is already in the accelerator's bit-serial
             #     layout -- it is NOT a logical [cout, cin, *spatial] tensor and must never be
             #     layout-permuted. Skip input[1] for such nodes; mul/add/shift still get handled.
-            _skipWeight = "ne16_weight_preencoded" in node.attrs  # -- QW
+            # _skipWeight = "ne16_weight_preencoded" in node.attrs  # -- QW (exp16a original)
+            # QW (dual_pass_fusion exp7): the 7-input RequantizedDualConv takes its weight in RAW CHW order
+            #     (attr weight_chw) and perturbs it in that order inside the kernel -- leave it untransposed.
+            #     Its x- (input 6, rank 4) needs no special case: the loop below transposes it with the 4-D
+            #     NCHW->NHWC permutation, which is the activation's. -- QW
+            _skipWeight = "ne16_weight_preencoded" in node.attrs or bool(int(node.attrs.get("weight_chw", 0)))  # -- QW
             # In the case of Conv: [weights, opt. bias], RequantizedConv: [weights, mul, add, opt. shift]
             for _tIdx, tensor in enumerate(node.inputs[1:]):
                 if _skipWeight and _tIdx == 0:  # -- QW

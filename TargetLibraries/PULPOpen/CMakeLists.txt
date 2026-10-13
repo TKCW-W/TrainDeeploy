@@ -51,6 +51,19 @@ if(DEEPLOY_STRICT_FP32_FILES)
   endforeach()
 endif()
 
+# -- QW (dual_pass_fusion exp7 step 5b): opt-in phase timing in DualConv2In.c (core 0 prints the cycles of phase 1
+#    and phase 2, each including its closing barrier). Usage: -D DUALCONV2IN_PROBE=ON. OFF by default. -- QW
+if(DUALCONV2IN_PROBE)
+  target_compile_definitions(deeploypulp PUBLIC DUALCONV2IN_PROBE)
+  message(STATUS "[QW] DUALCONV2IN_PROBE: DualConv2In.c prints per-phase cycles")
+endif()
+# -- QW (exp7 step 5c): measurement override of DualConv2In.c's phase-2 split: -D DUALCONV2IN_SPLIT=1 (pixels) | 2
+#    (output channels). Unset = automatic (cost model). -- QW
+if(DUALCONV2IN_SPLIT)
+  target_compile_definitions(deeploypulp PUBLIC DUALCONV2IN_SPLIT=${DUALCONV2IN_SPLIT})
+  message(STATUS "[QW] DUALCONV2IN_SPLIT=${DUALCONV2IN_SPLIT}")
+endif()
+
 add_subdirectory(../third_party/pulp-nn-mixed ${CMAKE_CURRENT_BINARY_DIR}/pulp-nn-mixed)
 target_include_directories(pulp-nn-mixed PUBLIC ${PULP_SDK_INCLUDES})
 target_compile_options(pulp-nn-mixed PUBLIC ${PULP_SDK_COMPILE_FLAGS})

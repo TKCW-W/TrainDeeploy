@@ -720,6 +720,8 @@ class PULPDualConv2DParser(RQSConv2DParser):  # -- QW (dual_pass_fusion exp5)
     nodes' `seed`/`idx`/`div` as seed_w/idx_w/div_w and seed_b/idx_b/div_b.
     """
 
+    _n_inputs = 6  # -- QW exp7: data_in, weight, mul, add, wmul, bmul
+
     def __init__(self, noBiasHoisting = True):
         super().__init__(noBiasHoisting)
 
@@ -732,7 +734,8 @@ class PULPDualConv2DParser(RQSConv2DParser):  # -- QW (dual_pass_fusion exp5)
             r['group'] == 1,
             pads[0] == pads[2],
             pads[1] == pads[3],
-            len(node.inputs) == 6,
+            # len(node.inputs) == 6,  # -- QW exp5 original
+            len(node.inputs) == self._n_inputs,  # -- QW exp7: 6 (block 0) or 7 (PULPDualConv2D2InParser)
             'shift' in node.attrs,
             all(a in node.attrs for a in ('seed_w', 'idx_w', 'div_w', 'seed_b', 'idx_b', 'div_b')),
         ])
@@ -764,5 +767,31 @@ class PULPDualConv2DParser(RQSConv2DParser):  # -- QW (dual_pass_fusion exp5)
                 self.operatorRepresentation[name] = ctxt.lookup(node.inputs[idx].name).name
             # per-pass output channels == weight rows; the tensor's ch_im_out is twice that
             self.operatorRepresentation['ch_out_pass'] = newCtxt.lookup(self.operatorRepresentation['weight']).shape[0]
+            return newCtxt, True
+        return ctxt, False
+
+
+class PULPDualConv2D2InParser(PULPDualConv2DParser):  # -- QW (dual_pass_fusion exp7, step 3)
+    """`RequantizedDualConv` with TWO input activations (SpeechNet blocks 1-4), contract in
+    DeeployTest/experiments/dual_pass_fusion/exp7_remaining_blocks/Plan.md §4.1.
+
+    Inputs: data_in (x+), weight (UNPERTURBED int8, RAW CHW [co, ci, kh, kw] -- attr `weight_chw` = 1 makes the
+    layout pass leave it untransposed), mul, add (UNPERTURBED int32), wmul, bmul, data_in_m (x-). x- is appended
+    LAST so everything that assumes inputs[0] = activation and inputs[1] = weight keeps working; the input count
+    alone separates this node from block 0's 6-input one. Output: int8 with 2*ch_out channels (A+ then A-).
+    """
+
+    _n_inputs = 7
+
+    def parseNode(self, node: gs.Node) -> (bool):
+        if not int(node.attrs.get('weight_chw', 0)):
+            return False
+        return super().parseNode(node)
+
+    def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        newCtxt, ret = super().parseNodeCtxt(ctxt, node, channels_first)
+        if ret:
+            self.operatorRepresentation['data_in_m'] = ctxt.lookup(node.inputs[6].name).name
             return newCtxt, True
         return ctxt, False

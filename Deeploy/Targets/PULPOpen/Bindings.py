@@ -673,6 +673,16 @@ PULPDualConv2DBindings = [  # -- QW
         _DualConvTemplate.referenceTemplate, ForkTransformer)
 ]
 
+# -- QW (dual_pass_fusion exp7 step 3): 7-input RequantizedDualConv (blocks 1-4): x+, W (raw CHW), mul, add, wmul,
+#    bmul, x-; one int8 output [A+ | A-]. Same checker / transformer as the 6-input binding. -- QW
+from Deeploy.Targets.PULPOpen.Templates import DualConv2InTemplate as _DualConv2InTemplate  # -- QW
+PULPDualConv2D2InBindings = [  # -- QW
+    NodeBinding(
+        PULPConvChecker([PointerClass(int8_t), PointerClass(int8_t), PointerClass(int32_t), PointerClass(int32_t),
+                         PointerClass(int32_t), PointerClass(int32_t), PointerClass(int8_t)], [PointerClass(int8_t)]),
+        _DualConv2InTemplate.referenceTemplate, ForkTransformer)
+]
+
 # -- QW (dual_pass_fusion exp5a): single-pass control kernel with DualConv's structure, bound to the ordinary
 #    RequantizedConv (int8 in / int8 out / int8 weight only). Same checker and transformer as PULPRQSConv2DBindings;
 #    only the template (and thus the kernel) differs. Selected via the Conv2DMapper line in Platform.py. -- QW
@@ -681,5 +691,16 @@ PULPRQSConv2DFlatBindings = [  # -- QW
     NodeBinding(
         PULPConvChecker([PointerClass(int8_t), PointerClass(int8_t), PointerClass(int32_t), PointerClass(int32_t),
                          PointerClass(int32_t)], [PointerClass(int8_t)]), _FlatConvTemplate.referenceTemplate,
+        ForkTransformer)
+]
+
+# -- QW (dual_pass_fusion exp7a step 2a): single-pass control kernel PULP_Conv4x2_i8_i8_i8_HWC (4 ch x 2 px blocking,
+#    in-place input reads, flat pixel split) on the ordinary RequantizedConv. Same checker/transformer as the FlatConv
+#    binding; selected with DEEPLOY_RQCONV_KERNEL=4x2 in Platform.py. -- QW
+from Deeploy.Targets.PULPOpen.Templates import Conv4x2Template as _Conv4x2Template  # -- QW
+PULPRQSConv2D4x2Bindings = [  # -- QW
+    NodeBinding(
+        PULPConvChecker([PointerClass(int8_t), PointerClass(int8_t), PointerClass(int32_t), PointerClass(int32_t),
+                         PointerClass(int32_t)], [PointerClass(int8_t)]), _Conv4x2Template.referenceTemplate,
         ForkTransformer)
 ]

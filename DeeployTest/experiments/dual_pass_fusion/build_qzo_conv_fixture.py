@@ -28,7 +28,7 @@
 #
 # Run in agitated_hugle (needs onnx4deeploy):
 #   docker exec agitated_hugle bash -lc 'cd /app && PYTHONPATH=/app/Onnx4Deeploy:/app/TrainDeeploy \
-#     python3 TrainDeeploy/DeeployTest/experiments/dual_pass_fusion/build_qzo_conv_fixture.py'
+#     python3 TrainDeeploy/DeeployTest/experiments/dual_pass_fusion/build_qzo_conv_fixture.py [--block i]'
 
 import argparse
 import os
@@ -45,18 +45,31 @@ DEEPLOY_TEST = os.path.abspath(os.path.join(HERE, "..", ".."))
 DEFAULT_SRC = os.path.join(DEEPLOY_TEST, "Tests/Models/Training/SpeechNet/speechnet_qzo19_train")
 DEFAULT_DST = os.path.join(DEEPLOY_TEST, "Tests/Kernels/Integer/QZO_Conv")
 
-ACT = "/blocks_0_conv_input_quant_1/Clip_output_0"          # Quant output = conv data input
-W_RAW, B_RAW = "blocks.0.conv.weight_int8", "blocks.0.conv.bias_rqsadd"
-NODES = ["rqsp_blocks.0.conv.weight_int8", "rqsp_blocks.0.conv.bias_rqsadd",
-         "/wrappedInnerForwardImpl/Conv", "QSTANDALONE_QCDQ_/blocks_0_conv_output_quant_1/Clip_Quant"]
-OUT = "/blocks_0_conv_output_quant_1/Clip_output_0"
+
+# QW (dual_pass_fusion exp7): any block, not only block 0. Block i's nodes carry index i; the conv node of
+#     block 0 has no suffix (`/wrappedInnerForwardImpl/Conv`), blocks 1-4 have `_<i>`. --block 0 still
+#     writes the exp3 fixture byte for byte.
+def block_names(block):
+    conv = "/wrappedInnerForwardImpl/Conv" if block == 0 else f"/wrappedInnerForwardImpl_{block}/Conv"
+    act = f"/blocks_{block}_conv_input_quant_1/Clip_output_0"          # Quant output = conv data input
+    w_raw, b_raw = f"blocks.{block}.conv.weight_int8", f"blocks.{block}.conv.bias_rqsadd"
+    nodes = [f"rqsp_blocks.{block}.conv.weight_int8", f"rqsp_blocks.{block}.conv.bias_rqsadd", conv,
+             f"QSTANDALONE_QCDQ_/blocks_{block}_conv_output_quant_1/Clip_Quant"]
+    out = f"/blocks_{block}_conv_output_quant_1/Clip_output_0"
+    quant = f"QCDQ_/blocks_{block}_conv_input_quant_1/Clip_Quant"
+    return act, w_raw, b_raw, nodes, out, quant
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default = DEFAULT_SRC)
-    ap.add_argument("--dst", default = DEFAULT_DST)
+    ap.add_argument("--dst", default = None,
+                    help = "default: Tests/Kernels/Integer/QZO_Conv (block 0), QZO_Conv_B<i> (block i)")
+    ap.add_argument("--block", type = int, default = 0, choices = range(5))
     args = ap.parse_args()
+    if args.dst is None:
+        args.dst = DEFAULT_DST if args.block == 0 else f"{DEFAULT_DST}_B{args.block}"
+    ACT, W_RAW, B_RAW, NODES, OUT, QUANT = block_names(args.block)
 
     src = os.path.join(args.src, "network.onnx")
     model = onnx.load(src)
@@ -104,16 +117,16 @@ def main():
     np.savez(os.path.join(args.dst, "inputs.npz"), **{ACT: act, W_RAW: w_raw, B_RAW: b_raw})
     np.savez(os.path.join(args.dst, "outputs.npz"), **{OUT: y})
 
-    print(f"[QZO_Conv] wrote {args.dst}")
+    print(f"[QZO_Conv block {args.block}] wrote {args.dst}")
     print(f"  nodes        : {[f'{n.op_type}:{n.name}' for n in nodes]}")
     print(f"  initializers : {needed_inits}")
     print(f"  value_info   : {[v.name for v in internal]}")
-    print(f"  act (i8)     : {act.shape} range [{act.min()},{act.max()}]  (Quant scale {[a for a in nodes_by_name['QCDQ_/blocks_0_conv_input_quant_1/Clip_Quant'].attribute if a.name=='scale'][0].f})")
+    print(f"  act (i8)     : {act.shape} range [{act.min()},{act.max()}]  (Quant scale {[a for a in nodes_by_name[QUANT].attribute if a.name=='scale'][0].f})")
     print(f"  weight (i8)  : {w_raw.shape} range [{w_raw.min()},{w_raw.max()}]  perturbed on device -> [{wpert.min()},{wpert.max()}], "
           f"{int((wpert != w_raw).sum())}/{w_raw.size} elements moved")
     print(f"  bias (i32)   : {b_raw.tolist()}")
     print(f"  output (i8)  : {OUT} {y.shape} range [{y.min()},{y.max()}]  == full-graph tensor: True")
-    print(f"  MACs         : {int(np.prod(y.shape)) * 1 * 1 * 4:,}")
+    print(f"  MACs         : {int(np.prod(y.shape)) * int(np.prod(w_raw.shape[1:])):,}")
 
 
 if __name__ == "__main__":

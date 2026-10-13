@@ -42,6 +42,8 @@
 #include "kernel/DualConv.h" // -- QW (exp6): exp5 fused cluster kernel on GAP9 (baseline C_cl); without this
                              //    prototype the call was implicit-int and crashed (float arg promoted) -- QW
 #include "kernel/FlatConv.h" // -- QW (exp6)
+#include "kernel/Conv4x2.h"  // -- QW (exp7a step 2a)
+#include "kernel/DualConv2In.h" // -- QW (exp7 step 3)
 
 /* -- QW (dual_pass_fusion exp6, task 2): cluster-side preparation for the FUSED dual-pass conv on NE16.
  * Implementation and derivation: TargetLibraries/GAP9/src/NE16DualPrep.c */
