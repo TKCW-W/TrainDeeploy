@@ -48,6 +48,13 @@ if isinstance(log2D, int):
 else:
     log2Dstring = "*"+log2D
 %>
+// RW 2026-10-13: ECO error feedback in the update pass (ZORuntime.h). zo_eco_mom[idx] covers the whole tensor;
+// the update tensors are single-tile, so chunk_start is the element offset into it.
+if (perturb_eps_use_override && zo_eco_on) {
+ApplyECOQuantRademacher_i8((const int8_t *) &${data_in}[${nodeName}_chunk_start], (int8_t *) &${data_out}[${nodeName}_chunk_start],
+                           (const int32_t *) ${mul}, ${log2Dstring}, ${channel_width}, chunk_seed, ${nodeName}_local_size,
+                           ${nodeName}_chunk_start, perturbation_sign, zo_eco_mom[${node_id}] + ${nodeName}_chunk_start);
+} else {
 ApplyPerturbQuantRademacher_CHW((const int8_t *)  &${data_in}[${nodeName}_chunk_start],
                                 (int8_t *) &${data_out}[${nodeName}_chunk_start],
                                 (const int32_t *) ${mul},
@@ -57,6 +64,7 @@ ApplyPerturbQuantRademacher_CHW((const int8_t *)  &${data_in}[${nodeName}_chunk_
                                 ${nodeName}_local_size,
                                 ${nodeName}_chunk_start,
                                 perturbation_sign,  // -- QW: +eps (L+) / -eps (L-)
-                                ${nodeName}_eps_scale);  // -- QW: zo_update coeff scaling (1.0f = train pass)
+                                ${nodeName}_eps_scale);
+}  // -- QW: zo_update coeff scaling (1.0f = train pass)
 
 """)

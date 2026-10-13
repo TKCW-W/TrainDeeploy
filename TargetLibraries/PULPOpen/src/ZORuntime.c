@@ -13,3 +13,12 @@ uint32_t  perturb_seed_base        = 0;    // no per-step seed offset
 float32_t perturb_eps_override     = 0.0f; // unused until enabled
 uint32_t  perturb_eps_use_override = 0;    // use baked ${eps}
 float32_t perturb_eps_baked        = 1.0f; // export-time eps baked in the RQSPerturb mul (set by the ZO runner) -- QW
+
+// RW 2026-10-13: ECO error feedback state (see ZORuntime.h)
+uint32_t  zo_eco_on   = 0;
+uint32_t  zo_eco_sr   = 0;
+uint32_t  zo_eco_step = 0;
+float32_t zo_eco_g    = 0.0f;
+float32_t zo_eco_lr   = 0.0f;
+float32_t zo_eco_beta = 0.9f;
+float32_t *zo_eco_mom[ZO_ECO_MAX_TENSORS];

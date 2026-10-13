@@ -29,4 +29,29 @@ extern uint32_t perturb_eps_use_override;
 // override is active (the zo_update coefficient -lr*g_proj). Default 1.0 = no scaling. -- QW
 extern float32_t perturb_eps_baked;
 
+
+/* RW 2026-10-13: ECO error feedback for (quantized) ZO, arXiv 2601.22101, memory-free form, as in Qiwen's host
+ * simulation Onnx4Deeploy/QZO_exp/exp15_QZO_eco/run_eco.py. Active only in the update pass (override on) with
+ * zo_eco_on != 0. Per trainable tensor k (= the update node's idx) zo_eco_mom[k] is an fp32 momentum buffer.
+ *   int8 / int32 tensors (scale s):  m~ = b m + (1-b) g z;  q = w - lr m~ / s;  w' = clamp(round(q));
+ *                                    e = (q - w') s;  m = m~ + (1/lr)(1 - 1/b) e
+ *   fp32 tensors:                    m = b m + (1-b) g z;  w' = w - lr m
+ * round = nearest-even, or floor(q + U) (stochastic, unbiased) when zo_eco_sr != 0. */
+extern uint32_t zo_eco_on;
+extern uint32_t zo_eco_sr;
+extern uint32_t zo_eco_step;     // SR noise stream advances per update step
+extern float32_t zo_eco_g;       // projected gradient g_proj of this step
+extern float32_t zo_eco_lr;
+extern float32_t zo_eco_beta;
+#define ZO_ECO_MAX_TENSORS 64
+extern float32_t *zo_eco_mom[ZO_ECO_MAX_TENSORS];
+
+void ApplyECOQuantRademacher_i8(const int8_t *w, int8_t *w_dest, const int32_t *M, int32_t S, uint32_t channel_width,
+                                uint32_t seed, uint32_t size, uint32_t start_offset, uint32_t dir, float32_t *mom);
+void ApplyECOQuantRademacher_i32(const int32_t *w, int32_t *w_dest, const int32_t *M, int32_t S,
+                                 uint32_t channel_width, uint32_t seed, uint32_t size, uint32_t start_offset,
+                                 uint32_t dir, float32_t *mom);
+void ApplyECORademacher_fp32(const float32_t *w, float32_t *w_dest, uint32_t seed, uint32_t dir, uint32_t size,
+                             float32_t *mom);
+
 #endif //__DEEPLOY_ZO_RUNTIME_HEADER_

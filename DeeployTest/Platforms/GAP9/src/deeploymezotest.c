@@ -107,6 +107,18 @@ static void RunOptimizerNetworkWrapper(void *args)  { (void)args; RunOptimizerNe
 #define N_ACCUM_STEPS 1          // -- QW
 #endif                           // -- QW
 
+#ifdef ZO_ECO  // RW 2026-10-13
+#ifndef ZO_ECO_BETA
+#define ZO_ECO_BETA 0.9f
+#endif
+#ifndef ZO_ECO_SR
+#define ZO_ECO_SR 0u
+#endif
+#define ZO_ECO_STR_(x) #x
+#define ZO_ECO_STR(x) ZO_ECO_STR_(x)
+#define ZO_ECO_BETA_STR ZO_ECO_STR(ZO_ECO_BETA)
+#endif
+
 #ifndef TRAINING_NUM_DATA_INPUTS // -- QW
 #define TRAINING_NUM_DATA_INPUTS 2 // -- QW
 #endif                           // -- QW
@@ -206,6 +218,9 @@ static void ComputeZOUpdateCoeffOnCluster(void *args) {  // -- QW
   float denom = 2.0f * (float)ZO_EPS * (float)a->n_accum; // -- QW
   float g_proj = acc / denom;    // -- QW
   *a->coeff_out = -(float)ZO_LR * g_proj;                 // -- QW
+#ifdef ZO_ECO
+  zo_eco_g = g_proj;  // RW 2026-10-13: ECO needs g and lr separately
+#endif
 }                                // -- QW
 
 /* -------------------------------------------------------------------------
@@ -452,6 +467,28 @@ int main(void) {                 // -- QW
    * (perturb_eps_override / perturb_eps_baked) during the zo_update pass. -- QW */
   { extern float32_t perturb_eps_baked; perturb_eps_baked = (float32_t)ZO_EPS; }  // -- QW
 
+#ifdef ZO_ECO
+  /* RW 2026-10-13: ECO error feedback (ZORuntime.h). One zero-initialised fp32 momentum buffer per update-graph
+   * input (= update node idx); inputs_bytes floats is an upper bound on the element count of every dtype. The
+   * momentum restarts every run, as in the host simulation (one run = one round). */
+  {
+    uint32_t tot = 0;
+    for (uint32_t k = 0; k < DeeployOptNetwork_num_inputs && k < ZO_ECO_MAX_TENSORS; k++) {
+      uint32_t bytes = DeeployOptNetwork_inputs_bytes[k] * 4u;
+      zo_eco_mom[k] = (float32_t *)pi_l2_malloc(bytes);
+      if (zo_eco_mom[k] == NULL) { printf("[ECO] momentum alloc failed (k=%u)\r\n", (unsigned)k); return -1; }
+      memset(zo_eco_mom[k], 0, bytes);
+      tot += bytes;
+    }
+    zo_eco_on = 1u;
+    zo_eco_lr = (float32_t)ZO_LR;
+    zo_eco_beta = (float32_t)ZO_ECO_BETA;
+    zo_eco_sr = ZO_ECO_SR;
+    printf("[ECO] memory-free error feedback, beta=%s sr=%u, %u B momentum\r\n", ZO_ECO_BETA_STR, (unsigned)ZO_ECO_SR,
+           (unsigned)tot);
+  }
+#endif
+
 #ifdef BN_FROZEN_STATS  /* QW: normalize training BN with frozen pretrained running stats -- QW */
   extern uint32_t g_bn_frozen_stats;  // -- QW
   g_bn_frozen_stats = 1u;             // -- QW
@@ -570,6 +607,10 @@ int main(void) {                 // -- QW
     perturb_eps_use_override = 1u;   // -- QW  use perturb_eps_override (= -ZO_LR*g_proj)
     perturbation_sign = 1u;          // -- QW
     perturb_seed_base = seed_base;   // -- QW  same z as the train passes
+#ifdef ZO_ECO
+    zo_eco_step = update_step;       // RW: stochastic-rounding stream
+    { uint32_t gb; memcpy(&gb, (const void *)&zo_eco_g, 4); ZTRACE("[ECO g s=%u] 0x%08x\r\n", (unsigned)update_step, (unsigned)gb); }
+#endif
     ZTRACE("[PHASE] update (zo_update) START\r\n");            // -- QW
     pi_cluster_task(&cluster_task, RunOptimizerNetworkWrapper, NULL);  // -- QW
     MEZO_SET_STACKS(cluster_task);             // -- QW
@@ -590,7 +631,7 @@ int main(void) {                 // -- QW
      * [DUMP_STEP_LO, DUMP_STEP_HI] (weights[s]); the host trace dumps the same. Then
      * increment[s] = weights[s]-weights[s-1], and weights-INTO-step-s = weights[s-1].
      * Default-off (defines absent) => existing final-only dump behaviour unchanged. -- QW */
-    if (update_step >= (uint32_t)DUMP_STEP_LO && update_step <= (uint32_t)DUMP_STEP_HI) {
+    if (update_step + 1u > (uint32_t)DUMP_STEP_LO && update_step <= (uint32_t)DUMP_STEP_HI) {  // RW: "+1 >" so LO=0 compiles (-Wtype-limits)
       dump_zo_weights(update_step);
     }
 #endif

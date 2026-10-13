@@ -123,6 +123,15 @@ if(MEZO_TRAINING)  # QW: MeZO (ZO) compile-time defines — parallel block along
     if(MEZO_STACKS_L2)  # RW: old behaviour -- cluster slave stacks in an L2 buffer (default: L1)
         target_compile_definitions(${ProjectId} PRIVATE MEZO_STACKS_L2)
     endif()
+    if(ZO_ECO)  # RW 2026-10-13: ECO error feedback in the ZO update (ZORuntime.h); ZO_ECO_BETA / ZO_ECO_SR optional
+        target_compile_definitions(${ProjectId} PRIVATE ZO_ECO)
+        if(ZO_ECO_BETA)
+            target_compile_definitions(${ProjectId} PRIVATE ZO_ECO_BETA=${ZO_ECO_BETA})
+        endif()
+        if(ZO_ECO_SR)
+            target_compile_definitions(${ProjectId} PRIVATE ZO_ECO_SR=1u)
+        endif()
+    endif()
 elseif(TRAINING)
     target_compile_definitions(${ProjectId} PRIVATE
         N_TRAIN_STEPS=${N_TRAIN_STEPS}
