@@ -56,7 +56,8 @@ from Deeploy.Targets.PULPOpen.TileConstraints.LayernormTileConstraint import Lay
     LayernormTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.MatMulTileConstraint import MatMulTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.MaxPoolGradTileConstraint import MaxPoolGradCTileConstraint
-from Deeploy.Targets.PULPOpen.TileConstraints.MaxPoolTileConstraint import MaxPoolCTileConstraint
+from Deeploy.Targets.PULPOpen.TileConstraints.MaxPoolTileConstraint import MaxPoolCTileConstraint, \
+    MaxPoolHCTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.MSELossTileConstraint import MSELossGradTileConstraint, \
     MSELossTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.ReduceMeanConstraint import ReduceMeanTileConstraint
@@ -116,7 +117,7 @@ PULPMaxPool1DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPMa
                                                            tileConstraint = MaxPoolCTileConstraint())
 
 PULPMaxPool2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPMaxPool2DBindings,
-                                                           tileConstraint = MaxPoolCTileConstraint())
+                                                           tileConstraint = MaxPoolHCTileConstraint())  # RW 2026-10-13: row tiles, contiguous DMA
 
 # QW: Part-4 MaxPoolArgmax reuses the single-output channel-tiling constraint (like MaxPool). -- QW
 PULPMaxPoolArgmaxTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPMaxPoolArgmaxBindings,

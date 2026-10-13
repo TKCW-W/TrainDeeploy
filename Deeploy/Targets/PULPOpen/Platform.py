@@ -66,7 +66,7 @@ from Deeploy.Targets.PULPOpen.Tiler import PULPAddTilingReadyBindings, PULPAvera
     PULPUniformRQSTilingReadyBindings
 from Deeploy.Targets.PULPOpen.TopologyOptimizationPasses.Passes import FoldActivationTransposeIntoGemmPass, \
     FoldDequantIntoMatMulPass, MaxPoolGradReadInputPass, PULPAddRequantMergePass, PULPConvRequantMergePass, \
-    PULPGEMMRequantMergePass, PULPMatMulRequantMergePass, TransposeGemmSquashPass
+    PULPGEMMRequantMergePass, PULPMatMulRequantMergePass, SwapReluMaxPoolPass, TransposeGemmSquashPass
 from Deeploy.Targets.PULPOpen.TopologyOptimizationPasses.SplitConvGradPass import SplitConvGradPass
 
 RQAddMapper = NodeMapper(RQAddParser(), PULPRQAddTilingReadyBindings)
@@ -332,6 +332,7 @@ PULPOptimizer = TopologyOptimizer(
         PULPAddRequantMergePass(),
         RemoveEmptyConvBiasPass(),
         RemoveOnlySingletonReduceMeanPass(),
+        SwapReluMaxPoolPass(),  # RW 2026-10-13
     ],
     name = "PULPOptimizer")
 

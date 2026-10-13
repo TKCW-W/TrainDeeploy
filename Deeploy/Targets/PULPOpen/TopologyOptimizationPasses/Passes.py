@@ -584,3 +584,37 @@ def _fold_dequant_fun(graph: gs.Graph, match: Match, name: str):
     dequant.outputs.clear()
     graph.cleanup()
     return graph
+
+
+# RW 2026-10-13: Relu -> MaxPool  ==>  MaxPool -> Relu. Relu is monotone, so max(relu(x)) == relu(max(x)) element
+# for element (both give either exactly 0.0f or the same x), and the Relu then runs on the pooled tensor -- 8x fewer
+# elements after SpeechNet's block-0 pool. Only when MaxPool is the Relu's sole consumer and has a single output
+# (BP graphs read the Relu output again in ReluGrad and are left alone).
+def _swap_relu_maxpool_fun(graph: gs.Graph, match: Match, name: str):
+    relu, pool = list(match.nodes_map.values())
+    if relu.op != "Relu" or pool.op != "MaxPool":
+        return graph
+    reluOut = relu.outputs[0]
+    if len(reluOut.outputs) != 1 or reluOut in graph.outputs or len(pool.outputs) != 1:
+        return graph
+    poolOut = pool.outputs[0]
+    pooled = gs.Variable(name = f"{pool.name}_pre_relu", dtype = poolOut.dtype, shape = poolOut.shape)
+    pool.inputs[0] = relu.inputs[0]
+    pool.outputs = [pooled]
+    relu.inputs = [pooled]
+    relu.outputs = [poolOut]
+    graph.cleanup().toposort()
+    return graph
+
+
+@contextagnostic
+class SwapReluMaxPoolPass(ReplaceSequentialPatternPass):
+
+    def __init__(self):
+        graph = gs.Graph()
+        _input = gs.Variable(name = 'input_1')
+        output = graph.layer(inputs = [_input], outputs = ['relu_out'], op = 'Relu', name = 'relu')
+        output = graph.layer(inputs = output, outputs = ['pool_out'], op = 'MaxPool', name = 'pool')
+        graph.outputs.append(output)
+        graph.inputs.append(_input)
+        super().__init__(graph, _swap_relu_maxpool_fun, "_SWAP_RELU_MAXPOOL_PASS")

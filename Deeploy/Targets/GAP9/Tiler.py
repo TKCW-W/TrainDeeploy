@@ -60,7 +60,8 @@ from Deeploy.Targets.PULPOpen.TileConstraints.LayernormTileConstraint import Lay
     LayernormTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.MatMulTileConstraint import MatMulTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.MaxPoolGradTileConstraint import MaxPoolGradCTileConstraint
-from Deeploy.Targets.PULPOpen.TileConstraints.MaxPoolTileConstraint import MaxPoolCTileConstraint
+from Deeploy.Targets.PULPOpen.TileConstraints.MaxPoolTileConstraint import MaxPoolCTileConstraint, \
+    MaxPoolHCTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.MSELossTileConstraint import MSELossGradTileConstraint, \
     MSELossTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.ReduceSumTileConstraint import ReduceSumTileConstraint
@@ -121,7 +122,7 @@ GAP9FlattenTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _GAP9Fla
                                                          tileConstraint = NOPTileConstraint())
 
 GAP9MaxPool2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9MaxPool2DBindings,
-                                                           tileConstraint = MaxPoolCTileConstraint())
+                                                           tileConstraint = MaxPoolHCTileConstraint())  # RW 2026-10-13: row tiles, contiguous DMA
 GAP9MaxPoolGrad2DTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9MaxPoolGrad2DBindings,
                                                                tileConstraint = MaxPoolGradCTileConstraint())
 

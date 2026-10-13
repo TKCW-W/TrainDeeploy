@@ -13,6 +13,7 @@ uint32_t g_maxpool_argmax_sig = 0u;   /* Sum of within-window argmax offsets   *
 uint32_t g_maxpool_argmax_sig2 = 0u;  /* Sum of squared offsets (collision guard) */
 uint32_t g_maxpool_argmax_en = 0u;
 
+/* RW 2026-10-13: previous channel-split version kept for reference
 void PULP_MaxPool2d_fp32_fp32_HWC(const float32_t *__restrict__ pSrcA,
                                   uint32_t W, uint32_t H, uint32_t C,
                                   uint32_t Q, uint32_t P, uint32_t SQ,
@@ -64,6 +65,58 @@ void PULP_MaxPool2d_fp32_fp32_HWC(const float32_t *__restrict__ pSrcA,
         uint32_t output_idx = (h_out * W_out + w_out) * C + c;
         pDstC[output_idx] = max_val;
       }
+    }
+  }
+}
+*/
+// RW 2026-10-13: output pixels (flattened h*W_out + w) are split across the cores and each core does all C
+// channels; the valid window range is computed once per pixel and the inner loop runs over the contiguous
+// channel axis without branches on the bounds. The old version split the channel axis -- SpeechNet tiles carry
+// 1..8 channels, so 1..8 of 8 cores worked -- and re-checked both bounds per element. Per channel the window is
+// still scanned p-major, q-minor from -inf. fmax.s returns +0 for a (-0, +0) tie where the old '>' kept the first
+// zero; every SpeechNet pool feeds a Relu, which maps both to +0.
+void PULP_MaxPool2d_fp32_fp32_HWC(const float32_t *__restrict__ pSrcA,
+                                  uint32_t W, uint32_t H, uint32_t C,
+                                  uint32_t Q, uint32_t P, uint32_t SQ,
+                                  uint32_t SP, float32_t *__restrict__ pDstC,
+                                  uint32_t pad_top, uint32_t pad_bottom,
+                                  uint32_t pad_left, uint32_t pad_right) {
+  const int32_t core_id = pi_core_id();
+  const int32_t H_out = (H + pad_top + pad_bottom - P) / SP + 1;
+  const int32_t W_out = (W + pad_left + pad_right - Q) / SQ + 1;
+  const int32_t n_pix = H_out * W_out;
+  const int32_t chunk = (n_pix + NUM_CORES - 1) / NUM_CORES;
+  const int32_t p0 = MIN(chunk * core_id, n_pix);
+  const int32_t p1 = MIN(p0 + chunk, n_pix);
+  int32_t h_out = p0 / W_out, w_out = p0 % W_out;
+  for (int32_t pix = p0; pix < p1; pix++) {
+    const int32_t h0 = h_out * (int32_t)SP - (int32_t)pad_top;
+    const int32_t w0 = w_out * (int32_t)SQ - (int32_t)pad_left;
+    const int32_t hs = h0 < 0 ? 0 : h0, he = MIN(h0 + (int32_t)P, (int32_t)H);
+    const int32_t ws = w0 < 0 ? 0 : w0, we = MIN(w0 + (int32_t)Q, (int32_t)W);
+    float32_t *out = pDstC + pix * (int32_t)C;
+    // per channel a register accumulator over the window (SpeechNet tiles have C = 1..16, so a c-innermost
+    // loop that read-modify-writes out[c] cost ~6x more)
+    for (uint32_t c = 0; c < C; c++) {
+      float32_t m = -inf;
+      for (int32_t h = hs; h < he; h++) {
+        const float32_t *in = pSrcA + (h * (int32_t)W + ws) * (int32_t)C + c;
+        for (int32_t w = ws; w < we; w++) {
+#if defined(__riscv_flen) && !defined(__riscv_zfinx)
+          // fmax.s (the gcc builtin becomes a libcall here); differs from (v > m ? v : m) only in -0/+0 ties
+          __asm__("fmax.s %0, %1, %2" : "=f"(m) : "f"(*in), "f"(m));
+#else
+          const float32_t v = *in;
+          m = v > m ? v : m;
+#endif
+          in += C;
+        }
+      }
+      out[c] = m;
+    }
+    if (++w_out == W_out) {
+      w_out = 0;
+      h_out++;
     }
   }
 }

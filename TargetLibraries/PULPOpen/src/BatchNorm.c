@@ -41,6 +41,34 @@ void PULP_BatchNormInternal_fp32(
   int8_t log2Core = LOG2(NUM_CORES);
 
   uint32_t N_hw = H_in * W_in;
+
+  /* RW 2026-10-13: frozen stats make BN a per-element affine map, so split the flattened (n, c, hw) range across
+   * the cores instead of the channels -- the tiler hands block 0 one channel per tile, which left 7 of 8 cores idle
+   * (1.12 M of a 5.9 M QZO step). Same per-element expression as below, so the output is bit-identical. */
+  if (g_bn_frozen_stats) {
+    const uint32_t total = N * C * N_hw;
+    const uint32_t chunk_e = (total + NUM_CORES - 1) / NUM_CORES;
+    const uint32_t e0 = MIN(chunk_e * (uint32_t)core_id, total);
+    const uint32_t e1 = MIN(e0 + chunk_e, total);
+    uint32_t e = e0;
+    while (e < e1) {  // one segment per channel run, constants hoisted out of the inner loop
+      const uint32_t c = (e / N_hw) % C;
+      const uint32_t seg_end = MIN(e1, (e / N_hw + 1) * N_hw);
+      const float32_t mean = running_mean[c], inv_std = 1.0f / sqrtf(running_var[c] + epsilon);
+      const float32_t g = gamma[c], b = beta[c];
+      const float32_t *x = X + e;
+      float32_t *y = Y + e;
+      for (uint32_t k = seg_end - e; k > 0; k--) {
+        *y++ = (*x++ - mean) * inv_std * g + b;
+      }
+      e = seg_end;
+    }
+    for (uint32_t c = core_id; c < C; c += NUM_CORES) {
+      saved_mean[c] = running_mean[c];
+      saved_inv_std[c] = 1.0f / sqrtf(running_var[c] + epsilon);
+    }
+    return;
+  }
   uint32_t N_total = N * N_hw;
   float32_t inv_N = 1.0f / (float32_t)N_total;
 
