@@ -26,6 +26,24 @@ from Deeploy.Targets.PULPOpen.Platform import MemoryPULPPlatform, MemoryPULPPlat
 from .codeGenerate import generateL3HexDump
 
 
+
+# C type -> numpy dtype for the L3 hex files (must match the cl_ram_malloc size computed from typeWidth).
+_HEX_DTYPES = {
+    'float32_t': np.float32,
+    'int64_t': np.int64,
+    'uint64_t': np.uint64,
+    'int32_t': np.int32,
+    'uint32_t': np.uint32,
+    'int16_t': np.int16,
+    'uint16_t': np.uint16,
+    'int8_t': np.int8,
+    'uint8_t': np.uint8,
+}
+
+
+def _hexDtype(typeName: str):
+    return _HEX_DTYPES.get(typeName, np.float32)
+
 def generateTrainingTestInputsHeader(deployer: NetworkDeployer,
                                      all_mb_data: List[List[np.ndarray]],
                                      n_steps: int,
@@ -140,13 +158,8 @@ def generateTrainingTestInputsHeader(deployer: NetworkDeployer,
                 _l3_loader_lines.append(f'  {buf_name} = cl_ram_malloc({nbytes}); '
                                         f'load_file_to_ram({buf_name}, "{buf_name}.hex");')
                 if hex_dir is not None:
-                    _npdt = {
-                        'float32_t': np.float32,
-                        'int64_t': np.int64,
-                        'uint8_t': np.uint8,
-                        'int32_t': np.int32
-                    }.get(typeName, np.float32)
-                    raw = values.astype(_npdt).tobytes()
+                    raw = values.astype(_hexDtype(typeName)).tobytes()
+                    assert len(raw) <= nbytes, f"{buf_name}: {len(raw)} B hex > {nbytes} B L3 allocation"
                     raw = raw + b'\x00' * (nbytes - len(raw))  # word-align pad, matches cl_ram_malloc size
                     os.makedirs(hex_dir, exist_ok = True)
                     with open(os.path.join(hex_dir, f'{buf_name}.hex'), 'wb') as _hf:
@@ -248,7 +261,11 @@ def generateTrainingTestInputsHeader(deployer: NetworkDeployer,
                 _l3_loader_lines.append(f'  {buf_name} = cl_ram_malloc({_nbytes}); '
                                         f'load_file_to_ram({buf_name}, "{buf_name}.hex");')
                 if hex_dir is not None:
-                    _raw = values.astype(np.float32).tobytes()
+                    # RW 2026-10-13: serialise in the buffer's C type. float32 for every weight wrote
+                    # an int8 QZO conv weight at 4x its cl_ram_malloc size; load_file_to_ram then ran
+                    # past the allocation and overwrote the neighbouring L3 buffer (the label).
+                    _raw = values.astype(_hexDtype(typeName)).tobytes()
+                    assert len(_raw) <= _nbytes, f"{buf_name}: {len(_raw)} B hex > {_nbytes} B L3 allocation"
                     _raw = _raw + b'\x00' * (_nbytes - len(_raw))
                     os.makedirs(hex_dir, exist_ok = True)
                     with open(os.path.join(hex_dir, f'{buf_name}.hex'), 'wb') as _hf:

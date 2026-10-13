@@ -859,6 +859,8 @@ def run_training_codegen(config, script_dir: Path) -> None:
         f"--training-dir={config.test_dir}",
     ]
     opt_cmd.extend(arg for arg in config.gen_args if any(arg.startswith(p) for p in opt_passthrough))
+    if getattr(config, "optimizer_l1", None):  # RW  separate L1 budget for the optimizer graph
+        opt_cmd = [a for a in opt_cmd if not a.startswith("--l1")] + [f"--l1={config.optimizer_l1}"]
     if not any(arg.startswith("--defaultMemLevel") for arg in opt_cmd):
         opt_cmd.append("--defaultMemLevel=L2")
     if config.verbose > 0:
