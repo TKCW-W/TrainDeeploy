@@ -16,11 +16,6 @@
 
 // RW: Remove MAINSTACKSIZE because gap9-sdk does not use it
 #define SLAVESTACKSIZE 3800
-// RW 2026-10-13 (Qiwen's open item 4, same as deeploymezotest.c): give the SDK an L2 buffer for the
-// cluster slave stacks so it skips its pi_cl_l1_malloc of them (~27 KB of L1). devel's sdk config also
-// reserves a 14 KB master-core stack in L1; without this the --l1 92000 kernel fixtures no longer fit.
-#define N_STACK_CORES 12
-static unsigned char cluster_slave_stacks[N_STACK_CORES * SLAVESTACKSIZE] __attribute__((aligned(16)));
 
 /* On-chip memory windows. HyperRAM/L3 (cl_ram_malloc) is NOT CPU-addressable,
  * so a raw memcpy / CPU-deref of an L3 pointer faults ("Invalid fetch") on real
@@ -130,7 +125,7 @@ int main(void) {
   struct pi_cluster_task cluster_task;
 
   pi_cluster_task(&cluster_task, InitNetworkWrapper, NULL);
-  pi_cluster_task_stacks(&cluster_task, cluster_slave_stacks, SLAVESTACKSIZE);
+  cluster_task.slave_stack_size = SLAVESTACKSIZE;
   pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);
 
 #ifndef CI
@@ -152,7 +147,7 @@ int main(void) {
 #endif
 
   pi_cluster_task(&cluster_task, RunNetworkWrapper, NULL);
-  pi_cluster_task_stacks(&cluster_task, cluster_slave_stacks, SLAVESTACKSIZE);
+  cluster_task.slave_stack_size = SLAVESTACKSIZE;
 
 #ifdef POWER_MEASUREMENT
   WRITE_GPIO(1);
@@ -203,7 +198,7 @@ int main(void) {
       float_compare_args.err_count = (int *)&float_error_count;
 
       pi_cluster_task(&cluster_task, CL_CompareFloat, &float_compare_args);
-      pi_cluster_task_stacks(&cluster_task, cluster_slave_stacks, SLAVESTACKSIZE);
+      cluster_task.slave_stack_size = SLAVESTACKSIZE;
       pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);
 
       tot_err += float_error_count;
