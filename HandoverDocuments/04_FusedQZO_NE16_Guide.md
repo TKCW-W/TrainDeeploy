@@ -27,7 +27,7 @@ over the fused cluster kernel on the same chip.
 | NE16 per-tap and dense-3×3 routes (exp16a/b), on-device encode and signed-input bias (exp16c) | all five SpeechNet convs bit-exact on NE16; full QZO step on GAP9 bit-identical to cluster-only; slower than the cluster |
 | NE16 im2col route, single pass (exp6 task 1) | works, block 0: 379,969 cycles/pass, 0/78,512 |
 | NE16 im2col route, fused (exp6 task 2) | works, block 0: 541,345 cycles both passes, 0/157,024 |
-| Blocks 1–4 on either fused path | not started; the weight-perturbation order of both fused kernels is correct only for Cin = 1 (§8) |
+| Blocks 1–4 on either fused path | not started; the weight-perturbation order of both fused kernels is correct only for Cin = 1 (§8). **Update 2026-10-14: done, with the full dual-pass network — see `05_Fusion_Full_Network_Guide.md`** |
 | Exporter support (Onnx4Deeploy emitting the fused / NE16 nodes) | absent; every fixture is hand-built by a builder script (§3) |
 | Checkpoint | every number here derives from `Tests/Models/Training/SpeechNet/speechnet_qzo19_train` (artifacts_reference weights, paper-comparable), except the exp16 single-layer fixtures, which derive from `speechnet_qzo12_train` (stale `artifacts/` weights, cycle counts unaffected, accuracies not quoted) |
 

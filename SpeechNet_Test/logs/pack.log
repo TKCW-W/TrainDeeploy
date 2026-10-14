@@ -16,3 +16,7 @@ train  : /app/TrainDeeploy/SpeechNet_Test/speechnet_train_ZO_round1  (network.on
 update : /app/TrainDeeploy/SpeechNet_Test/speechnet_update_ZO_round1 (network.onnx 22 inputs / 22 outputs)
 train  : /app/TrainDeeploy/SpeechNet_Test/speechnet_train_QZO_single_step  (network.onnx 24 inputs / 25 inits)
 update : /app/TrainDeeploy/SpeechNet_Test/speechnet_update_QZO_single_step (network.onnx 22 inputs / 22 outputs)
+train  : /app/TrainDeeploy/SpeechNet_Test/speechnet_train_QZOECO_full_fused_single_update_step  (network.onnx 24 inputs / 25 inits)
+update : /app/TrainDeeploy/SpeechNet_Test/speechnet_update_QZOECO_full_fused_single_update_step (network.onnx 22 inputs / 22 outputs)
+train  : /app/TrainDeeploy/SpeechNet_Test/speechnet_train_QZOECO_full_fused_round1  (network.onnx 24 inputs / 25 inits)
+update : /app/TrainDeeploy/SpeechNet_Test/speechnet_update_QZOECO_full_fused_round1 (network.onnx 22 inputs / 22 outputs)

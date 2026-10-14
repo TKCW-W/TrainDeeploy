@@ -607,7 +607,11 @@ def generateTrainingTestNetwork(deployer: NetworkDeployer,
     os.makedirs(dumpdir, exist_ok = True)
 
     _platform_name = type(deployer.Platform).__name__
-    _is_gap9 = "GAP9" in _platform_name
+    # _is_gap9 = "GAP9" in _platform_name
+    # QW (fusion handover 2026-10-14): GAP9_w_NE16 deploys through MemoryNE16PlatformWrapper (an NE16Platform, itself a
+    # GAP9Platform subclass) whose name has no "GAP9", so GAP9 + NE16 builds took the Siracusa path: every test window
+    # baked into L2 .data. A 4-window fixture then no longer fit next to the fused NE16 arena (L2 alloc failed). -- QW
+    _is_gap9 = "GAP9" in _platform_name or "NE16" in _platform_name  # -- QW
 
     # GAP9 may skip baking the initial weights ONLY when every weight buffer is
     # genuinely L3-resident: Deeploy then emits a load_file_to_ram(buf, "N.hex")

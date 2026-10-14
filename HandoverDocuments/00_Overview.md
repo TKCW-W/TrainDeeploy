@@ -1,7 +1,7 @@
 # On-device fine-tuning of SpeechNet with Deeploy — handover overview
 
-Written 2026-10-12 for the handover to the supervisor and to any future collaborator or agent.
-This is the entry point. It indexes the four implementation guides, records the facts that every
+Written 2026-10-12 for the handover to the supervisor and to any future collaborator or agent; guide 05
+added 2026-10-14. This is the entry point. It indexes the five implementation guides, records the facts that every
 guide depends on (repositories, containers, checkpoint, protocol), lists the standing working rules,
 and ends with an index of every experiment that was run, with its path and status.
 
@@ -12,7 +12,7 @@ surface-EMG silent-speech classification, 9 classes, 14 channels × 700 samples 
 microcontrollers (Siracusa on GVSoC, and GAP9 with its NE16 accelerator), compiled by our fork of the
 Deeploy compiler. Ready-to-run fixtures for every experiment (one naming scheme, each cross-checked
 against the fixture its experiment ran on and smoke-run on GVSoC) and their run commands are in
-`TrainDeeploy/SpeechNet_Test/README.md`. The work went through four stages, each with its own guide:
+`TrainDeeploy/SpeechNet_Test/README.md`. The work went through five stages, each with its own guide:
 
 | guide | stage | one-line result |
 |---|---|---|
@@ -20,6 +20,7 @@ against the fixture its experiment ran on and smoke-run on GVSoC) and their run 
 | [02_ZO_Guide.md](02_ZO_Guide.md) | float zeroth-order (MeZO) fine-tuning | two forwards per step instead of forward + backward; bit-exact on device; L2 peak 0.79 MB; round 1 reaches 90.00 % on batch 2, the best on-device result on this cell; the host simulation predicted it exactly |
 | [03_QZO_Guide.md](03_QZO_Guide.md) | quantized zeroth-order (int8 convs) | int8 conv weights and int32 requant biases perturbed on device, fp32 BN and classifier; step cost 8.4–8.7 M cycles, 4.3× cheaper than fp32 ZO; round 1 reaches 85.00 % on device (host executor 85.56 %); the LSB stall and its three answers (lr 1e-5, master weights, ECO error feedback) |
 | [04_FusedQZO_NE16_Guide.md](04_FusedQZO_NE16_Guide.md) | fused dual-pass QZO kernels and NE16 | one kernel computing both ε-passes of the block-0 conv: 1.88× on the fixture, 2.16× on the node, bit-exact; on GAP9 the same fusion on the NE16 accelerator via the SDK's im2col route gives 2.71× over 2× pulp-nn and 1.71× over the fused cluster kernel |
+| [05_Fusion_Full_Network_Guide.md](05_Fusion_Full_Network_Guide.md) | dual-pass fusion for blocks 1–4 and the whole QZO network | two-input fused cluster kernel and pipelined fused NE16 node for blocks 1–4 (Siracusa 2.44×, GAP9 best per block 2.57×; NE16 for blocks 0–2, cluster for 3–4); a Deeploy pass rewrites the QZO training graph into one channel-stacked dual-pass graph, bit-exact on Siracusa / GAP9 / GAP9 + NE16 (step 1.53× / 1.42× / 1.78×); QZO+ECO round on GAP9 + NE16 predicted at 40.0 s vs 69.6 s unfused |
 
 The same experimental cell is used throughout: subject S01, condition vocalized, held-out session 3
 (fold 3). Fine-tuning data are 54 stratified windows (30 % of batch 1, seed 42, drawn by the
@@ -118,8 +119,8 @@ templates, tile constraints, kernels, harness, runner flags, and how to reproduc
 
 ## 5. Shared documentation
 
-The shared documentation consists of the five handover guides in `TrainDeeploy/HandoverDocuments/`
-(this overview and guides 01–04), `TrainDeeploy/SpeechNet_Test/README.md`, and the upstream
+The shared documentation consists of the six handover documents in `TrainDeeploy/HandoverDocuments/`
+(this overview and guides 01–05), `TrainDeeploy/SpeechNet_Test/README.md`, and the upstream
 documentation: `TrainDeeploy/README_TRAINING.md` (training-infrastructure contracts: fixture
 layout, npz rules, runner flags), `TrainDeeploy/README_GAP9.md` (GAP9 container, SDK, board),
 `TrainDeeploy/docs/`, `Onnx4Deeploy/README.md` and `Onnx4Deeploy/docs/` (for example
@@ -127,7 +128,7 @@ layout, npz rules, runner flags), `TrainDeeploy/README_GAP9.md` (GAP9 container,
 `RequantizedConv` fold chain). Measurement logs, results and scripts are in the experiment folders
 listed in §8.
 
-## 6. Points not covered by the four guides
+## 6. Points not covered by the guides
 
 - **Dataset and windowing.** One window per utterance, anchored at the onset of each label run (the
   window starts at the run's first sample; no sliding window, no stride or overlap, no centring):
@@ -181,13 +182,13 @@ listed in §8.
 
 ## 7. Open items across the project
 
-1. Blocks 1–4 through the fused kernels: the fused kernels perturb the HWC-transposed weight, which
-   is only correct for `Cin = 1` (block 0). Phase 1 must walk the CHW buffer and write HWC
-   (`DualConv.c`, `NE16DualPrep.c`); verify with a block-1 fixture built like `build_dual_conv_fixture.py`.
-2. A lowering pass so that Onnx4Deeploy can emit the fused and NE16 graphs instead of the hand-built
-   fixtures (`build_*_fixture.py`).
-3. Remove or re-tile the output transpose after the fused conv (47 % of the fused NE16 run; the tiler
-   cuts it along the channel axis and the template parallelises the same axis, ~67 k cycles per tile).
+1. ~~Blocks 1–4 through the fused kernels~~ — done 2026-10-14 (guide 05): the two-input kernel perturbs the raw CHW
+   weight in CHW order and writes HWC; the NE16 path needed no fix.
+2. ~~A lowering pass for the fused and NE16 graphs~~ — done differently 2026-10-14 (guide 05): a Deeploy pass
+   (`ZODualPassFusion`, `--zo-fused-dual`) rewrites the ordinary QZO export at compile time; no exporter change.
+3. ~~Remove the output transpose after the fused conv~~ — resolved by guide 05: it exists only at the fixture boundary;
+   the full network stays channels-last. Open instead: the non-conv nodes (63 % of the fused GAP9 step), the board L2
+   budget and stack depth of the fused graph, and a full fused round (guide 05 §9).
 4. Port the slave-stack relocation to the GAP9 kernel harness; trace the GAP9 cluster kernels to pin the
    GCC-vs-clang explanation of the 1.59× vs 1.88× fused-cluster ratio.
 5. Cross-fold robustness of QZO at lr 1e-5 (loses 4.86 pt to float ZO on fold 2) and ECO on device.
@@ -305,3 +306,11 @@ The early NE16 steps (STEP 1 and 2a) have their logs in
 helper scripts at the top level of `TrainDeeploy/DeeployTest/experiments/deliverable/exp16_NE16_GAP9/`.
 `TrainDeeploy/DeeployTest/experiments/deliverable/exp_profiletiling_bug/logs/` holds two profiling
 logs of a single BP step (default and recompute MaxPool backward).
+
+### 8.5 Fusion for blocks 1–4 and the full network (guide 05)
+
+| path | goal | result | status |
+|---|---|---|---|
+| `TrainDeeploy/DeeployTest/experiments/dual_pass_fusion/exp7_remaining_blocks/` (main files: results_step5.txt, results_step6.txt, results_step7_gap9.txt) | fused kernels for blocks 1–4 (cluster two-input kernel, Conv4x2 control kernel, pipelined NE16 node) and the per-block engine choice | Siracusa blocks 1–4 2.44× (wall clock, node level); GAP9 best per block 2.57× (NE16 blocks 1–2, cluster 3–4); all exact | CURRENT |
+| `TrainDeeploy/DeeployTest/experiments/dual_pass_fusion/exp8_whole_network/` (main files: results/step8_per_block_vs_fixtures.txt, results/step10_round_prediction.txt, results/step11_eco_round_prediction.txt, graphs/) | the whole QZO step as one dual-pass graph (`ZODualPassFusion`) | 4 steps identical to unfused; Siracusa 1.53×, GAP9 cluster 1.42×, GAP9 + NE16 1.78×; n_accum 4 step 8.86 M (QZO) / 9.13 M (QZO+ECO) cycles; 120-epoch round 38.8 s / 40.0 s @ 370 MHz vs 68.4 s / 69.6 s unfused | CURRENT |
+

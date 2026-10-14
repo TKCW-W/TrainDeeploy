@@ -367,3 +367,22 @@ QZO_BLOCK0_GEN_ARGS = [
     "--input-type-map", "blocks.0.conv.bias_rqsadd=int32_t",
     "--input-offset-map", "blocks.0.conv.bias_rqsadd=0",
 ]
+
+#    QW 2026-10-14: blocks 1-4 QZO conv kernels on the cluster (exp7; HandoverDocuments/05_Fusion_Full_Network_Guide.md).
+#    unfused = ONE pass (perturb nodes + transpose + pulp-nn), fused = both passes in RequantizedDualConv (7 inputs,
+#    PULP_DualConv2d_2in_i8_i8_i8_HWC). The activation inputs are >= 0, so they must be pinned to int8 (otherwise the
+#    generator types them uint8 and picks the u8 pulp-nn kernel); the fused fixtures have a second activation x-.
+#    Smoke runs (fixture Runtime): unfused 469,934 / 170,216 / 103,558 / 173,803; fused 529,028 / 162,895 / 60,817 / 48,656.
+QZO_BLOCKS_KERNEL_TESTS = {
+    f"SpeechNet_{kind}_b{i}_cluster": (i, kind, f"../SpeechNet_Test/speechnet_{kind}_b{i}_cluster")
+    for i in (1, 2, 3, 4) for kind in ("unfused", "fused")
+}
+
+
+def qzo_block_gen_args(i: int, fused: bool) -> list:
+    a, b = f"/blocks_{i}_conv_input_quant_1/Clip_output_0", f"blocks.{i}.conv.bias_rqsadd"
+    types, offsets = [f"{b}=int32_t", f"{a}=int8_t"], [f"{b}=0", f"{a}=0"]
+    if fused:
+        types.append(f"{a}_minus=int8_t")
+        offsets.append(f"{a}_minus=0")
+    return ["--input-type-map", *types, "--input-offset-map", *offsets]

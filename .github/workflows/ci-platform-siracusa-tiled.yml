@@ -65,3 +65,12 @@ jobs:
       runner: ${{ needs.select-env.outputs.runner }}
       docker-image: ${{ needs.select-env.outputs.image }}
       pytest-marker: "qzo_block0"
+
+  # -- QW 2026-10-14: SpeechNet blocks 1-4 QZO conv kernels on the cluster (fused two-input DualConv + unfused pulp-nn)
+  siracusa-speechnet-qzo-blocks-kernels:
+    needs: select-env
+    uses: ./.github/workflows/_runner-siracusa-tiled.yml
+    with:
+      runner: ${{ needs.select-env.outputs.runner }}
+      docker-image: ${{ needs.select-env.outputs.image }}
+      pytest-marker: "qzo_blocks"

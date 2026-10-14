@@ -427,3 +427,24 @@ SPEECHNET_BP_SINGLE_STEP = {
     "l1": 122000, "l2": 1400000, "promote_headroom": 131072,
     "defines": ["BN_FROZEN_STATS=ON", "CC_STACK_SIZE=4096"],
 }
+
+
+# QW 2026-10-14: the fused full-network QZO step (HandoverDocuments/05_Fusion_Full_Network_Guide.md). ONE gate:
+# the dual-pass graph (ZODualPassFusion, --zo-fused-dual) with blocks 0-2 on NE16 and blocks 3-4 on the cluster,
+# QZO+ECO, one update step with n_accum 4 (4 distinct windows, staged in L3). It passes only if
+#   * all 4 L+ / L- pairs equal the host reference (Errors 0 out of 8 + the [WSUM] check), and
+#   * the trained weights hash to ZO_EXPECT_WSUM, the value the UNFUSED GAP9 cluster run of the same step produces
+#     (deeployMezoRunner_tiled_GAP9.py without --zo-fused-dual) -- i.e. fused == unfused bit for bit.
+# lr 3e-3 is a GATE value, not the training recipe (QZO+ECO trains at lr 3e-6): at the recipe lr one step moves almost
+# no int8 weight (sub-LSB updates), so the hash would barely test the update. As in SpeechNet_QZO_ECO_5steps, 3e-3
+# makes the update move many int8 / int32 weights ([WCHK]: 21/22 tensors
+# changed). 0xb11cc64f = unfused GAP9 cluster run = fused NE16 run (2026-10-14, SpeechNet_Test/logs/smoke/ci_wsum_*.log).
+SPEECHNET_FUSED_TESTS = {
+    "SpeechNet_QZO_ECO_fused_NE16_single_update_step": {
+        "train_dir": "../SpeechNet_Test/speechnet_train_QZOECO_full_fused_single_update_step",
+        "update_dir": "../SpeechNet_Test/speechnet_update_QZOECO_full_fused_single_update_step",
+        "lr": 3e-3, "n_steps": 1, "n_accum": 4, "l1": 114000, "l2": 1500000,
+        "ne16_convs": "0,1,2",
+        "defines": ["ZO_FUSED_DUAL=ON", "GAP9_NETWORK_O3=ON", "ZO_ECO=ON", "ZO_EXPECT_WSUM=0xb11cc64f"],
+    },
+}

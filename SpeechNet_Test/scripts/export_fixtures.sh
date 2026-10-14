@@ -4,6 +4,7 @@
 #
 #   bash export_fixtures.sh <target> [<target> ...]
 #   targets: bp_round1 bp_single zo_round1 zo_single qzo_single bp_infer zo_infer kernels all
+#            kernels_b1to4 qzoeco_single_update qzoeco_round1   (added 2026-10-14, fused full network; also in `all`)
 #   (qzo_round1 / qzo_infer are kept below but NOT part of `all`: dropped 2026-10-12 because the QZO
 #    round-1 host reference takes ~3 h and the round-1 QZO recipe will change with ECO.)
 #
@@ -77,6 +78,26 @@ qzo_single() { o4d_qzo export_qzo_single -mode q-zo-train --noise-type rqs_radem
   -o $C/exports/qzo_single_step
   pack qzo_single_step speechnet_train_QZO_single_step speechnet_update_QZO_single_step; }
 
+# ---- 6b. QZO(+ECO) entry fixtures of the fused full-network run (2026-10-14, guide 05) ----------------
+# These are the ordinary (unfused) QZO graphs. TrainDeeploy's ZODualPassFusion pass (--zo-fused-dual) rewrites
+# the training graph into the dual-pass graph at compile time; ECO is a harness option (-D ZO_ECO=ON) acting on
+# the unchanged update graph, so the export is the same for QZO and QZO+ECO (default --qzo-optimizer direct).
+# single update step: n_accum 4 -> 4 windows, host reference L+/L- for the 4 mini-batches (valid for ECO too:
+#   ECO changes only the update, which runs after these 4 forwards).
+qzoeco_single_update() { o4d_qzo export_qzoeco_single_update -mode q-zo-train --noise-type rqs_rademacher $CELL --batch 1 \
+  --pretrained-weights $CKPT --data-size 54 --stratified --n-steps 1 --n-accum 4 --lr 1e-5 \
+  -o $C/exports/qzoeco_full_fused_single_update_step
+  pack qzoeco_full_fused_single_update_step speechnet_train_QZOECO_full_fused_single_update_step \
+    speechnet_update_QZOECO_full_fused_single_update_step; }
+# round 1: all 54 windows of batch 1; the device runs 1620 update steps (120 epochs) over them. The host reference
+#   is short on purpose (14 steps = 56 forwards, which consume all 54 windows): a direct-QZO run can be checked on
+#   its first 14 steps; an ECO run diverges from the direct reference after the first update, so only its first
+#   step is checkable (same recipe as the GAP9 board rounds, silentwear-zo rounds/export_qzo999_rounds.sh).
+qzoeco_round1() { o4d_qzo export_qzoeco_round1 -mode q-zo-train --noise-type rqs_rademacher $CELL --batch 1 \
+  --pretrained-weights $CKPT --data-size 54 --stratified --n-steps 14 --n-accum 4 --lr 1e-5 \
+  -o $C/exports/qzoeco_full_fused_round1
+  pack qzoeco_full_fused_round1 speechnet_train_QZOECO_full_fused_round1 speechnet_update_QZOECO_full_fused_round1; }
+
 # ---- evaluation fixtures: batch 2, all 180 windows, with the ROUND-1 DEVICE-TRAINED weights -------
 # The carry checkpoints are the device weight dumps of exp17 / exp18 / exp19. After a new device
 # round, extract its [WDUMP] into a new carry checkpoint and re-run the same command with it.
@@ -101,9 +122,24 @@ kernels() {
   cp -R $K/QZO_DualConv_NE16 "$H/speechnet_fused_b0_NE16"        # build_ne16_dual_fixture.py   (exp6 task 2)
 }
 
+# ---- blocks 1-4 conv kernel fixtures (exp7, 2026-10-14): hand-built, copied from DeeployTest/Tests ---------
+# unfused = ONE pass (run twice for both passes); fused = both passes. Builders (container agitated_hugle):
+#   build_qzo_conv_fixture.py --block i, build_dual_conv2in_fixture.py --block i (cluster),
+#   build_ne16_im2col_fixture.py --block i / build_ne16_dual2in_fixture.py --block i --single-node 1 (NE16), all in DeeployTest/experiments/dual_pass_fusion/.
+kernels_b1to4() {
+  local K=/Users/qiwenwu/ETH/TrainDeeploy/DeeployTest/Tests/Kernels/Integer i
+  for i in 1 2 3 4; do
+    rm -rf "$H"/speechnet_{unfused,fused}_b${i}_{cluster,NE16}
+    cp -R $K/QZO_Conv_B$i                "$H/speechnet_unfused_b${i}_cluster"   # 2 x pulp-nn baseline (A)
+    cp -R $K/QZO_Conv_NE16_B$i           "$H/speechnet_unfused_b${i}_NE16"      # NE16 im2col route, one pass (B)
+    cp -R $K/QZO_DualConv2in_B$i         "$H/speechnet_fused_b${i}_cluster"     # PULP_DualConv2d_2in (C_cl)
+    cp -R $K/QZO_DualConv2in_NE16P_B$i   "$H/speechnet_fused_b${i}_NE16"        # NE16DualConv2in, pipelined (C_P)
+  done
+}
+
 for t in "$@"; do
   case $t in
-    all) for x in kernels bp_round1 bp_single zo_round1 zo_single qzo_single bp_infer zo_infer; do $x; done ;;
+    all) for x in kernels kernels_b1to4 bp_round1 bp_single zo_round1 zo_single qzo_single qzoeco_single_update qzoeco_round1 bp_infer zo_infer; do $x; done ;;
     *) $t ;;
   esac
 done

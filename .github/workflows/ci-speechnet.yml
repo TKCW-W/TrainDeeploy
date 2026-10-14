@@ -4,6 +4,7 @@
 
 # RW 2026-10-13: the only CI that runs automatically on this branch -- SpeechNet (SilentWear) fine-tuning:
 #   GAP9:     ZO / QZO / QZO+ECO steps with an exact check of the trained weights, BP single step (L3)
+#             + (QW 2026-10-14) the fused full-network QZO+ECO step on GAP9 + NE16 (weights == unfused run)
 #   Siracusa: ZO / QZO single step (Qiwen's gate)
 # Every other workflow is manual (workflow_dispatch) only.
 ---

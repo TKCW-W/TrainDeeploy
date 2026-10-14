@@ -18,6 +18,7 @@ from test_gap9_config import TRAINING_TESTS as GAP9_TRAINING_TESTS
 from test_gap9_tiled_config import DEFAULT_CORES as GAP9_TILED_DEFAULT_CORES
 from test_gap9_tiled_config import SPEECHNET_BP_SINGLE_STEP as GAP9_SPEECHNET_BP  # RW
 from test_gap9_tiled_config import SPEECHNET_MEZO_TESTS as GAP9_SPEECHNET_MEZO_TESTS  # RW
+from test_gap9_tiled_config import SPEECHNET_FUSED_TESTS as GAP9_SPEECHNET_FUSED_TESTS  # -- QW
 from test_gap9_tiled_config import L2_DOUBLEBUFFER_KERNELS as GAP9_L2_DOUBLEBUFFER_KERNELS
 from test_gap9_tiled_config import L2_DOUBLEBUFFER_MODELS as GAP9_L2_DOUBLEBUFFER_MODELS
 from test_gap9_tiled_config import L2_SINGLEBUFFER_KERNELS as GAP9_L2_SINGLEBUFFER_KERNELS
@@ -68,6 +69,8 @@ from test_siracusa_tiled_config import \
 from test_siracusa_tiled_config import TRAINING_MODEL_OVERRIDES as SIRACUSA_TRAINING_MODEL_OVERRIDES
 from test_siracusa_tiled_config import QZO_BLOCK0_GEN_ARGS as SIRACUSA_QZO_BLOCK0_GEN_ARGS  # -- QW
 from test_siracusa_tiled_config import QZO_BLOCK0_KERNEL_TESTS as SIRACUSA_QZO_BLOCK0_KERNEL_TESTS  # -- QW
+from test_siracusa_tiled_config import QZO_BLOCKS_KERNEL_TESTS as SIRACUSA_QZO_BLOCKS_KERNEL_TESTS  # -- QW
+from test_siracusa_tiled_config import qzo_block_gen_args as siracusa_qzo_block_gen_args  # -- QW
 from test_siracusa_tiled_config import ZO_SINGLE_STEP_TESTS as SIRACUSA_ZO_SINGLE_STEP_TESTS  # -- QW
 from test_snitch_config import DEFAULT_NUM_CORES as SNITCH_DEFAULT_NUM_CORES
 from test_snitch_config import KERNEL_TESTS as SNITCH_KERNEL_TESTS
@@ -584,6 +587,40 @@ def test_siracusa_tiled_qzo_block0_kernels(test_name, deeploy_test_dir, toolchai
                         skipsim,
                         report_metric = {"kernel": "fused" if "fused_b0" in test_name and "unfused" not in test_name else "unfused"},
                         metric_section = "SpeechNet block-0 QZO conv cycles (Siracusa)")
+
+
+#    QW 2026-10-14: blocks 1-4 QZO conv kernels (exp7): unfused = one pass through pulp-nn, fused = both passes in the
+#    two-input RequantizedDualConv; exact int8 compare of the output.
+@pytest.mark.siracusa_tiled
+@pytest.mark.qzo_blocks
+@pytest.mark.parametrize("test_name",
+                         list(SIRACUSA_QZO_BLOCKS_KERNEL_TESTS),
+                         ids = list(SIRACUSA_QZO_BLOCKS_KERNEL_TESTS))
+def test_siracusa_tiled_qzo_blocks_kernels(test_name, deeploy_test_dir, toolchain, toolchain_dir, cmake_args, skipgen,
+                                           skipsim) -> None:  # -- QW
+    block, kind, test_dir = SIRACUSA_QZO_BLOCKS_KERNEL_TESTS[test_name]
+    config = create_test_config(
+        test_name = test_name,
+        platform = "Siracusa",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = cmake_args,
+        tiling = True,
+        cores = SIRACUSA_DEFAULT_CORES,
+        l1 = 128000,
+        l2 = 1500000,
+        default_mem_level = "L2",
+        gen_args = siracusa_qzo_block_gen_args(block, kind == "fused"),
+        test_dir = test_dir,
+    )
+    run_and_assert_test(test_name,
+                        config,
+                        skipgen,
+                        skipsim,
+                        report_metric = {"block": block, "kernel": kind},
+                        metric_section = "SpeechNet blocks 1-4 QZO conv cycles (Siracusa)")
 
 
 @pytest.mark.siracusa_tiled
@@ -1828,3 +1865,43 @@ def test_gap9_tiled_speechnet_bp_single_step(deeploy_test_dir, toolchain, toolch
         test_dir = p["test_dir"],
     )
     run_and_assert_test("SpeechNet_BP_single_step", config, skipgen, skipsim)
+
+
+# QW 2026-10-14: the fused full-network QZO+ECO step on GAP9 + NE16 (see SPEECHNET_FUSED_TESTS in
+# test_gap9_tiled_config.py): the training graph is rewritten into the dual-pass graph (--zo-fused-dual, blocks 0-2
+# in NE16 form) and the harness runs it once per window (ZO_FUSED_DUAL); the weight hash must equal the unfused run's.
+@pytest.mark.gap9_tiled
+@pytest.mark.speechnet_gap9
+@pytest.mark.parametrize("test_name", list(GAP9_SPEECHNET_FUSED_TESTS), ids = list(GAP9_SPEECHNET_FUSED_TESTS))
+def test_gap9_tiled_speechnet_fused(test_name, deeploy_test_dir, toolchain, toolchain_dir, cmake_args, skipgen, skipsim,
+                                    monkeypatch) -> None:  # -- QW
+    p = GAP9_SPEECHNET_FUSED_TESTS[test_name]
+    # what deeployMezoRunner.py sets for -D BN_FROZEN_STATS=ON (frozen-stat BN channels-last); scoped to this test
+    monkeypatch.setenv("DEEPLOY_BN_FROZEN_NHWC", "1")
+    config = create_test_config(
+        test_name = test_name,
+        platform = "GAP9_w_NE16",
+        simulator = "gvsoc",
+        deeploy_test_dir = deeploy_test_dir,
+        toolchain = toolchain,
+        toolchain_dir = toolchain_dir,
+        cmake_args = list(cmake_args) + [f"NUM_CORES={GAP9_TILED_DEFAULT_CORES}", "BN_FROZEN_STATS=ON"] + p["defines"],
+        tiling = True,
+        cores = GAP9_TILED_DEFAULT_CORES,
+        l1 = p["l1"],
+        l2 = p["l2"],
+        default_mem_level = "L2",
+        gen_args = ["--zo-fused-dual", f"--zo-fused-dual-ne16={p['ne16_convs']}"],
+        test_dir = p["train_dir"],
+    )
+    config.mezo = True
+    config.n_train_steps = p["n_steps"]
+    config.n_accum_steps = p["n_accum"]
+    config.training_num_data_inputs = 2
+    config.optimizer_dir = os.path.abspath(os.path.join(deeploy_test_dir, p["update_dir"]))
+    config.zo_eps = 0.01
+    config.zo_lr = p["lr"]
+    config.zo_q = 1
+    config.zo_seed = 42
+    run_and_assert_test(test_name, config, skipgen, skipsim, report_metric = {"lr": p["lr"]},
+                        metric_section = "SpeechNet fused MeZO cycles (GAP9 + NE16)")
