@@ -60,6 +60,12 @@ set(_KERNEL_O3_FILES
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/DualConv.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/FlatConv.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Im2ColU8.c
+  # QW (dual_pass_fusion exp7): the blocks 1-4 kernels and exp6's NE16 prep, at -O3 like DualConv.c / Im2ColU8.c
+  #    (under the SDK's -Os the fused cluster kernel ran 914 k vs 451 k on Siracusa). -- QW
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/DualConv2In.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Conv4x2.c
+  ${CMAKE_CURRENT_LIST_DIR}/src/NE16DualPrep.c
+  ${CMAKE_CURRENT_LIST_DIR}/src/NE16DualConv2in.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/third_party/pulp-trainlib/lib/sources/pulp_matmul_fp32.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/third_party/pulp-trainlib/lib/sources/pulp_conv2d_fp32.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/third_party/pulp-trainlib/lib/sources/pulp_im2col_fp32.c

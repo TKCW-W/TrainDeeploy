@@ -31,8 +31,14 @@ NE161xKConv2DMapper = NodeMapper(NE161xKConv2DParser(), NE161xKConv2DTilingReady
 NE163x3ChunkConv2DMapper = NodeMapper(NE163x3ChunkConv2DParser(),  # -- QW (exp16b)
                                       NE163x3ChunkConv2DTilingReadyBindings)  # -- QW
 
+# -- QW (dual_pass_fusion exp7 step 7): both ZO passes of a 1xK / Kx1 conv in one NE16 node (pipelined). -- QW
+from Deeploy.Targets.NE16.DualConv2in import NE16DualConv2inLayer, NE16DualConv2inParser  # -- QW
+from Deeploy.Targets.NE16.Tiler import NE16DualConv2inTilingReadyBindings  # -- QW
+NE16DualConv2inMapper = NodeMapper(NE16DualConv2inParser(), NE16DualConv2inTilingReadyBindings)  # -- QW
+
 NE16Mapping = {
     'RequantizedConv': PULPRQSConvLayer([NE16RqntPWConv2DMapper, NE16RqntDWConv2DMapper, NE16RqntDenseConv2DMapper]),
+    'NE16DualConv2in': NE16DualConv2inLayer([NE16DualConv2inMapper]),  # -- QW exp7
     'Conv': ConvLayer([NE163x3ChunkConv2DMapper, NE161xKConv2DMapper,  # -- QW
                        NE16PWConv2DMapper, NE16DWConv2DMapper,
                        NE16DenseConv2DMapper]),
@@ -131,6 +137,8 @@ class NE16Engine(DeploymentEngine):
         return ne16_1xkAdmissible(node)
 
     def canExecute(self, node: gs.Node) -> bool:
+        if node.op == "NE16DualConv2in":  # -- QW exp7: dispatches NE16 jobs itself
+            return True
         if self.enable1xK and self.is1xKConv(node):  # -- QW
             return True
         if self.enable3x3:

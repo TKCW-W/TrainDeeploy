@@ -183,6 +183,10 @@ from Deeploy.Targets.PULPOpen.Parsers import PULPDualConv2DParser as _PULPDualCo
 from Deeploy.Targets.PULPOpen.Layers import PULPDualConvLayer as _PULPDualConvLayer  # -- QW
 from Deeploy.Targets.PULPOpen.Tiler import PULPDualConv2DTilingReadyBindings as _PULPDualConv2DTRB  # -- QW
 GAP9_DualConv2DMapper = NodeMapper(_PULPDualConv2DParser(), _PULPDualConv2DTRB)  # -- QW
+# -- QW (dual_pass_fusion exp7 step 7): the 7-input RequantizedDualConv (blocks 1-4) on the GAP9 cluster (baseline C_cl).
+from Deeploy.Targets.PULPOpen.Parsers import PULPDualConv2D2InParser as _PULPDualConv2D2InParser  # -- QW
+from Deeploy.Targets.PULPOpen.Tiler import PULPDualConv2D2InTilingReadyBindings as _PULPDualConv2D2InTRB  # -- QW
+GAP9_DualConv2D2InMapper = NodeMapper(_PULPDualConv2D2InParser(), _PULPDualConv2D2InTRB)  # -- QW
 # -- QW (dual_pass_fusion exp6, task 2): fused-pass preparation for NE16 (cluster-side), see NE16/DualPrep.py
 from Deeploy.Targets.NE16.DualPrep import NE16DualBiasLayer, NE16DualBiasParser, NE16DualPerturbEncodeLayer, \
     NE16DualPerturbEncodeParser  # -- QW
@@ -315,7 +319,8 @@ GAP9Mapping = {
     'NE16Im2ColU8':
         NE16Im2ColU8Layer([GAP9_NE16Im2ColU8Mapper]),  # -- QW (exp6: column buffer for the NE16 im2col route)
     'RequantizedDualConv':
-        _PULPDualConvLayer([GAP9_DualConv2DMapper]),  # -- QW (exp6: exp5's fused cluster kernel, baseline C_cl)
+        # _PULPDualConvLayer([GAP9_DualConv2DMapper]),  # -- QW (exp6: exp5's fused cluster kernel, baseline C_cl)
+        _PULPDualConvLayer([GAP9_DualConv2DMapper, GAP9_DualConv2D2InMapper]),  # -- QW exp6 + exp7 (7-input, blocks 1-4)
     'NE16DualPerturbEncode':
         NE16DualPerturbEncodeLayer([GAP9_NE16DualPerturbEncodeMapper]),  # -- QW (exp6 task 2)
     'NE16DualBias':

@@ -63,7 +63,10 @@ class NE16DualPerturbEncodeParser(NodeParser):
         r = self.operatorRepresentation
         r['seed_w'], r['idx_w'] = int(node.attrs['seed_w']), int(node.attrs['idx_w'])
         r['log2D_w'] = _log2(int(node.attrs['div_w']))
-        return True
+        # QW exp7: 0 = stacked [W+; W-] (block 0), 1 = W+ only, 2 = W- only (blocks 1-4: one NE16 job per pass)
+        r['sign_sel'] = int(node.attrs.get('ne16_sign_sel', 0))
+        r['hwc'] = int(node.attrs.get('ne16_hwc', 0))  # -- QW exp7: rows in (ky, kx, ci) order (pipelined NE16 conv)
+        return r['sign_sel'] in (0, 1, 2)
 
     def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node,
                       channels_first: bool = True) -> Tuple[NetworkContext, bool]:
@@ -75,11 +78,13 @@ class NE16DualPerturbEncodeParser(NodeParser):
             return ctxt, False
         cout, K = wShape[0], int(np.prod(wShape[1:]))
         cinMajor = (K + NE16_CIN_SUBTILE - 1) // NE16_CIN_SUBTILE
-        if tuple(int(s) for s in out.shape) != (2 * cout, cinMajor, 16) or int(np.prod(wmul.shape)) != cout:
+        rows = 2 * cout if self.operatorRepresentation['sign_sel'] == 0 else cout  # -- QW exp7
+        if tuple(int(s) for s in out.shape) != (rows, cinMajor, 16) or int(np.prod(wmul.shape)) != cout:
             return ctxt, False
         r = self.operatorRepresentation
         r['weight'], r['wmul'], r['data_out'] = w.name, wmul.name, out.name
         r['ch_out'], r['K'] = cout, K
+        r['w_ci'], r['w_kh'], r['w_kw'] = wShape[1], wShape[2], wShape[3]  # -- QW exp7 (CHW weight)
         r['size'] = cout * K
         r['nodeName'] = node.name  # the tiler sizes the scratch (computeTransientBuffersSize) before binding fills this in
         return ctxt, True
@@ -143,7 +148,7 @@ uint32_t ${nodeName}_tile_xor = (${tile_seed_offset} * 0x9E3779B1u);
 float32_t ${nodeName}_eps_scale = perturb_eps_use_override ? (perturb_eps_override / perturb_eps_baked) : 1.0f;
 PULP_NE16DualPerturbEncode((const int8_t *) ${weight}, (const int32_t *) ${wmul}, (uint8_t *) ${data_out},
     (int8_t *) ${ctxtBuffer}, ${nodeName}_seed_w, ${nodeName}_tile_xor, ${log2D_w}, ${nodeName}_eps_scale,
-    NUM_CORES, ${ch_out}, ${K});
+    NUM_CORES, ${ch_out}, ${K}, ${sign_sel}, ${hwc}, ${w_ci}, ${w_kh}, ${w_kw});
 }
 """)
 
@@ -192,7 +197,8 @@ class NE16DualBiasParser(NodeParser):
         r['seed_b'], r['idx_b'] = int(node.attrs['seed_b']), int(node.attrs['idx_b'])
         r['log2D_w'], r['log2D_b'] = _log2(int(node.attrs['div_w'])), _log2(int(node.attrs['div_b']))
         r['input_offset'] = int(node.attrs.get('ne16_input_offset', 128))
-        return True
+        r['sign_sel'] = int(node.attrs.get('ne16_sign_sel', 0))  # -- QW exp7: 0 stacked, 1 add+', 2 add-'
+        return r['sign_sel'] in (0, 1, 2)
 
     def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node,
                       channels_first: bool = True) -> Tuple[NetworkContext, bool]:
@@ -203,7 +209,8 @@ class NE16DualBiasParser(NodeParser):
         if len(wShape) != 4:
             return ctxt, False
         cout, K = wShape[0], int(np.prod(wShape[1:]))
-        if tuple(int(s) for s in out.shape) != (2 * cout,) or \
+        rows = 2 * cout if self.operatorRepresentation['sign_sel'] == 0 else cout  # -- QW exp7
+        if tuple(int(s) for s in out.shape) != (rows,) or \
            any(int(np.prod(b.shape)) != cout for b in bufs[1:]):
             return ctxt, False
         r = self.operatorRepresentation
@@ -211,7 +218,7 @@ class NE16DualBiasParser(NodeParser):
             r[k] = b.name
         r['data_out'] = out.name
         r['ch_out'], r['K'] = cout, K
-        r['size'] = 2 * cout
+        r['size'] = rows
         r['nodeName'] = node.name
         return ctxt, True
 
@@ -226,7 +233,7 @@ float32_t ${nodeName}_eps_scale = perturb_eps_use_override ? (perturb_eps_overri
 PULP_NE16DualBias((const int8_t *) ${weight}, (const int32_t *) ${wmul}, (const int32_t *) ${add},
     (const int32_t *) ${bmul}, (const int32_t *) ${mul}, (int32_t *) ${data_out}, (int8_t *) ${ctxtBuffer},
     ${nodeName}_seed_w, ${nodeName}_seed_b, ${nodeName}_tile_xor, ${log2D_w}, ${log2D_b}, ${nodeName}_eps_scale,
-    NUM_CORES, ${ch_out}, ${K}, ${input_offset});
+    NUM_CORES, ${ch_out}, ${K}, ${input_offset}, ${sign_sel});
 }
 """)
 

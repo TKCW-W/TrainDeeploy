@@ -65,3 +65,8 @@ NE16DualPerturbEncodeTilingReadyBindings = TilingReadyNodeBindings(
     nodeBindings = _NE16DPEB, tileConstraint = NE16DualPerturbEncodeTileConstraint())  # -- QW
 NE16DualBiasTilingReadyBindings = TilingReadyNodeBindings(
     nodeBindings = _NE16DBB, tileConstraint = NE16DualBiasTileConstraint())  # -- QW
+# -- QW (dual_pass_fusion exp7 step 7): both passes on NE16 in one node, SDK-style pipeline. -- QW
+from Deeploy.Targets.NE16.DualConv2in import NE16DualConv2inBindings as _NE16DC2B  # -- QW
+from Deeploy.Targets.NE16.TileConstraints.NE16DualConv2inConstraint import NE16DualConv2inTileConstraint  # -- QW
+NE16DualConv2inTilingReadyBindings = TilingReadyNodeBindings(
+    nodeBindings = _NE16DC2B, tileConstraint = NE16DualConv2inTileConstraint())  # -- QW

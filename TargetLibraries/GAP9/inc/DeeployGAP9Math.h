@@ -49,11 +49,24 @@
  * Implementation and derivation: TargetLibraries/GAP9/src/NE16DualPrep.c */
 void PULP_NE16DualPerturbEncode(const int8_t *pW, const int32_t *pWMul, uint8_t *pWEnc, int8_t *pScratch,
                                 uint32_t seed_w_base, uint32_t tile_seed_xor, uint32_t log2D_w,
-                                float eps_scale, uint32_t num_cores, uint32_t ch_out, uint32_t K);
+                                float eps_scale, uint32_t num_cores, uint32_t ch_out, uint32_t K,
+                                uint32_t sign_sel, /* exp7: 0 stacked [W+;W-], 1 W+, 2 W- */
+                                uint32_t hwc, uint32_t ch_in, uint32_t kh, uint32_t kw); /* exp7: rows in (ky,kx,ci) order */
 void PULP_NE16DualBias(const int8_t *pW, const int32_t *pWMul, const int32_t *pAdd, const int32_t *pBMul,
                        const int32_t *pMul, int32_t *pAddOut, int8_t *pScratch, uint32_t seed_w_base,
                        uint32_t seed_b_base, uint32_t tile_seed_xor, uint32_t log2D_w, uint32_t log2D_b,
-                       float eps_scale, uint32_t num_cores, uint32_t ch_out, uint32_t K, int32_t input_offset);
+                       float eps_scale, uint32_t num_cores, uint32_t ch_out, uint32_t K, int32_t input_offset,
+                       uint32_t sign_sel); /* exp7: 0 stacked, 1 +, 2 - */
+
+/* -- QW (dual_pass_fusion exp7 step 7): both ZO passes of a 1xK / Kx1 conv on NE16 in ONE node, SDK-style pipeline --
+ * word-wise HWC column per output row, double-buffered against NE16 via its 2-deep job queue. Runs on the cluster
+ * master core (NE16 engine), forks the workers for the columns. TargetLibraries/GAP9/src/NE16DualConv2in.c */
+void PULP_NE16DualConv2in(const int8_t *pInP, const int8_t *pInM, const uint8_t *pWEnc2, const int32_t *pMul,
+                          const int32_t *pAdd2, int8_t *pOut, uint8_t *pColBuf, uint32_t num_cores, uint32_t conf0,
+                          uint16_t dim_in_y, uint16_t dim_in_x, uint16_t ch_in, uint16_t dim_out_y, uint16_t dim_out_x,
+                          uint16_t ch_out, uint16_t dim_kernel_y, uint16_t dim_kernel_x, uint16_t pad_top,
+                          uint16_t pad_bottom, uint16_t pad_left, uint16_t pad_right, uint16_t stride_y,
+                          uint16_t stride_x, int32_t weight_offset, uint32_t pipelined, uint32_t job_w);
 
 /* -- QW (exp16c / blocker 1b): device-side NE16 bit-serial weight encoder. Declared here (rather
  * than in a pulp-nnx header) so TargetLibraries/third_party/pulp-nnx stays pristine -- this is a
