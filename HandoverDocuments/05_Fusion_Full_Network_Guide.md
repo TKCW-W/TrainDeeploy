@@ -1026,15 +1026,18 @@ Paths are relative to `TrainDeeploy/DeeployTest/experiments/dual_pass_fusion/` u
 | kernels | `TrainDeeploy/TargetLibraries/PULPOpen/src/{DualConv2In.c, Conv4x2.c}`, `TrainDeeploy/TargetLibraries/PULPOpen/inc/kernel/{DualPerturb.h, DualConv2In.h, Conv4x2.h}`; `TrainDeeploy/TargetLibraries/GAP9/src/{NE16DualConv2in.c, NE16DualPrep.c}` |
 | harness, runner, build | `TrainDeeploy/DeeployTest/Platforms/{Siracusa,GAP9}/src/deeploymezotest.c`, `TrainDeeploy/DeeployTest/Platforms/{Siracusa,GAP9}/CMakeLists.txt`, `TrainDeeploy/DeeployTest/testUtils/deeployMezoRunner.py`, `TrainDeeploy/Deeploy/DeeployTypes.py` (`inputs_elems`), `TrainDeeploy/TargetLibraries/GAP9/CMakeLists.txt` (`-O3` list) |
 
-**Commits** (branch `feat/fusion_on_rw`, based on Run's `gap9-on-devel` at `a16a16d`):
+**Commits** (branch `feat/fusion_full_network` on TKCW-W/TrainDeeploy, based on Run's `gap9-on-devel` at `a16a16d`):
 
-| commits | content |
+| commit | content |
 |---|---|
-| `edd3486`, `8b049ba`, `a06f63b` | exp7: unfused block-1 baseline; Conv4x2 control kernel; fused two-input kernel |
-| `6023cc2`, `583f382`, `318d2ca`, `2496e60`, `1bc4e1a` | exp7: blocks 2–4; kernel optimisation steps 5a–5d; block-0 regression |
-| `21a8af2`, `dd0066e`, `2ea04b0`, `0ff7ac4` | exp7: GAP9 baselines; block-0 NE16 regression; pipelined NE16 node; blocks 2–4 on NE16 and the engine decision |
-| `ea83a22`, `ed0c396`, `35e4f65`, `b34722a` | exp8: baseline; pass + new nodes + harness (Siracusa); DualHalf + NE16 stacked form; GAP9 bit-exact |
-| `c35d90d`, `947c4de`, `ca368c9`, `beb9264` | exp8: de-interleave + per-block analysis; block-0 explanation; n_accum 4 round prediction; ECO |
+| `5d298d5` | exp7: fused two-input QZO conv for blocks 1–4 on the cluster (control kernel, CHW-order perturbation, optimisations; Siracusa 2.44×) |
+| `0b21c7c` | exp7: GAP9 + NE16 for blocks 1–4, pipelined `NE16DualConv2in`, engine choice per block |
+| `55e081f` | exp8: whole-network dual-pass graph (`ZODualPassFusion`, new nodes, harness), bit-exact on all targets, de-interleave, analyses |
+| `596268e` | exp8: n_accum 4 step, 120-epoch round prediction, QZO+ECO on the fused graph |
+| `7ec96b7` | this guide, SpeechNet_Test fixtures, NE16 L3 test-data fix, CI gates |
+| `82dca6e` | clearer variable names in the kernels (machine code unchanged) |
+
+Each commit message lists the details (files, decisions, bugs, verified numbers).
 
 ---
 
