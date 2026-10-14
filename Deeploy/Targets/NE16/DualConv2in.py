@@ -32,11 +32,14 @@ _COL_BUDGET = 11264  # bytes per column buffer (two are allocated); 12288 pushed
 
 
 class NE16DualConv2inParser(NodeParser):
+    _n_inputs = 5  # QW exp8: 4 for the stacked form
 
     def parseNode(self, node: gs.Node) -> bool:
+        if int(node.attrs.get('stacked_input', 0)) != (self._n_inputs == 4):
+            return False
         if not all([
                 node.op == "NE16DualConv2in",
-                len(node.inputs) == 5,
+                len(node.inputs) == self._n_inputs,
                 len(node.outputs) == 1,
                 all(a in node.attrs for a in ('kernel_shape', 'pads', 'strides', 'shift')),
         ]):
@@ -89,6 +92,43 @@ class NE16DualConv2inParser(NodeParser):
         return ctxt, True
 
 
+class NE16DualConv2inStackedParser(NE16DualConv2inParser):
+    """QW (exp8): stacked form -- FOUR inputs [x, wenc2, mul, add2], attr stacked_input = 1, x = [1, H, W, 2*Ci] HWC with
+    x+ then x- per pixel. ch_im_in is the per-pass Ci (the kernel's in_stride is 2*Ci)."""
+
+    _n_inputs = 4
+
+    def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        names = ['data_in', 'weight', 'mul', 'add']
+        bufs = [ctxt.lookup(i.name) for i in node.inputs]
+        out = ctxt.lookup(node.outputs[0].name)
+        xs, ws = (tuple(int(s) for s in b.shape) for b in bufs[:2])
+        ys = tuple(int(s) for s in out.shape)
+        if len(xs) != 4 or len(ys) != 4 or xs[0] != 1 or ys[0] != 1 or len(ws) != 3 or xs[3] % 2:
+            return ctxt, False
+        _, H, W, C2in = xs
+        _, Ho, Wo, C2 = ys
+        Ci = C2in // 2
+        r = self.operatorRepresentation
+        K = Ci * r['dim_kernel_x'] * r['dim_kernel_y']
+        if C2 % 2 or ws[0] != C2 or ws[1] != (K + 15) // 16 or ws[2] != 16 or Ci % 4:
+            return ctxt, False
+        for k, b in zip(names, bufs):
+            r[k] = b.name
+        r['data_out'] = out.name
+        r['batch'] = 1
+        r['dim_im_in_x'], r['dim_im_in_y'], r['ch_im_in'] = H, W, Ci
+        r['dim_im_out_x'], r['dim_im_out_y'], r['ch_im_out'] = Ho, Wo, C2
+        r['ch_out_pass'], r['col_len'], r['wo_full'] = C2 // 2, K, Wo
+        r['job_w'] = max(1, min(_COL_BUDGET // K, Ho * Wo) // 3)
+        r['nodeName'] = node.name
+        conf0 = NE162DPWConvTemplate.getConf0(output_bits = 8, weight_bits = 8, input_signed = False, use_wmem = False)
+        conf0 |= getNormQuantConf0(False, r['log2D'], 32, True, False)
+        r['conf0'] = conf0
+        return ctxt, True
+
+
 class _NE16DualConv2inTemplate(NodeTemplate):
     """Hoists the two column buffers (2 x 3 x job_w x K bytes)."""
 
@@ -114,7 +154,17 @@ PULP_NE16DualConv2in((const int8_t *) ${data_in}, (const int8_t *) ${data_in_m},
     (const int32_t *) ${mul}, (const int32_t *) ${add}, (int8_t *) ${data_out}, (uint8_t *) ${ctxtBuffer}, NUM_CORES,
     ${conf0}u, ${dim_im_in_x}, ${dim_im_in_y}, ${ch_im_in}, ${dim_im_out_x}, ${dim_im_out_y}, ${ch_out_pass},
     ${dim_kernel_x}, ${dim_kernel_y}, ${padding_y_top}, ${padding_y_bottom}, ${padding_x_left}, ${padding_x_right},
-    ${stride_x}, ${stride_y}, ${weight_offset}, ${pipelined}, ${job_w});
+    ${stride_x}, ${stride_y}, ${weight_offset}, ${pipelined}, ${job_w}, ${ch_im_in});
+""")
+
+# QW (exp8): the stacked-input form (dual-pass graph): ONE input [1, H, W, 2*Ci] = [x+ | x-] per pixel.
+stackedTemplate = _NE16DualConv2inTemplate("""
+// NE16DualConv2in, stacked [x+ | x-] input (Name: ${nodeName}, Op: ${nodeOp}), pipeline=${pipelined} -- QW exp8
+PULP_NE16DualConv2in((const int8_t *) ${data_in}, (const int8_t *) ${data_in} + ${ch_im_in}, (const uint8_t *) ${weight},
+    (const int32_t *) ${mul}, (const int32_t *) ${add}, (int8_t *) ${data_out}, (uint8_t *) ${ctxtBuffer}, NUM_CORES,
+    ${conf0}u, ${dim_im_in_x}, ${dim_im_in_y}, ${ch_im_in}, ${dim_im_out_x}, ${dim_im_out_y}, ${ch_out_pass},
+    ${dim_kernel_x}, ${dim_kernel_y}, ${padding_y_top}, ${padding_y_bottom}, ${padding_x_left}, ${padding_x_right},
+    ${stride_x}, ${stride_y}, ${weight_offset}, ${pipelined}, ${job_w}, 2 * ${ch_im_in});
 """)
 
 
@@ -126,6 +176,12 @@ class NE16DualConv2inChecker(SignPropTypeChecker):
     def _inferSignedness(self, inputs, operatorRepresentation):
         return [True]
 
+
+NE16DualConv2inStackedBindings = [  # -- QW exp8
+    NodeBinding(
+        NE16DualConv2inChecker([PointerClass(int8_t), PointerClass(uint8_t), PointerClass(int32_t), PointerClass(int32_t)],
+                               [PointerClass(int8_t)]), stackedTemplate, GAP9ClusterTransformer)
+]
 
 NE16DualConv2inBindings = [
     NodeBinding(

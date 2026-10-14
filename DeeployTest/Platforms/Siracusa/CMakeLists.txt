@@ -82,6 +82,9 @@ if(MEZO_TRAINING)  # QW: MeZO (ZO) compile-time defines — parallel block along
     if(BN_FROZEN_STATS)  # QW: passthrough frozen-stat BN training -- QW
         target_compile_definitions(${ProjectId} PRIVATE BN_FROZEN_STATS)  # QW
     endif()  # QW
+    if(ZO_FUSED_DUAL)  # QW exp8: dual-pass training graph, one execution per window (L+ / L- = outputs 0 / 1) -- QW
+        target_compile_definitions(${ProjectId} PRIVATE ZO_FUSED_DUAL)  # QW
+    endif()  # QW
 elseif(TRAINING)
     target_compile_definitions(${ProjectId} PRIVATE
         N_TRAIN_STEPS=${N_TRAIN_STEPS}

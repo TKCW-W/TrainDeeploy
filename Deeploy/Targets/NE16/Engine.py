@@ -35,10 +35,13 @@ NE163x3ChunkConv2DMapper = NodeMapper(NE163x3ChunkConv2DParser(),  # -- QW (exp1
 from Deeploy.Targets.NE16.DualConv2in import NE16DualConv2inLayer, NE16DualConv2inParser  # -- QW
 from Deeploy.Targets.NE16.Tiler import NE16DualConv2inTilingReadyBindings  # -- QW
 NE16DualConv2inMapper = NodeMapper(NE16DualConv2inParser(), NE16DualConv2inTilingReadyBindings)  # -- QW
+from Deeploy.Targets.NE16.DualConv2in import NE16DualConv2inStackedParser  # -- QW exp8
+from Deeploy.Targets.NE16.Tiler import NE16DualConv2inStackedTilingReadyBindings  # -- QW exp8
+NE16DualConv2inStackedMapper = NodeMapper(NE16DualConv2inStackedParser(), NE16DualConv2inStackedTilingReadyBindings)  # -- QW exp8
 
 NE16Mapping = {
     'RequantizedConv': PULPRQSConvLayer([NE16RqntPWConv2DMapper, NE16RqntDWConv2DMapper, NE16RqntDenseConv2DMapper]),
-    'NE16DualConv2in': NE16DualConv2inLayer([NE16DualConv2inMapper]),  # -- QW exp7
+    'NE16DualConv2in': NE16DualConv2inLayer([NE16DualConv2inMapper, NE16DualConv2inStackedMapper]),  # -- QW exp7 + exp8
     'Conv': ConvLayer([NE163x3ChunkConv2DMapper, NE161xKConv2DMapper,  # -- QW
                        NE16PWConv2DMapper, NE16DWConv2DMapper,
                        NE16DenseConv2DMapper]),

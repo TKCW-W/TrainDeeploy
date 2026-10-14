@@ -5,9 +5,10 @@
 import math
 from typing import Tuple
 
+import numpy as np
 import onnx_graphsurgeon as gs
 
-from Deeploy.DeeployTypes import NetworkContext
+from Deeploy.DeeployTypes import NetworkContext, NodeParser
 from Deeploy.Targets.Generic.Parsers import Conv2DGradWParser, Conv2DGradXParser, Conv2DGradXWBParser, \
     Conv2DGradXWParser, Conv2DParser, GEMMParser, ReduceMeanParser, RQSConv1DParser, RQSConv2DParser, \
     RQSParserInterface
@@ -721,6 +722,7 @@ class PULPDualConv2DParser(RQSConv2DParser):  # -- QW (dual_pass_fusion exp5)
     """
 
     _n_inputs = 6  # -- QW exp7: data_in, weight, mul, add, wmul, bmul
+    _weight_chw = 0  # -- QW exp8
 
     def __init__(self, noBiasHoisting = True):
         super().__init__(noBiasHoisting)
@@ -736,6 +738,8 @@ class PULPDualConv2DParser(RQSConv2DParser):  # -- QW (dual_pass_fusion exp5)
             pads[1] == pads[3],
             # len(node.inputs) == 6,  # -- QW exp5 original
             len(node.inputs) == self._n_inputs,  # -- QW exp7: 6 (block 0) or 7 (PULPDualConv2D2InParser)
+            # -- QW exp8: a raw-CHW-weight node is never block 0's (6-input stacked-input nodes of blocks 1-4 exist now)
+            int(node.attrs.get('weight_chw', 0)) == self._weight_chw,
             'shift' in node.attrs,
             all(a in node.attrs for a in ('seed_w', 'idx_w', 'div_w', 'seed_b', 'idx_b', 'div_b')),
         ])
@@ -771,6 +775,66 @@ class PULPDualConv2DParser(RQSConv2DParser):  # -- QW (dual_pass_fusion exp5)
         return ctxt, False
 
 
+class DualHalfParser(NodeParser):  # -- QW (dual_pass_fusion exp8)
+    """`DualHalf`: [rows, 2*C] -> [rows, C], half 0 or 1 (attr `half`)."""
+
+    def parseNode(self, node: gs.Node) -> bool:
+        return node.op == "DualHalf" and len(node.inputs) == 1 and len(node.outputs) == 1 and \
+            int(node.attrs.get('half', -1)) in (0, 1)
+
+    def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        data_in = ctxt.lookup(node.inputs[0].name)
+        data_out = ctxt.lookup(node.outputs[0].name)
+        si, so = tuple(int(s) for s in data_in.shape), tuple(int(s) for s in data_out.shape)
+        if len(si) != 2 or len(so) != 2 or si[0] != so[0] or si[1] != 2 * so[1]:
+            return ctxt, False
+        r = self.operatorRepresentation
+        r['data_in'], r['data_out'] = data_in.name, data_out.name
+        r['rows'], r['cols'], r['half'] = so[0], so[1], int(node.attrs['half'])
+        r['size'] = so[0] * so[1]
+        return ctxt, True
+
+
+class PerturbRademacherFixedParser(NodeParser):  # -- QW (dual_pass_fusion exp8)
+    """`PerturbRademacherFixed`: fp32 ZO perturbation with a codegen-time sign (attr `mode`: 0 stacked [+;-] -> output
+    2*size, 1 +, 2 -). Same seed / idx / eps attributes as PerturbRademacher. Emitted by the dual-pass graph pass."""
+
+    def parseNode(self, node: gs.Node) -> bool:
+        return all([
+            node.op == "PerturbRademacherFixed",
+            len(node.inputs) == 1,
+            len(node.outputs) == 1,
+            all(a in node.attrs for a in ('seed', 'eps', 'idx', 'mode')),
+            int(node.attrs.get('mode', -1)) in (0, 1, 2),
+        ])
+
+    def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        data_in = ctxt.lookup(node.inputs[0].name)
+        data_out = ctxt.lookup(node.outputs[0].name)
+        size = int(np.prod(data_in.shape))
+        mode = int(node.attrs['mode'])
+        r = self.operatorRepresentation
+        # pad_cols / col_offset: [rows, cols] weight written into [rows, pad_cols] at column col_offset, zeros elsewhere
+        r['pad_cols'] = int(node.attrs.get('pad_cols', 0))
+        r['col_offset'] = int(node.attrs.get('col_offset', 0))
+        r['rows'], r['cols'] = 0, 0  # set below when padded (the template references them either way)
+        if r['pad_cols']:
+            if mode == 0 or len(data_in.shape) != 2:
+                return ctxt, False
+            r['rows'], r['cols'] = int(data_in.shape[0]), int(data_in.shape[1])
+            if tuple(data_out.shape) != (r['rows'], r['pad_cols']) or r['col_offset'] + r['cols'] > r['pad_cols']:
+                return ctxt, False
+        elif int(np.prod(data_out.shape)) != (2 * size if mode == 0 else size):
+            return ctxt, False
+        r['data_in'], r['data_out'] = data_in.name, data_out.name
+        r['seed'], r['eps'], r['mode'] = node.attrs['seed'], node.attrs['eps'], mode
+        r['size'] = size
+        r['nodeIdx'] = node.attrs['idx']
+        return ctxt, True
+
+
 class PULPDualConv2D2InParser(PULPDualConv2DParser):  # -- QW (dual_pass_fusion exp7, step 3)
     """`RequantizedDualConv` with TWO input activations (SpeechNet blocks 1-4), contract in
     DeeployTest/experiments/dual_pass_fusion/exp7_remaining_blocks/Plan.md §4.1.
@@ -782,9 +846,15 @@ class PULPDualConv2D2InParser(PULPDualConv2DParser):  # -- QW (dual_pass_fusion 
     """
 
     _n_inputs = 7
+    _weight_chw = 1
+
+    # QW (dual_pass_fusion exp8): a second form for the dual-pass graph -- attr `stacked_input` = 1, SIX inputs
+    #     [x, weight, mul, add, wmul, bmul], x the channel-stacked [x+ | x-] tensor (2*Ci channels; device HWC pixel
+    #     = Ci bytes of x+ then Ci of x-). The kernel then reads x+ at x, x- at x + Ci, pixel stride 2*Ci.
+    _stacked = 0
 
     def parseNode(self, node: gs.Node) -> (bool):
-        if not int(node.attrs.get('weight_chw', 0)):
+        if not int(node.attrs.get('weight_chw', 0)) or int(node.attrs.get('stacked_input', 0)) != self._stacked:
             return False
         return super().parseNode(node)
 
@@ -792,6 +862,24 @@ class PULPDualConv2D2InParser(PULPDualConv2DParser):  # -- QW (dual_pass_fusion 
                       channels_first: bool = True) -> Tuple[NetworkContext, bool]:
         newCtxt, ret = super().parseNodeCtxt(ctxt, node, channels_first)
         if ret:
-            self.operatorRepresentation['data_in_m'] = ctxt.lookup(node.inputs[6].name).name
+            r = self.operatorRepresentation
+            r['stacked_input'] = self._stacked
+            if r['stacked_input']:
+                r['in_ch'] = r['ch_im_in'] // 2  # per pass
+                r['in_stride'] = r['ch_im_in']
+                if newCtxt.lookup(r['weight']).shape[1] != r['in_ch']:
+                    return ctxt, False
+            else:
+                r['data_in_m'] = ctxt.lookup(node.inputs[6].name).name
+                r['in_ch'] = r['ch_im_in']
+                r['in_stride'] = r['ch_im_in']
             return newCtxt, True
         return ctxt, False
+
+
+class PULPDualConv2DStackedParser(PULPDualConv2D2InParser):  # -- QW (dual_pass_fusion exp8)
+    """The stacked-input form of the blocks 1-4 node (dual-pass graph): SIX inputs [x, W, mul, add, wmul, bmul], attr
+    stacked_input = 1, x the channel-stacked [x+ | x-] tensor. A separate parser / template so no template references a
+    tensor the node does not have."""
+    _n_inputs = 6
+    _stacked = 1

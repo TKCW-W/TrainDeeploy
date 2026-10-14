@@ -158,6 +158,12 @@ SoftmaxCrossEntropyLossGradMapper = NodeMapper(SoftmaxCrossEntropyLossGradParser
 SGDMapper = NodeMapper(SGDParser(), PULPSGDTilingReadyBindings)
 InPlaceAccumulatorV2Mapper = NodeMapper(InPlaceAccumulatorV2Parser(), PULPInPlaceAccumulatorV2TilingReadyBindings)
 PerturbRademacherMapper = NodeMapper(PerturbRademacherParser(), PULPPerturbRademacherTilingReadyBindings)  # -- QW (FP32 ZO op)
+from Deeploy.Targets.PULPOpen.Parsers import PerturbRademacherFixedParser as _PRFixedParser  # -- QW exp8
+from Deeploy.Targets.PULPOpen.Tiler import PULPPerturbRademacherFixedTilingReadyBindings as _PRFixedTRB  # -- QW exp8
+PerturbRademacherFixedMapper = NodeMapper(_PRFixedParser(), _PRFixedTRB)  # -- QW exp8
+from Deeploy.Targets.PULPOpen.Parsers import DualHalfParser as _DualHalfParser  # -- QW exp8
+from Deeploy.Targets.PULPOpen.Tiler import PULPDualHalfTilingReadyBindings as _DualHalfTRB  # -- QW exp8
+DualHalfMapper = NodeMapper(_DualHalfParser(), _DualHalfTRB)  # -- QW exp8
 # -- QW: RQSPerturbRademacher mapper (quantized ZO), ported from shipped Deeploy
 from Deeploy.Targets.Generic.Parsers import RQSPerturbRademacherParser as _RQSPRParser  # -- QW
 from Deeploy.Targets.Generic.Layers import RQSPerturbRademacherLayer as _RQSPRLayer  # -- QW
@@ -172,6 +178,9 @@ DualConv2DMapper = NodeMapper(_PULPDualConv2DParser(), _PULPDualConv2DTRB)  # --
 from Deeploy.Targets.PULPOpen.Parsers import PULPDualConv2D2InParser as _PULPDualConv2D2InParser  # -- QW
 from Deeploy.Targets.PULPOpen.Tiler import PULPDualConv2D2InTilingReadyBindings as _PULPDualConv2D2InTRB  # -- QW
 DualConv2D2InMapper = NodeMapper(_PULPDualConv2D2InParser(), _PULPDualConv2D2InTRB)  # -- QW
+from Deeploy.Targets.PULPOpen.Parsers import PULPDualConv2DStackedParser as _PULPDualConv2DStackedParser  # -- QW exp8
+from Deeploy.Targets.PULPOpen.Tiler import PULPDualConv2DStackedTilingReadyBindings as _PULPDualConv2DStackedTRB  # -- QW exp8
+DualConv2DStackedMapper = NodeMapper(_PULPDualConv2DStackedParser(), _PULPDualConv2DStackedTRB)  # -- QW exp8
 from Deeploy.Targets.PULPOpen.Tiler import PULPQuantTilingReadyBindings, PULPDequantTilingReadyBindings  # -- QW
 QuantMapper = NodeMapper(QuantParser(), PULPQuantTilingReadyBindings)      # -- QW (tiling-ready for mixed quant graph)
 DequantMapper = NodeMapper(DequantParser(), PULPDequantTilingReadyBindings)  # -- QW
@@ -192,7 +201,7 @@ PULPMapping = {
     'ConvGradB': ConvGradBLayer([ConvGradBMapper]),
     'RequantizedConv': PULPRQSConvLayer([Conv2DMapper, DWConv2DMapper, Conv1DMapper, DWConv1DMapper]),
     # 'RequantizedDualConv': _PULPDualConvLayer([DualConv2DMapper]),  # -- QW (dual_pass_fusion exp5)
-    'RequantizedDualConv': _PULPDualConvLayer([DualConv2DMapper, DualConv2D2InMapper]),  # -- QW exp5 + exp7
+    'RequantizedDualConv': _PULPDualConvLayer([DualConv2DMapper, DualConv2D2InMapper, DualConv2DStackedMapper]),  # -- QW exp5 + exp7
     'RequantizedGemm': PULPRQSGEMMLayer([MatrixVecMapper, TallGEMMMapper, GEMMMapper]),
     'Gemm': PULPGEMMLayer([FloatGEMMMapper, GEMMDequantMapper]),
     'Gelu': GELULayer([GELUMapper]),
@@ -245,6 +254,8 @@ PULPMapping = {
     'SGD': SGDLayer([SGDMapper]),
     'InPlaceAccumulatorV2': InPlaceAccumulatorV2Layer([InPlaceAccumulatorV2Mapper]),
     'PerturbRademacher': PerturbRademacherLayer([PerturbRademacherMapper]),  # -- QW (FP32 ZO op)
+    'PerturbRademacherFixed': PerturbRademacherLayer([PerturbRademacherFixedMapper]),  # -- QW exp8 (dual-pass graph)
+    'DualHalf': PerturbRademacherLayer([DualHalfMapper]),  # -- QW exp8 (dual-pass tail; generic layer, size-based ops)
     'RQSPerturbRademacher': _RQSPRLayer([RQSPerturbRademacherMapper]),  # -- QW (quantized ZO)
 }
 

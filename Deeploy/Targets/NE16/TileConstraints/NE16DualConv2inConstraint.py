@@ -24,11 +24,16 @@ from Deeploy.TilingExtension.TilingCodegen import AbsoluteHyperRectangle, HyperR
 _INPUTS = ['data_in', 'data_in_m', 'weight', 'mul', 'add']
 
 
+def _inputs(rep: Dict) -> List[str]:
+    """QW exp8: the stacked-input form has no data_in_m."""
+    return [k for k in _INPUTS if k != 'data_in_m' or 'data_in_m' in rep]
+
+
 class NE16DualConv2inTileConstraint(TileConstraint):
 
     @staticmethod
     def addGeometricalConstraint(tilerModel: TilerModel, parseDict: Dict, ctxt: NetworkContext) -> TilerModel:
-        names = {k: parseDict[k] for k in _INPUTS}
+        names = {k: parseDict[k] for k in _inputs(parseDict)}
         outName = parseDict['data_out']
         strides, pads = parseDict['strides'], parseDict['pads']
         kh = parseDict['dim_kernel_x']
@@ -40,7 +45,7 @@ class NE16DualConv2inTileConstraint(TileConstraint):
         outB = tilerModel.getTensorDimVar(tensorName = outName, dimIdx = 0)
         outH = tilerModel.getTensorDimVar(tensorName = outName, dimIdx = 1)
         tilerModel.addConstraint(outB == inB)
-        for d in range(4):  # x- is tiled exactly like x+
+        for d in range(4 if 'data_in_m' in names else 0):  # x- is tiled exactly like x+
             tilerModel.addConstraint(
                 tilerModel.getTensorDimVar(tensorName = names['data_in_m'], dimIdx = d) ==
                 tilerModel.getTensorDimVar(tensorName = names['data_in'], dimIdx = d))
@@ -80,13 +85,13 @@ class NE16DualConv2inTileConstraint(TileConstraint):
             targetMemLevel: str, ctxt: NetworkContext,
             operatorRepresentation: OperatorRepresentation) -> Tuple[VariableReplacementScheme, TilingSchedule]:
         outputCubes = [cube.rectangle for cube in absoluteOutputCubes]
-        addrNames = _INPUTS + ['data_out']
+        addrNames = _inputs(operatorRepresentation) + ['data_out']
         inputBaseOffsets, outputBaseOffsets = cls.extractBaseAddr(tilingSolution, targetMemLevel,
                                                                   operatorRepresentation, addrNames)
         varIn, varOut = operatorRepresentation['data_in'], operatorRepresentation['data_out']
         inDims = ctxt.lookup(varIn).shape
         kh, kw = operatorRepresentation['dim_kernel_x'], operatorRepresentation['dim_kernel_y']
-        ci = operatorRepresentation['ch_im_in']
+        ci = ctxt.lookup(varIn).shape[3]  # stored channels (2*Ci for the stacked form)
         wShape = ctxt.lookup(operatorRepresentation['weight']).shape
         vShape = ctxt.lookup(operatorRepresentation['mul']).shape
         aShape = ctxt.lookup(operatorRepresentation['add']).shape
@@ -115,7 +120,8 @@ class NE16DualConv2inTileConstraint(TileConstraint):
         mCube = HyperRectangle(tuple(0 for _ in vShape), tuple(vShape))
         aCube = HyperRectangle(tuple(0 for _ in aShape), tuple(aShape))
         inputLoadSchedule = [{
-            "data_in": a, "data_in_m": a, "weight": wCube, "mul": mCube, "add": aCube
+            "data_in": a, "weight": wCube, "mul": mCube, "add": aCube,
+            **({"data_in_m": a} if 'data_in_m' in operatorRepresentation else {})
         } for a in inCubes]
         outputLoadSchedule = [{"data_out": out} for out in outputCubes]
         tilingSchedule = TilingSchedule(inputBaseOffsets, outputBaseOffsets, inputLoadSchedule, outputLoadSchedule)

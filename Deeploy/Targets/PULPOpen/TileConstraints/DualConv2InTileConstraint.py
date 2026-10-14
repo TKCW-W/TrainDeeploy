@@ -28,11 +28,16 @@ from Deeploy.TilingExtension.TilingCodegen import AbsoluteHyperRectangle, HyperR
 _INPUTS = ['data_in', 'weight', 'mul', 'add', 'wmul', 'bmul', 'data_in_m']
 
 
+def _inputs(rep: Dict) -> List[str]:
+    """QW exp8: the stacked-input form (one [x+ | x-] tensor) has no data_in_m."""
+    return [k for k in _INPUTS if k != 'data_in_m' or 'data_in_m' in rep]
+
+
 class DualConv2D2InTileConstraint(TileConstraint):
 
     @staticmethod
     def addGeometricalConstraint(tilerModel: TilerModel, parseDict: Dict, ctxt: NetworkContext) -> TilerModel:
-        names = {k: parseDict[k] for k in _INPUTS}
+        names = {k: parseDict[k] for k in _inputs(parseDict)}
         outName = parseDict['data_out']
         strides, padding = parseDict["strides"], parseDict["pads"]
 
@@ -54,7 +59,7 @@ class DualConv2D2InTileConstraint(TileConstraint):
         tilerModel.addConstraint(outC == 2 * wO)  # A+ and A- stacked on the channel axis
         for k in ('mul', 'add', 'wmul', 'bmul'):
             tilerModel.addConstraint(tilerModel.getTensorDimVar(tensorName = names[k], dimIdx = 0) == wO)
-        for d in range(4):  # x- is tiled exactly like x+
+        for d in range(4 if 'data_in_m' in names else 0):  # x- is tiled exactly like x+
             tilerModel.addConstraint(
                 tilerModel.getTensorDimVar(tensorName = names['data_in_m'], dimIdx = d) ==
                 tilerModel.getTensorDimVar(tensorName = names['data_in'], dimIdx = d))
@@ -86,7 +91,7 @@ class DualConv2D2InTileConstraint(TileConstraint):
         tilerModel.addConstraint(wO == weightBuffer.shape[0])
         tilerModel.addConstraint(outC == outputBuffer.shape[3])
         tilerModel.addConstraint(inC == parseDict['ch_im_in'])
-        tilerModel.addConstraint(wC == parseDict['ch_im_in'])
+        tilerModel.addConstraint(wC == parseDict['in_ch'])  # per-pass channels (exp8 stacked input: ch_im_in = 2*Ci)
         tilerModel.addConstraint(inH >= parseDict['dim_kernel_x'])
         tilerModel.addConstraint(inW >= parseDict['dim_kernel_y'])
         tilerModel.addConstraint(wH == parseDict['dim_kernel_x'])
@@ -112,7 +117,7 @@ class DualConv2D2InTileConstraint(TileConstraint):
             targetMemLevel: str, ctxt: NetworkContext,
             operatorRepresentation: OperatorRepresentation) -> Tuple[VariableReplacementScheme, TilingSchedule]:
         outputCubes = [cube.rectangle for cube in absoluteOutputCubes]
-        addrNames = _INPUTS + ['data_out']
+        addrNames = _inputs(operatorRepresentation) + ['data_out']
         inputBaseOffsets, outputBaseOffsets = cls.extractBaseAddr(tilingSolution, targetMemLevel,
                                                                   operatorRepresentation, addrNames)
         varWeight = operatorRepresentation['weight']
@@ -135,7 +140,7 @@ class DualConv2D2InTileConstraint(TileConstraint):
             InCube, (pl, pr, pt, pb) = Conv2DTileConstraint.computeInputCube(kernelShape = (wH, wW),
                                                                             pads = pads,
                                                                             strides = strides,
-                                                                            inputCSize = wC,
+                                                                            inputCSize = operatorRepresentation['ch_im_in'],
                                                                             outputCube = cube,
                                                                             inputDims = ctxt.lookup(varIn).shape,
                                                                             outputDims = ctxt.lookup(varOut).shape)
@@ -153,7 +158,8 @@ class DualConv2D2InTileConstraint(TileConstraint):
             vecCubes.append(HyperRectangle((0,), (wN,)))
 
         inputLoadSchedule = [{
-            "data_in": a, "data_in_m": a, "weight": w, "mul": v, "add": v, "wmul": v, "bmul": v
+            "data_in": a, "weight": w, "mul": v, "add": v, "wmul": v, "bmul": v, **({"data_in_m": a} if 'data_in_m' in
+                                                                                    operatorRepresentation else {})
         } for a, w, v in zip(inCubes, wCubes, vecCubes)]
         outputLoadSchedule = [{"data_out": out} for out in outputCubes]
 

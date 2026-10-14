@@ -691,6 +691,18 @@ int main(void) {                 // -- QW
       memcpy(&stored_loss_plus[mb], &lp_bits, sizeof(lp_bits));  // -- QW  integer store into float[] (no FP)
       ZTRACE("[PHASE] +eps loss read OK: lp_bits=0x%08x\r\n", (unsigned)lp_bits);  // -- QW
 
+#ifdef ZO_FUSED_DUAL  // -- QW exp8: the dual-pass graph computed both passes in the run above; L- = output 1
+      {                                                          // -- QW
+        void *loss_ptr = DeeployNetwork_outputs[1];              // -- QW
+        if (IS_L2(loss_ptr)) {                                   // -- QW
+          memcpy(&lm_bits, loss_ptr, sizeof(lm_bits));           // -- QW
+        } else {                                                 // -- QW
+          ram_read(&lm_bits, loss_ptr, sizeof(lm_bits));         // -- QW
+        }                                                        // -- QW
+      }                                                          // -- QW
+      memcpy(&stored_loss_minus[mb], &lm_bits, sizeof(lm_bits)); // -- QW
+      ZTRACE("[PHASE] fused dual pass: lm_bits=0x%08x\r\n", (unsigned)lm_bits);  // -- QW
+#else
       /* ③ -eps pass -> L-. Same seed_base, flip sign only. -- QW */
       perturbation_sign = 0u;             // -- QW  -eps
       /* perturb_seed_base / perturb_eps_use_override unchanged -- QW */
@@ -713,6 +725,7 @@ int main(void) {                 // -- QW
       }                                                          // -- QW
       memcpy(&stored_loss_minus[mb], &lm_bits, sizeof(lm_bits)); // -- QW  integer store into float[] (no FP)
       ZTRACE("[PHASE] -eps loss read OK: lm_bits=0x%08x\r\n", (unsigned)lm_bits);  // -- QW
+#endif  // ZO_FUSED_DUAL -- QW
 
       /* ④ acc += (L+ - L-)  — FP done on cluster (FC has no FPU). -- QW */
       {                                                          // -- QW

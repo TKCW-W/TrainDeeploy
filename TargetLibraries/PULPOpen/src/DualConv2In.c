@@ -23,7 +23,8 @@
  *            place; fields that touch the padding are gathered (out of line, they are rare).
  *
  * Layouts (axis names as in pulp_nn_conv_i8_i8_i8: `x` = Deeploy's dim_im_in_y, the long / time axis):
- *   x+, x-  : HWC [dim_in_y][dim_in_x][ch_in], pixel stride ch_in (two separate tensors)
+ *   x+, x-  : HWC [dim_in_y][dim_in_x][ch_in], pixel stride in_stride (ch_in: two separate tensors; 2*ch_in: the
+ *             channel-stacked [x+ | x-] tensor of the dual-pass graph, pInM = pInP + ch_in -- exp8)
  *   weight  : CHW [ch_out][ch_in][dim_kernel_y][dim_kernel_x]   (unperturbed)
  *   output  : A+ at pOutP, A- at pOutM, both HWC with pixel stride `out_stride`
  *             (stacked [A+ | A-] output: pOutP = out, pOutM = out + ch_out, out_stride = 2*ch_out)
@@ -51,12 +52,14 @@ typedef signed char d2_v4s __attribute__((vector_size(4)));
  * whose field touches the padding come here, and keeping it out of the pixel loop keeps that loop small. */
 static void __attribute__((noinline)) d2_gather(const int8_t *pIn, int8_t *patch, int32_t iy0, int32_t ix0,
                                                 uint16_t dim_in_x, uint16_t dim_in_y, uint16_t ch_in,
-                                                uint16_t dim_kernel_x, uint16_t dim_kernel_y) {
+                                                uint16_t dim_kernel_x, uint16_t dim_kernel_y, uint32_t in_stride) {
+  /* QW (exp8): in_stride = bytes between input pixels -- ch_in for a separate x+ / x- tensor, 2*ch_in for the
+   * channel-stacked [x+ | x-] tensor of the dual-pass graph (then the taps of one row are NOT contiguous). */
   /* QW (exp7 step 5d): word path. In HWC the valid taps of one kernel row are ONE contiguous run of
    * (kx_hi - kx_lo)*ch_in bytes, so per row: zero-fill the padded words, copy the run word by word. The byte path
    * below cost ~2 x 128 byte copies per border pixel on block 1 and was the source of the phase-2 imbalance
    * (border pixels per core 22..30). Needs ch_in % 4 == 0 and a word-aligned input (as the in-place reads). */
-  if (((ch_in & 3u) == 0u) && ((((uint32_t)pIn) & 3u) == 0u)) {
+  if (((ch_in & 3u) == 0u) && ((in_stride & 3u) == 0u) && ((((uint32_t)pIn) & 3u) == 0u)) {
     const uint32_t cw = (uint32_t)ch_in >> 2; /* words per tap */
     int32_t kx_lo = -ix0, kx_hi = (int32_t)dim_in_x - ix0;
     if (kx_lo < 0)
@@ -75,9 +78,17 @@ static void __attribute__((noinline)) d2_gather(const int8_t *pIn, int8_t *patch
       }
       for (uint32_t k = 0; k < (uint32_t)kx_lo * cw; k++)
         *pw++ = 0;
-      const int32_t *src = (const int32_t *)(pIn + ((uint32_t)iy * dim_in_x + (uint32_t)(ix0 + kx_lo)) * ch_in);
-      for (uint32_t k = 0; k < (uint32_t)(kx_hi - kx_lo) * cw; k++)
-        *pw++ = *src++;
+      if (in_stride == ch_in) { /* one contiguous run */
+        const int32_t *src = (const int32_t *)(pIn + ((uint32_t)iy * dim_in_x + (uint32_t)(ix0 + kx_lo)) * ch_in);
+        for (uint32_t k = 0; k < (uint32_t)(kx_hi - kx_lo) * cw; k++)
+          *pw++ = *src++;
+      } else { /* exp8: stacked input -- one run of cw words per tap */
+        for (int32_t kx = kx_lo; kx < kx_hi; kx++) {
+          const int32_t *src = (const int32_t *)(pIn + ((uint32_t)iy * dim_in_x + (uint32_t)(ix0 + kx)) * in_stride);
+          for (uint32_t k = 0; k < cw; k++)
+            *pw++ = src[k];
+        }
+      }
       for (uint32_t k = 0; k < (uint32_t)((int32_t)dim_kernel_x - kx_hi) * cw; k++)
         *pw++ = 0;
     }
@@ -92,7 +103,7 @@ static void __attribute__((noinline)) d2_gather(const int8_t *pIn, int8_t *patch
         for (uint32_t ci = 0; ci < ch_in; ci++)
           *pp++ = 0;
       } else {
-        const int8_t *src = pIn + ((uint32_t)iy * dim_in_x + (uint32_t)ix) * ch_in;
+        const int8_t *src = pIn + ((uint32_t)iy * dim_in_x + (uint32_t)ix) * in_stride;
         for (uint32_t ci = 0; ci < ch_in; ci++)
           *pp++ = src[ci];
       }
@@ -102,7 +113,7 @@ static void __attribute__((noinline)) d2_gather(const int8_t *pIn, int8_t *patch
 
 void PULP_DualConv2d_2in_i8_i8_i8_HWC(
     const int8_t *pInP, const int8_t *pInM, const int8_t *pWeight, const int32_t *pMul, const int32_t *pAdd,
-    const int32_t *pWMul, const int32_t *pBMul, int8_t *pOutP, int8_t *pOutM, uint32_t out_stride,
+    const int32_t *pWMul, const int32_t *pBMul, int8_t *pOutP, int8_t *pOutM, uint32_t out_stride, uint32_t in_stride,
     int8_t *pScratch, uint32_t seed_w_base, uint32_t seed_b_base, uint32_t tile_seed_xor, uint32_t log2D_w,
     uint32_t log2D_b, float32_t eps_scale, uint32_t num_cores, uint16_t out_shift, uint16_t dim_in_x,
     uint16_t dim_in_y, uint16_t ch_in, uint16_t dim_out_x, uint16_t dim_out_y, uint16_t ch_out,
@@ -143,6 +154,26 @@ void PULP_DualConv2d_2in_i8_i8_i8_HWC(
   if (n)
     dc_perturb_i32(pAdd, addp, addm, pBMul, 1u, (seed_b_base + core_id) ^ tile_seed_xor, s, n, log2D_b,
                    eps_scale);
+  /* QW (exp8): a channel-stacked [x+ | x-] input with 1xK rows (blocks 1-2) is not readable in place (a kernel row's
+   * taps are 2*ch_in apart), and gathering every receptive field costs ~14 % on block 1. De-interleave the tile once
+   * into contiguous x+ / x- (scratch after the patches, sized in DualConv2InTemplate), then read in place as for two
+   * separate inputs. Shares phase 1's barrier. -- QW */
+  if (in_stride != ch_in && dim_kernel_x != 1u && ((ch_in & 3u) == 0u) && ((in_stride & 3u) == 0u) &&
+      ((((uint32_t)pInP | (uint32_t)pInM) & 3u) == 0u)) {
+    const uint32_t npx = (uint32_t)dim_in_x * dim_in_y, cw = (uint32_t)ch_in >> 2, sw = in_stride >> 2;
+    int32_t *xp = (int32_t *)(patch - core_id * 4u * K + num_cores * 4u * K);
+    int32_t *xm = xp + npx * cw;
+    const int32_t *sp = (const int32_t *)pInP, *sm = (const int32_t *)pInM;
+    dc_chunk(npx, num_cores, core_id, &s, &n);
+    for (uint32_t px = s; px < s + n; px++)
+      for (uint32_t w = 0; w < cw; w++) {
+        xp[px * cw + w] = sp[px * sw + w];
+        xm[px * cw + w] = sm[px * sw + w];
+      }
+    pInP = (const int8_t *)xp;
+    pInM = (const int8_t *)xm;
+    in_stride = ch_in;
+  }
   pi_cl_team_barrier();
 #ifdef DUALCONV2IN_PROBE
   if (core_id == 0)
@@ -150,8 +181,12 @@ void PULP_DualConv2d_2in_i8_i8_i8_HWC(
 #endif
 
   /* ---------------- phase 2: flat pixel range (or channel range, 5c), two pixels at a time, both passes -- */
-  const uint32_t in_place = ((ch_in & 3u) == 0u) && ((((uint32_t)pInP | (uint32_t)pInM) & 3u) == 0u);
-  const uint32_t in_row = (uint32_t)dim_in_x * ch_in;
+  /* exp8: in place also from the channel-stacked input when a kernel row is one tap (Kx1: blocks 3-4); 1xK rows of a
+   * stacked input are not contiguous and are gathered (word-wise) */
+  const uint32_t in_place = ((ch_in & 3u) == 0u) && ((in_stride & 3u) == 0u) &&
+                            ((((uint32_t)pInP | (uint32_t)pInM) & 3u) == 0u) &&
+                            (in_stride == ch_in || dim_kernel_x == 1u);
+  const uint32_t in_row = (uint32_t)dim_in_x * in_stride;
   const uint32_t total = (uint32_t)dim_out_y * dim_out_x;
   /* QW (exp7 step 5c): split the PIXELS (each core: a pixel range, all channels) or the OUTPUT CHANNELS (each core:
    * a range of 4-channel blocks, all pixels). Measured (block 3 / block 4 phase 2): pixels 37.6 k / 20.3 k, channels
@@ -216,15 +251,15 @@ void PULP_DualConv2d_2in_i8_i8_i8_HWC(
       const int32_t ix0 = (int32_t)(ox * stride_x) - (int32_t)pad_x_left;
       if (in_place && iy0 >= 0 && iy0 + (int32_t)dim_kernel_y <= (int32_t)dim_in_y && ix0 >= 0 &&
           ix0 + (int32_t)dim_kernel_x <= (int32_t)dim_in_x) {
-        const uint32_t off = ((uint32_t)iy0 * dim_in_x + (uint32_t)ix0) * ch_in;
+        const uint32_t off = ((uint32_t)iy0 * dim_in_x + (uint32_t)ix0) * in_stride;
         fP[q] = pInP + off;
         fM[q] = pInM + off;
         fs[q] = in_row;
       } else {
         int8_t *pa = patch + q * K;
         int8_t *pm = patch + (2u + q) * K;
-        d2_gather(pInP, pa, iy0, ix0, dim_in_x, dim_in_y, ch_in, dim_kernel_x, dim_kernel_y);
-        d2_gather(pInM, pm, iy0, ix0, dim_in_x, dim_in_y, ch_in, dim_kernel_x, dim_kernel_y);
+        d2_gather(pInP, pa, iy0, ix0, dim_in_x, dim_in_y, ch_in, dim_kernel_x, dim_kernel_y, in_stride);
+        d2_gather(pInM, pm, iy0, ix0, dim_in_x, dim_in_y, ch_in, dim_kernel_x, dim_kernel_y, in_stride);
         fP[q] = pa;
         fM[q] = pm;
         fs[q] = row_len;

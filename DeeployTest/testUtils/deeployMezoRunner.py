@@ -97,6 +97,10 @@ def main(tiling_enabled: bool = True, default_platform: str = 'Siracusa', defaul
     # -- QW (exp16c_SDK_port phase 3): NE16 engine flags. As this file's own header warns, anything
     #    not threaded explicitly into `gen_args` below silently does nothing -- so without these the
     #    NE16 engine claims no node and the whole QZO network falls back to the cluster.
+    parser.add_argument('--zo-fused-dual', action = 'store_true', default = False, dest = 'zo_fused_dual',  # -- QW exp8
+                        help = 'Both ZO passes in one training-graph execution (dual-pass rewrite + harness).\n')
+    parser.add_argument('--zo-fused-dual-ne16', type = str, default = '', dest = 'zo_fused_dual_ne16',  # -- QW exp8
+                        help = 'With --zo-fused-dual on GAP9_w_NE16: comma-separated conv indices in NE16 form, e.g. 0,1,2\n')
     parser.add_argument('--enable-1xk', action = 'store_true', default = False, dest = 'enable_1xk',
                         help = 'GAP9_w_NE16 only: let NE16 claim 1xK / Kx1 dense convolutions\n')
     parser.add_argument('--enable-3x3', action = 'store_true', default = False, dest = 'enable_3x3',
@@ -131,6 +135,11 @@ def main(tiling_enabled: bool = True, default_platform: str = 'Siracusa', defaul
     gen_args = [f'--cores={args.cores}']
     if args.enable_1xk:  # -- QW
         gen_args.append('--enable-1xk')  # -- QW
+    if getattr(args, 'zo_fused_dual', False):  # -- QW exp8: dual-pass graph + single-run harness
+        gen_args.append('--zo-fused-dual')  # -- QW
+        cmake_args.append('-DZO_FUSED_DUAL=ON')  # -- QW
+        if getattr(args, 'zo_fused_dual_ne16', ''):  # -- QW exp8: convs in NE16 form (GAP9_w_NE16)
+            gen_args.append(f'--zo-fused-dual-ne16={args.zo_fused_dual_ne16}')  # -- QW
     if args.enable_3x3:  # -- QW
         gen_args.append('--enable-3x3')  # -- QW
     if args.tolerance is not None:

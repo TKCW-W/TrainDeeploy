@@ -161,6 +161,12 @@ GAP9_LayerNormGradMapper = NodeMapper(LayerNormGradParser(), GAP9LayernormGradTi
 
 # -- QW: QZO / MeZO mappers (reuse the PULPOpen tiling-ready bindings; kernels are in GAP9 deeploylib)
 GAP9_PerturbRademacherMapper = NodeMapper(PerturbRademacherParser(), PULPPerturbRademacherTilingReadyBindings)  # -- QW (fp32 ZO op)
+from Deeploy.Targets.PULPOpen.Parsers import PerturbRademacherFixedParser as _PRFixedParser  # -- QW exp8
+from Deeploy.Targets.PULPOpen.Tiler import PULPPerturbRademacherFixedTilingReadyBindings as _PRFixedTRB  # -- QW exp8
+GAP9_PerturbRademacherFixedMapper = NodeMapper(_PRFixedParser(), _PRFixedTRB)  # -- QW exp8
+from Deeploy.Targets.PULPOpen.Parsers import DualHalfParser as _DualHalfParser  # -- QW exp8
+from Deeploy.Targets.PULPOpen.Tiler import PULPDualHalfTilingReadyBindings as _DualHalfTRB  # -- QW exp8
+GAP9_DualHalfMapper = NodeMapper(_DualHalfParser(), _DualHalfTRB)  # -- QW exp8
 GAP9_RQSPerturbRademacherMapper = NodeMapper(RQSPerturbRademacherParser(), PULPRQSPerturbRademacherTilingReadyBindings)  # -- QW (quantized ZO)
 
 # -- QW (exp16c / blocker 1b): NE16WeightEncode runs on the CLUSTER cores (plain data movement),
@@ -187,6 +193,9 @@ GAP9_DualConv2DMapper = NodeMapper(_PULPDualConv2DParser(), _PULPDualConv2DTRB) 
 from Deeploy.Targets.PULPOpen.Parsers import PULPDualConv2D2InParser as _PULPDualConv2D2InParser  # -- QW
 from Deeploy.Targets.PULPOpen.Tiler import PULPDualConv2D2InTilingReadyBindings as _PULPDualConv2D2InTRB  # -- QW
 GAP9_DualConv2D2InMapper = NodeMapper(_PULPDualConv2D2InParser(), _PULPDualConv2D2InTRB)  # -- QW
+from Deeploy.Targets.PULPOpen.Parsers import PULPDualConv2DStackedParser as _PULPDualConv2DStackedParser  # -- QW exp8
+from Deeploy.Targets.PULPOpen.Tiler import PULPDualConv2DStackedTilingReadyBindings as _PULPDualConv2DStackedTRB  # -- QW exp8
+GAP9_DualConv2DStackedMapper = NodeMapper(_PULPDualConv2DStackedParser(), _PULPDualConv2DStackedTRB)  # -- QW exp8
 # -- QW (dual_pass_fusion exp6, task 2): fused-pass preparation for NE16 (cluster-side), see NE16/DualPrep.py
 from Deeploy.Targets.NE16.DualPrep import NE16DualBiasLayer, NE16DualBiasParser, NE16DualPerturbEncodeLayer, \
     NE16DualPerturbEncodeParser  # -- QW
@@ -310,6 +319,10 @@ GAP9Mapping = {
     # -- QW: QZO / MeZO ops (mirror PULPMapping so GAP9 can run the ZO train + update graphs)
     'PerturbRademacher':
         PerturbRademacherLayer([GAP9_PerturbRademacherMapper]),  # -- QW (fp32 ZO perturb)
+    'PerturbRademacherFixed':
+        PerturbRademacherLayer([GAP9_PerturbRademacherFixedMapper]),  # -- QW exp8 (dual-pass graph)
+    'DualHalf':
+        PerturbRademacherLayer([GAP9_DualHalfMapper]),  # -- QW exp8 (dual-pass tail; generic layer, size-based ops)
     'RQSPerturbRademacher':
         RQSPerturbRademacherLayer([GAP9_RQSPerturbRademacherMapper]),  # -- QW (quantized ZO perturb)
     'NE16WeightEncode':
@@ -320,7 +333,7 @@ GAP9Mapping = {
         NE16Im2ColU8Layer([GAP9_NE16Im2ColU8Mapper]),  # -- QW (exp6: column buffer for the NE16 im2col route)
     'RequantizedDualConv':
         # _PULPDualConvLayer([GAP9_DualConv2DMapper]),  # -- QW (exp6: exp5's fused cluster kernel, baseline C_cl)
-        _PULPDualConvLayer([GAP9_DualConv2DMapper, GAP9_DualConv2D2InMapper]),  # -- QW exp6 + exp7 (7-input, blocks 1-4)
+        _PULPDualConvLayer([GAP9_DualConv2DMapper, GAP9_DualConv2D2InMapper, GAP9_DualConv2DStackedMapper]),  # -- QW exp6 + exp7 (7-input, blocks 1-4)
     'NE16DualPerturbEncode':
         NE16DualPerturbEncodeLayer([GAP9_NE16DualPerturbEncodeMapper]),  # -- QW (exp6 task 2)
     'NE16DualBias':

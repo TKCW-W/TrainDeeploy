@@ -519,6 +519,19 @@ PULPPerturbRademacherBindings = [  # -- QW
         FloatPerturbRademacherTemplate.referenceTemplate,  # -- QW
         ForkTransformer)]  # -- QW
 
+# -- QW (dual_pass_fusion exp8): DualHalf -- one pass's half of a stacked fp32 vector. -- QW
+from Deeploy.Targets.PULPOpen.Templates import DualHalfTemplate as _DualHalfTemplate  # -- QW
+PULPDualHalfBindings = [  # -- QW
+    NodeBinding(PerturbZOChecker([PointerClass(float32_t)], [PointerClass(float32_t)]), _DualHalfTemplate.referenceTemplate,
+                ForkTransformer)  # -- QW
+]  # -- QW
+# -- QW (dual_pass_fusion exp8): fixed-sign fp32 perturbation for the dual-pass graph. -- QW
+from Deeploy.Targets.PULPOpen.Templates import FloatPerturbRademacherFixedTemplate as _FPRFixedTemplate  # -- QW
+PULPPerturbRademacherFixedBindings = [  # -- QW
+    NodeBinding(PerturbZOChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),  # -- QW
+                _FPRFixedTemplate.referenceTemplate, ForkTransformer)  # -- QW
+]  # -- QW
+
 PULPTransposeBindings = [
     NodeBinding(TransposeChecker([PointerClass(type)], [PointerClass(type)]), TransposeTemplate.referenceTemplate,
                 ForkTransformer) for type in IntegerDataTypes
@@ -681,6 +694,13 @@ PULPDualConv2D2InBindings = [  # -- QW
         PULPConvChecker([PointerClass(int8_t), PointerClass(int8_t), PointerClass(int32_t), PointerClass(int32_t),
                          PointerClass(int32_t), PointerClass(int32_t), PointerClass(int8_t)], [PointerClass(int8_t)]),
         _DualConv2InTemplate.referenceTemplate, ForkTransformer)
+]
+# -- QW (dual_pass_fusion exp8): stacked-input form (6 inputs). -- QW
+PULPDualConv2DStackedBindings = [  # -- QW
+    NodeBinding(
+        PULPConvChecker([PointerClass(int8_t), PointerClass(int8_t), PointerClass(int32_t), PointerClass(int32_t),
+                         PointerClass(int32_t), PointerClass(int32_t)], [PointerClass(int8_t)]),
+        _DualConv2InTemplate.stackedTemplate, ForkTransformer)
 ]
 
 # -- QW (dual_pass_fusion exp5a): single-pass control kernel with DualConv's structure, bound to the ordinary

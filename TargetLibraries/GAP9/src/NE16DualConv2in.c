@@ -44,6 +44,7 @@ typedef struct {
   const int8_t *x;
   uint8_t *col;
   uint32_t p0, np; /* flat output-pixel range [p0, p0+np) of the tile, may span rows */
+  uint32_t in_stride; /* bytes between input pixels: ch_in, or 2*ch_in for the stacked [x+ | x-] input (exp8) */
   uint16_t dim_in_y, dim_in_x, ch_in, dim_out_x, kh, kw, pad_top, pad_left, stride_y, stride_x;
 } n16d_col_args_t;
 
@@ -81,9 +82,19 @@ static void n16d_build_col(void *arg) {
       }
       for (uint32_t k = 0; k < (uint32_t)lo * cw; k++)
         *dst++ = N16D_PAD_WORD;
-      const uint32_t *src = (const uint32_t *)(a->x + ((uint32_t)iy * a->dim_in_x + (uint32_t)(ix0 + lo)) * a->ch_in);
-      for (uint32_t k = 0; k < (uint32_t)(hi - lo) * cw; k++)
-        *dst++ = *src++ ^ N16D_PAD_WORD;
+      if (a->in_stride == a->ch_in) { /* one contiguous run */
+        const uint32_t *src =
+            (const uint32_t *)(a->x + ((uint32_t)iy * a->dim_in_x + (uint32_t)(ix0 + lo)) * a->ch_in);
+        for (uint32_t k = 0; k < (uint32_t)(hi - lo) * cw; k++)
+          *dst++ = *src++ ^ N16D_PAD_WORD;
+      } else { /* exp8: stacked input -- cw words per tap, taps in_stride apart */
+        for (int32_t kx = lo; kx < hi; kx++) {
+          const uint32_t *src =
+              (const uint32_t *)(a->x + ((uint32_t)iy * a->dim_in_x + (uint32_t)(ix0 + kx)) * a->in_stride);
+          for (uint32_t k = 0; k < cw; k++)
+            *dst++ = src[k] ^ N16D_PAD_WORD;
+        }
+      }
       for (uint32_t k = 0; k < (uint32_t)((int32_t)a->kw - hi) * cw; k++)
         *dst++ = N16D_PAD_WORD;
     }
@@ -159,7 +170,8 @@ void PULP_NE16DualConv2in(const int8_t *pInP, const int8_t *pInM, const uint8_t 
                           uint16_t dim_in_y, uint16_t dim_in_x, uint16_t ch_in, uint16_t dim_out_y, uint16_t dim_out_x,
                           uint16_t ch_out, uint16_t dim_kernel_y, uint16_t dim_kernel_x, uint16_t pad_top,
                           uint16_t pad_bottom, uint16_t pad_left, uint16_t pad_right, uint16_t stride_y,
-                          uint16_t stride_x, int32_t weight_offset, uint32_t pipelined, uint32_t job_w) {
+                          uint16_t stride_x, int32_t weight_offset, uint32_t pipelined, uint32_t job_w,
+                          uint32_t in_stride) {
   (void)pad_bottom;
   (void)pad_right;
   const ne16_dev_t *dev = ne16_pulp_get_dev();
@@ -175,7 +187,8 @@ void PULP_NE16DualConv2in(const int8_t *pInP, const int8_t *pInM, const uint8_t 
   const uint32_t njobs = 2u * jpp;
   uint32_t p0, h, wd;
   n16d_job_geometry(0, total, wj, &p0, &h, &wd);
-  n16d_col_args_t a = {.x = pInP, .col = col[0], .p0 = p0, .np = h * wd, .dim_in_y = dim_in_y, .dim_in_x = dim_in_x,
+  n16d_col_args_t a = {.x = pInP, .col = col[0], .p0 = p0, .np = h * wd, .in_stride = in_stride,
+                       .dim_in_y = dim_in_y, .dim_in_x = dim_in_x,
                        .ch_in = ch_in, .dim_out_x = dim_out_x, .kh = dim_kernel_y, .kw = dim_kernel_x,
                        .pad_top = pad_top, .pad_left = pad_left, .stride_y = stride_y, .stride_x = stride_x};
   ne16_task_t task;

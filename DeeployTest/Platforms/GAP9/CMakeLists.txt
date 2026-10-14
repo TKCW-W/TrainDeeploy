@@ -117,6 +117,9 @@ if(MEZO_TRAINING)  # QW: MeZO (ZO) compile-time defines — parallel block along
     if(BN_FROZEN_STATS)  # QW: passthrough frozen-stat BN training -- QW
         target_compile_definitions(${ProjectId} PRIVATE BN_FROZEN_STATS)  # -- QW
     endif()  # -- QW
+    if(ZO_FUSED_DUAL)  # QW exp8: dual-pass training graph, one execution per window -- QW
+        target_compile_definitions(${ProjectId} PRIVATE ZO_FUSED_DUAL)  # -- QW
+    endif()  # -- QW
     if(ZO_QUIET)  # RW: quiet UART for long on-board rounds
         target_compile_definitions(${ProjectId} PRIVATE ZO_QUIET)
     endif()

@@ -70,3 +70,6 @@ from Deeploy.Targets.NE16.DualConv2in import NE16DualConv2inBindings as _NE16DC2
 from Deeploy.Targets.NE16.TileConstraints.NE16DualConv2inConstraint import NE16DualConv2inTileConstraint  # -- QW
 NE16DualConv2inTilingReadyBindings = TilingReadyNodeBindings(
     nodeBindings = _NE16DC2B, tileConstraint = NE16DualConv2inTileConstraint())  # -- QW
+from Deeploy.Targets.NE16.DualConv2in import NE16DualConv2inStackedBindings as _NE16DC2SB  # -- QW exp8
+NE16DualConv2inStackedTilingReadyBindings = TilingReadyNodeBindings(
+    nodeBindings = _NE16DC2SB, tileConstraint = NE16DualConv2inTileConstraint())  # -- QW exp8

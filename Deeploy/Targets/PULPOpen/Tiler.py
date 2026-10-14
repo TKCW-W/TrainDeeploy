@@ -234,6 +234,15 @@ PULPInPlaceAccumulatorV2TilingReadyBindings = TilingReadyNodeBindings(
 # Ported from Deeploy zo-support (FP32 PerturbRademacher ZO op): per-tile seed via PerturbTileConstraint. -- QW
 PULPPerturbRademacherTilingReadyBindings = TilingReadyNodeBindings(  # -- QW
     nodeBindings = PULPPerturbRademacherBindings, tileConstraint = PerturbTileConstraint())  # -- QW
+# -- QW (dual_pass_fusion exp8): DualHalf (dual-pass tail), untiled. -- QW
+from Deeploy.Targets.PULPOpen.Bindings import PULPDualHalfBindings as _DHB  # -- QW
+from Deeploy.Targets.PULPOpen.TileConstraints.UntiledTileConstraint import DualHalfTileConstraint  # -- QW
+PULPDualHalfTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _DHB, tileConstraint = DualHalfTileConstraint())  # -- QW
+# -- QW (dual_pass_fusion exp8): fixed-sign fp32 perturbation (dual-pass graph), untiled. -- QW
+from Deeploy.Targets.PULPOpen.Bindings import PULPPerturbRademacherFixedBindings as _PRFB  # -- QW
+from Deeploy.Targets.PULPOpen.TileConstraints.UntiledTileConstraint import PerturbRademacherFixedTileConstraint  # -- QW
+PULPPerturbRademacherFixedTilingReadyBindings = TilingReadyNodeBindings(  # -- QW
+    nodeBindings = _PRFB, tileConstraint = PerturbRademacherFixedTileConstraint())  # -- QW
 
 PULPSliceTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = PULPSliceBindings,
                                                        tileConstraint = SliceTileConstraint())
@@ -286,6 +295,9 @@ from Deeploy.Targets.PULPOpen.TileConstraints.DualConv2InTileConstraint import \
     DualConv2D2InTileConstraint as _DualConv2D2InTC  # -- QW
 PULPDualConv2D2InTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _PULPDualConv2D2InBindings,  # -- QW
                                                                tileConstraint = _DualConv2D2InTC())  # -- QW
+from Deeploy.Targets.PULPOpen.Bindings import PULPDualConv2DStackedBindings as _PULPDualConv2DStackedBindings  # -- QW exp8
+PULPDualConv2DStackedTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = _PULPDualConv2DStackedBindings,  # -- QW
+                                                                   tileConstraint = _DualConv2D2InTC())  # -- QW exp8
 
 # -- QW (dual_pass_fusion exp5a): single-pass control kernel on the ordinary RequantizedConv; same tile constraint
 #    as pulp-nn's binding (RQConv2DTileConstraint), so the tiling is identical -- only the kernel call differs. -- QW

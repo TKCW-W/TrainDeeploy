@@ -12,7 +12,7 @@
 
 void PULP_DualConv2d_2in_i8_i8_i8_HWC(
     const int8_t *pInP, const int8_t *pInM, const int8_t *pWeight, const int32_t *pMul, const int32_t *pAdd,
-    const int32_t *pWMul, const int32_t *pBMul, int8_t *pOutP, int8_t *pOutM, uint32_t out_stride,
+    const int32_t *pWMul, const int32_t *pBMul, int8_t *pOutP, int8_t *pOutM, uint32_t out_stride, uint32_t in_stride,
     int8_t *pScratch, uint32_t seed_w_base, uint32_t seed_b_base, uint32_t tile_seed_xor, uint32_t log2D_w,
     uint32_t log2D_b, float32_t eps_scale, uint32_t num_cores, uint16_t out_shift, uint16_t dim_in_x,
     uint16_t dim_in_y, uint16_t ch_in, uint16_t dim_out_x, uint16_t dim_out_y, uint16_t ch_out,

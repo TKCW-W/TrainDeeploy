@@ -94,6 +94,15 @@ def generateTiledTrainingNetwork(args) -> None:
         graph.cleanup()
         log.debug("Stripped UNDEFINED-typed unused optional outputs from graph nodes")
 
+    # 1b. QW (dual_pass_fusion exp8): both ZO passes in ONE graph execution -- the dual-pass rewrite (channel-stacked
+    #     [+ | -] between the fused convs, L+ / L- as outputs 0 / 1). The harness must be built -D ZO_FUSED_DUAL=ON.
+    if getattr(args, "zo_fused_dual", False):  # -- QW
+        from Deeploy.CommonExtensions.OptimizationPasses.TopologyOptimizationPasses.ZODualPassFusion import \
+            zoDualPassFusion  # -- QW
+        _ne16 = {int(v) for v in args.zo_fused_dual_ne16.split(',') if v.strip()} if args.zo_fused_dual_ne16 else set()
+        graph = zoDualPassFusion(graph, ne16_convs = _ne16)  # -- QW
+        log.info("[ZO] dual-pass graph: %d nodes, outputs %s", len(graph.nodes), [o.name for o in graph.outputs])
+
     # 2. Load inputs.npz.
     inputs_path = f'{args.dir}/inputs.npz'
     inputs = np.load(inputs_path)
@@ -396,6 +405,16 @@ if __name__ == '__main__':
         metavar = "SUBSTR[,SUBSTR...]",
         help = "Restrict tiling profiling to nodes whose name contains any of the given comma-separated "
         "substrings. E.g. --profileNodes=conv_stem,ds_blocks_0_dw  (default: profile all nodes).")
+    parser.add_argument("--zo-fused-dual",  # -- QW exp8
+                        dest = "zo_fused_dual",
+                        action = "store_true",
+                        default = False,
+                        help = "Rewrite the ZO training graph into the dual-pass form (both passes in one execution).")
+    parser.add_argument("--zo-fused-dual-ne16",  # -- QW exp8
+                        dest = "zo_fused_dual_ne16",
+                        type = str,
+                        default = "",
+                        help = "With --zo-fused-dual on GAP9_w_NE16: comma-separated conv indices emitted in NE16 form.")
     parser.add_argument("--zo",  # -- QW
                         action = "store_true",  # -- QW
                         help = "MeZO (ZO) mode: emit loss_plus/loss_minus references in testoutputs.h "  # -- QW
