@@ -55,7 +55,7 @@ needed a correct size for its momentum buffers.
 | QZO + ECO on the fused graph (GAP9 + NE16, n_accum 4, one update step) | works; all 4 mini-batches equal the host reference (`Errors: 0 out of 8`) |
 | Fused graph over 14 update steps of round 1 (54 windows in L3, direct QZO) | works; `Errors: 0 out of 112` (§6.9) |
 | Fixtures | per-block `TrainDeeploy/SpeechNet_Test/speechnet_{unfused,fused}_b{1..4}_{cluster,NE16}`; whole-network entry fixtures `speechnet_{train,update}_QZOECO_full_fused_{single_update_step,round1}` (§5) |
-| Full fine-tuning round with the fused graph | not run (on GVSoC it would take many hours; on the board it does not fit the board's L2 heap yet, §9) |
+| Full fine-tuning round with the fused graph | not run (on GVSoC it would take many hours); on the board fused QZO fits L2, fused QZO+ECO is 15 KB short (§9) |
 | Non-conv nodes (BN, Quant/Dequant, pool, ReLU) | not fused; now the majority of the fused step (§6.5) |
 | Exporter support | not needed: the fusion is a Deeploy pass over the ordinary QZO export |
 | Checkpoint | all numbers derive from `artifacts_reference` weights (paper-comparable): the per-block kernel fixtures from `Tests/Models/Training/SpeechNet/speechnet_qzo19_train` (pooled@99.99 calibration), the whole-network runs from `SpeechNet_Test/speechnet_train_QZO_single_step` and the new QZOECO fixtures (pooled@99.9) |
@@ -982,12 +982,23 @@ confirm the fused run prints the same value.
    arithmetic, so the result is no longer bit-exact against today's unfused graph. The alternative is to fuse only the
    computation and keep the arithmetic.
 2. **The ~0.3 M cycles per step outside the nodes** (closures, cluster offload).
-3. **Board L2 budget before any board run of the fused graph.** The board L2 heap is 1,343,856 B, about 100 KB less
-   than GVSoC, and an L2 malloc failure hangs silently there. The fused NE16 arena (1,325,460 B) + ECO momentum
-   (61,956 B) = 1,387,416 B does not fit. Candidates: drop `GAP9_NETWORK_O3` (saves code size), move tensors to L3,
-   reduce the arena.
-4. **Stack depth.** Cluster slave stacks on the board are 768 B in L1 and an overflow is silent. Check `DualConv2In`,
-   `NE16DualConv2in`, `DualHalf` and `PerturbRademacherFixed` with `silentwear-zo/scripts/stack_depth.py`.
+3. **Board status** (measured on a `-s board` build of the fused NE16 QZO+ECO round, 2026-10-14; build log
+   `TrainDeeploy/SpeechNet_Test/logs/smoke/board_build_fused_ne16_eco_round1_l2_1340000.log`). An L2 malloc failure
+   hangs silently on the board, so check these before the first run.
+   - L2 heap for this binary: 1,372,464 B (`__heapl2ram_start` 0x1C040ED0 to 0x1C190000). The heap depends on each
+     binary's code size and SDK configuration; the 1,343,856 B measured earlier on the AE/CCT binaries does not apply.
+   - Fused QZO fits: L2 arena 1,325,460 B, 47 KB margin (minus small allocations of the SDK at boot).
+   - Fused QZO+ECO is 14,952 B short (ECO momentum 61,956 B). Dropping `GAP9_NETWORK_O3` (~35 KB of code) would likely
+     make it fit, at some speed cost; alternatives are keeping the momentum in L3 or moving arena tensors to L3.
+   - Needs `--l2 1340000`: at the board scripts' `--l2 1300000` the arena cannot be allocated (MiniMalloc fails,
+     `TrainDeeploy/SpeechNet_Test/logs/smoke/board_build_fused_ne16_eco_round1.log`).
+   - The 54 windows are staged in L3 through readfs (`[testData->L3] 2117232 B`).
+4. **Stack depth.** Worst slave-stack chain 576 B of the 768 B L1 slave stack (`silentwear-zo/scripts/stack_depth.py`
+   on the board ELF): `PULP_DualConv2d_2in_i8_i8_i8_HWC` [336] -> `dc_perturb_i8_chw` [96] -> `lrintf` [16] under a
+   128 B closure. The NE16 prep chains are 304–336 B. The tool covers worker-core entries only; `NE16DualConv2in` runs
+   on the cluster controller (4 KB stack).
+   NE16 has not yet run on the board (the board rounds so far used the cluster-only runner); the first board run
+   should be fused QZO for 14 steps of the round-1 fixture (`Errors: 0 out of 112`, `[WCHK]`).
 5. **Time the per-window L3 → L2 copy** of the 54-window pool, which the round prediction does not include.
 6. **Block-0 NE16 double buffering.** Block 0 still uses exp6's unpipelined form (im2col 120 k + NE16 130 k
    sequential); the exp7 pipeline would hide most of the im2col.
