@@ -46,34 +46,35 @@ void PULP_NE16DualPerturbEncode(const int8_t *pW, const int32_t *pWMul, uint8_t 
   int8_t *wp = pScratch;         /* rows [0, ch_out)        */
   int8_t *wm = pScratch + wsize; /* rows [ch_out, 2*ch_out) */
 
-  uint32_t s, n;
-  dc_chunk(wsize, num_cores, core_id, &s, &n);
-  if (n) {
+  uint32_t chunk_begin, chunk_len;
+  dc_chunk(wsize, num_cores, core_id, &chunk_begin, &chunk_len);
+  if (chunk_len) {
     /* QW (exp7 step 7, pipelined NE16 conv): hwc = 1 writes W+/W- rows in (ky, kx, ci) order -- the column order of
      * the word-wise HWC column buffer (NE16DualConv2in.c) -- still consuming the noise in CHW order. -- QW */
     if (hwc)
-      dc_perturb_i8_chw(pW, wp, wm, pWMul, ch_in, kh, kw, (seed_w_base + core_id) ^ tile_seed_xor, s, n, log2D_w,
-                        eps_scale);
+      dc_perturb_i8_chw(pW, wp, wm, pWMul, ch_in, kh, kw, (seed_w_base + core_id) ^ tile_seed_xor, chunk_begin,
+                        chunk_len, log2D_w, eps_scale);
     else if (sign_sel == 0u)
-      dc_perturb_i8(pW, wp, wm, pWMul, K, (seed_w_base + core_id) ^ tile_seed_xor, s, n, log2D_w, eps_scale);
+      dc_perturb_i8(pW, wp, wm, pWMul, K, (seed_w_base + core_id) ^ tile_seed_xor, chunk_begin, chunk_len, log2D_w,
+                    eps_scale);
     else
-      dc_perturb_i8_chw(pW, wp, wm, pWMul, 1u, 1u, K, (seed_w_base + core_id) ^ tile_seed_xor, s, n, log2D_w,
-                        eps_scale);
+      dc_perturb_i8_chw(pW, wp, wm, pWMul, 1u, 1u, K, (seed_w_base + core_id) ^ tile_seed_xor, chunk_begin, chunk_len,
+                        log2D_w, eps_scale);
   }
   pi_cl_team_barrier();
 
   /* encode the stacked [2*ch_out][K] matrix (or one half of it) as a 1x1 weight with K input channels */
   const uint32_t rows = (sign_sel == 0u) ? 2u * ch_out : ch_out;
   const int8_t *src = (sign_sel == 2u) ? wm : pScratch;
-  const uint32_t chunk = (rows + num_cores - 1u) / num_cores;
-  uint32_t r0 = chunk * core_id;
-  if (r0 > rows)
-    r0 = rows;
-  uint32_t r1 = r0 + chunk;
-  if (r1 > rows)
-    r1 = rows;
-  if (r1 > r0)
-    NE16WeightEncode_i8_u8(src, pWEnc, rows, K, 1u, r0, r1 - r0);
+  const uint32_t row_chunk = (rows + num_cores - 1u) / num_cores;
+  uint32_t row_begin = row_chunk * core_id;
+  if (row_begin > rows)
+    row_begin = rows;
+  uint32_t row_end = row_begin + row_chunk;
+  if (row_end > rows)
+    row_end = rows;
+  if (row_end > row_begin)
+    NE16WeightEncode_i8_u8(src, pWEnc, rows, K, 1u, row_begin, row_end - row_begin);
   pi_cl_team_barrier();
 }
 
@@ -90,42 +91,43 @@ void PULP_NE16DualBias(const int8_t *pW, const int32_t *pWMul, const int32_t *pA
   int32_t *addp = (int32_t *)(pScratch + off_add);
   int32_t *addm = addp + ch_out;
 
-  uint32_t s, n;
-  dc_chunk(wsize, num_cores, core_id, &s, &n);
-  if (n) {
+  uint32_t chunk_begin, chunk_len;
+  dc_chunk(wsize, num_cores, core_id, &chunk_begin, &chunk_len);
+  if (chunk_len) {
     /* exp7: the faster helper (identity map in runs of K, same values) unless sign_sel == 0 with K < 16 -- block 0
      * (K = 4) keeps exp6's code path; there the runs would be 4 elements long. */
     if (sign_sel == 0u && K < 16u)
-      dc_perturb_i8(pW, wp, wm, pWMul, K, (seed_w_base + core_id) ^ tile_seed_xor, s, n, log2D_w, eps_scale);
+      dc_perturb_i8(pW, wp, wm, pWMul, K, (seed_w_base + core_id) ^ tile_seed_xor, chunk_begin, chunk_len, log2D_w,
+                    eps_scale);
     else
-      dc_perturb_i8_chw(pW, wp, wm, pWMul, 1u, 1u, K, (seed_w_base + core_id) ^ tile_seed_xor, s, n, log2D_w,
-                        eps_scale);
+      dc_perturb_i8_chw(pW, wp, wm, pWMul, 1u, 1u, K, (seed_w_base + core_id) ^ tile_seed_xor, chunk_begin, chunk_len,
+                        log2D_w, eps_scale);
   }
-  dc_chunk(ch_out, num_cores, core_id, &s, &n);
-  if (n)
-    dc_perturb_i32(pAdd, addp, addm, pBMul, 1u, (seed_b_base + core_id) ^ tile_seed_xor, s, n, log2D_b,
-                   eps_scale);
+  dc_chunk(ch_out, num_cores, core_id, &chunk_begin, &chunk_len);
+  if (chunk_len)
+    dc_perturb_i32(pAdd, addp, addm, pBMul, 1u, (seed_b_base + core_id) ^ tile_seed_xor, chunk_begin, chunk_len,
+                   log2D_b, eps_scale);
   pi_cl_team_barrier();
 
   /* exp7: sign_sel 0 = stacked [add+'; add-'] (2*ch_out rows); 1 / 2 = add+' / add-' only (ch_out rows) */
   const uint32_t rows = (sign_sel == 0u) ? 2u * ch_out : ch_out;
   const uint32_t row_base = (sign_sel == 2u) ? ch_out : 0u; /* row of the stacked matrix that output row 0 is */
-  const uint32_t chunk = (rows + num_cores - 1u) / num_cores;
-  uint32_t r0 = chunk * core_id;
-  if (r0 > rows)
-    r0 = rows;
-  uint32_t r1 = r0 + chunk;
-  if (r1 > rows)
-    r1 = rows;
-  for (uint32_t ro = r0; ro < r1; ro++) {
-    const uint32_t r = ro + row_base;
-    const uint32_t c = (r < ch_out) ? r : r - ch_out;
-    const int8_t *w = pScratch + r * K; /* row r of the stacked [W+; W-] matrix */
-    int32_t acc = 0;
+  const uint32_t row_chunk = (rows + num_cores - 1u) / num_cores;
+  uint32_t row_begin = row_chunk * core_id;
+  if (row_begin > rows)
+    row_begin = rows;
+  uint32_t row_end = row_begin + row_chunk;
+  if (row_end > rows)
+    row_end = rows;
+  for (uint32_t out_row = row_begin; out_row < row_end; out_row++) {
+    const uint32_t stacked_row = out_row + row_base;
+    const uint32_t co = (stacked_row < ch_out) ? stacked_row : stacked_row - ch_out;
+    const int8_t *w_row = pScratch + stacked_row * K; /* row of the stacked [W+; W-] matrix */
+    int32_t w_row_sum = 0;
     for (uint32_t k = 0; k < K; k++)
-      acc += (int32_t)w[k];
-    const int32_t a = (r < ch_out) ? addp[c] : addm[c];
-    pAddOut[ro] = a - input_offset * acc * pMul[c];
+      w_row_sum += (int32_t)w_row[k];
+    const int32_t add_pass = (stacked_row < ch_out) ? addp[co] : addm[co];
+    pAddOut[out_row] = add_pass - input_offset * w_row_sum * pMul[co];
   }
   pi_cl_team_barrier();
 }

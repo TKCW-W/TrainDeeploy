@@ -50,20 +50,20 @@ void PULP_FlatConv2d_i8_i8_i8_HWC(const int8_t *pIn, int8_t *pScratch, int8_t *p
     patch[k] = 0; 
 
   /* ---------------- one pass over the pixels, flattened index ------------------------------- */
-  const uint32_t total = (uint32_t)dim_out_y * dim_out_x;
-  const uint32_t chunk = (total + num_cores - 1u) / num_cores;
-  uint32_t p0 = chunk * core_id;
-  if (p0 > total)
-    p0 = total;
-  uint32_t p1 = p0 + chunk;
-  if (p1 > total)
-    p1 = total;
-  uint32_t oy = p0 / dim_out_x;
-  uint32_t ox = p0 - oy * dim_out_x; //start index of the output pixel for this core
+  const uint32_t n_out_px = (uint32_t)dim_out_y * dim_out_x;
+  const uint32_t px_chunk = (n_out_px + num_cores - 1u) / num_cores;
+  uint32_t px_begin = px_chunk * core_id;
+  if (px_begin > n_out_px)
+    px_begin = n_out_px;
+  uint32_t px_end = px_begin + px_chunk;
+  if (px_end > n_out_px)
+    px_end = n_out_px;
+  uint32_t oy = px_begin / dim_out_x;
+  uint32_t ox = px_begin - oy * dim_out_x; /* first output pixel of this core */
 
-  for (uint32_t p = p0; p < p1; p++) {
+  for (uint32_t px = px_begin; px < px_end; px++) {
     /* gather the receptive field once */
-    int8_t *pp = patch;
+    int8_t *dst = patch;
     const int32_t iy0 = (int32_t)oy * (int32_t)stride_y - (int32_t)pad_y_top;
     const int32_t ix0 = (int32_t)ox * (int32_t)stride_x - (int32_t)pad_x_left;
     for (uint32_t ky = 0; ky < dim_kernel_y; ky++) {
@@ -72,26 +72,26 @@ void PULP_FlatConv2d_i8_i8_i8_HWC(const int8_t *pIn, int8_t *pScratch, int8_t *p
         const int32_t ix = ix0 + (int32_t)kx;
         if (iy < 0 || iy >= (int32_t)dim_in_y || ix < 0 || ix >= (int32_t)dim_in_x) {
           for (uint32_t ci = 0; ci < ch_in; ci++)
-            *pp++ = 0;
+            *dst++ = 0;
         } else {
           const int8_t *src = pIn + ((uint32_t)iy * dim_in_x + (uint32_t)ix) * ch_in;
           for (uint32_t ci = 0; ci < ch_in; ci++)
-            *pp++ = src[ci];
+            *dst++ = src[ci];
         }
       }
     }
 
-    int8_t *o = pOut + p * ch_out;
-    for (uint32_t c = 0; c < ch_out; c++) {
-      const int8_t *wc = pWeight + c * K;
+    int8_t *out_px = pOut + px * ch_out;
+    for (uint32_t co = 0; co < ch_out; co++) {
+      const int8_t *w_row = pWeight + co * K;
       int32_t acc = 0;
       for (uint32_t k = 0; k < Kpad; k += 4u) {
-        const fc_v4s x = *(const fc_v4s *)(patch + k);
-        acc = __builtin_pulp_sdotsp4(x, *(const fc_v4s *)(wc + k), acc);
+        const fc_v4s x_word = *(const fc_v4s *)(patch + k);
+        acc = __builtin_pulp_sdotsp4(x_word, *(const fc_v4s *)(w_row + k), acc);
       }
       /* requant exactly as pulp_nn_bn_quant_i8 (32-bit variant): int32 wrap, arithmetic shift, clip */
-      const int32_t y = (int32_t)((uint32_t)acc * (uint32_t)pMul[c] + (uint32_t)pAdd[c]) >> out_shift;
-      o[c] = (int8_t)__builtin_pulp_clip_r(y, 127);
+      const int32_t y = (int32_t)((uint32_t)acc * (uint32_t)pMul[co] + (uint32_t)pAdd[co]) >> out_shift;
+      out_px[co] = (int8_t)__builtin_pulp_clip_r(y, 127);
     }
     if (++ox == dim_out_x) {
       ox = 0;

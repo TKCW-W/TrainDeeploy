@@ -45,7 +45,7 @@ typedef signed char c42_v4s __attribute__((vector_size(4)));
 /* Address of the receptive field's first kernel row and the distance between its rows. In place when the
  * field lies inside the input; otherwise the field is gathered into `patch` (rows contiguous, zeros where a
  * tap falls into the padding). */
-static inline const int8_t *c42_field(const int8_t *pIn, int8_t *patch, int32_t iy0, int32_t ix0, uint32_t in_place,
+static inline const int8_t *c42_receptive_field(const int8_t *pIn, int8_t *patch, int32_t iy0, int32_t ix0, uint32_t in_place,
                                       uint16_t dim_in_x, uint16_t dim_in_y, uint16_t ch_in, uint16_t dim_kernel_x,
                                       uint16_t dim_kernel_y, uint32_t *row_stride) {
   if (in_place && iy0 >= 0 && iy0 + (int32_t)dim_kernel_y <= (int32_t)dim_in_y && ix0 >= 0 &&
@@ -53,18 +53,18 @@ static inline const int8_t *c42_field(const int8_t *pIn, int8_t *patch, int32_t 
     *row_stride = (uint32_t)dim_in_x * ch_in;
     return pIn + ((uint32_t)iy0 * dim_in_x + (uint32_t)ix0) * ch_in;
   }
-  int8_t *pp = patch;
+  int8_t *dst = patch;
   for (uint32_t ky = 0; ky < dim_kernel_y; ky++) {
     const int32_t iy = iy0 + (int32_t)ky;
     for (uint32_t kx = 0; kx < dim_kernel_x; kx++) {
       const int32_t ix = ix0 + (int32_t)kx;
       if (iy < 0 || iy >= (int32_t)dim_in_y || ix < 0 || ix >= (int32_t)dim_in_x) {
         for (uint32_t ci = 0; ci < ch_in; ci++)
-          *pp++ = 0;
+          *dst++ = 0;
       } else {
         const int8_t *src = pIn + ((uint32_t)iy * dim_in_x + (uint32_t)ix) * ch_in;
         for (uint32_t ci = 0; ci < ch_in; ci++)
-          *pp++ = src[ci];
+          *dst++ = src[ci];
       }
     }
   }
@@ -87,50 +87,51 @@ void PULP_Conv4x2_i8_i8_i8_HWC(const int8_t *pIn, int8_t *pScratch, int8_t *pOut
   int8_t *patchB = patchA + K;
 
   /* ---------------- flattened output-pixel range of this core, walked two pixels at a time --------- */
-  const uint32_t total = (uint32_t)dim_out_y * dim_out_x;              // block 1: 14*88 = 1232
-  const uint32_t chunk = (total + num_cores - 1u) / num_cores;        // block 1: 154
-  uint32_t p0 = chunk * core_id;
-  if (p0 > total)
-    p0 = total;
-  uint32_t p1 = p0 + chunk;
-  if (p1 > total)
-    p1 = total;
-  uint32_t oy = p0 / dim_out_x;
-  uint32_t ox = p0 - oy * dim_out_x;
+  const uint32_t n_out_px = (uint32_t)dim_out_y * dim_out_x;           // block 1: 14*88 = 1232
+  const uint32_t px_chunk = (n_out_px + num_cores - 1u) / num_cores;   // block 1: 154
+  uint32_t px_begin = px_chunk * core_id;
+  if (px_begin > n_out_px)
+    px_begin = n_out_px;
+  uint32_t px_end = px_begin + px_chunk;
+  if (px_end > n_out_px)
+    px_end = n_out_px;
+  uint32_t oy = px_begin / dim_out_x;
+  uint32_t ox = px_begin - oy * dim_out_x;
 
-  for (uint32_t p = p0; p < p1; p += 2u) {
-    const uint32_t two = (p + 1u < p1); // the last pixel of an odd range runs alone (B duplicates A)
-    uint32_t strideA, strideB;
-    const int8_t *srcA =
-        c42_field(pIn, patchA, (int32_t)(oy * stride_y) - (int32_t)pad_y_top,
-                  (int32_t)(ox * stride_x) - (int32_t)pad_x_left, in_place, dim_in_x, dim_in_y, ch_in,
-                  dim_kernel_x, dim_kernel_y, &strideA);
+  for (uint32_t px = px_begin; px < px_end; px += 2u) {
+    const uint32_t has_px_b = (px + 1u < px_end); // the last pixel of an odd range runs alone (B duplicates A)
+    uint32_t rowStrideA, rowStrideB;
+    const int8_t *fieldA =
+        c42_receptive_field(pIn, patchA, (int32_t)(oy * stride_y) - (int32_t)pad_y_top,
+                            (int32_t)(ox * stride_x) - (int32_t)pad_x_left, in_place, dim_in_x, dim_in_y, ch_in,
+                            dim_kernel_x, dim_kernel_y, &rowStrideA);
     if (++ox == dim_out_x) {
       ox = 0;
       oy++;
     }
-    const int8_t *srcB = srcA;
-    strideB = strideA;
-    if (two) {
-      srcB = c42_field(pIn, patchB, (int32_t)(oy * stride_y) - (int32_t)pad_y_top,
-                       (int32_t)(ox * stride_x) - (int32_t)pad_x_left, in_place, dim_in_x, dim_in_y, ch_in,
-                       dim_kernel_x, dim_kernel_y, &strideB);
+    const int8_t *fieldB = fieldA;
+    rowStrideB = rowStrideA;
+    if (has_px_b) {
+      fieldB = c42_receptive_field(pIn, patchB, (int32_t)(oy * stride_y) - (int32_t)pad_y_top,
+                                   (int32_t)(ox * stride_x) - (int32_t)pad_x_left, in_place, dim_in_x, dim_in_y,
+                                   ch_in, dim_kernel_x, dim_kernel_y, &rowStrideB);
       if (++ox == dim_out_x) {
         ox = 0;
         oy++;
       }
     }
-    int8_t *oA = pOut + p * ch_out;
-    int8_t *oB = oA + ch_out;
+    int8_t *outA = pOut + px * ch_out;
+    int8_t *outB = outA + ch_out;
 
-    /* ---- 4 output channels x 2 pixels per iteration (pulp_nn_matmul_i8_i8_i8's 4x2 shape) ---- */
+    /* ---- 4 output channels x 2 pixels per iteration (pulp_nn_matmul_i8_i8_i8's 4x2 shape) ----
+     * accumulators a<j> / b<j>: pixel A / B, output channel c + j; v<j> / w<j>: weight word / row of channel c + j */
     uint32_t c = 0;
     for (; c + 4u <= ch_out; c += 4u) {
       int32_t a0 = 0, a1 = 0, a2 = 0, a3 = 0, b0 = 0, b1 = 0, b2 = 0, b3 = 0;
       const int8_t *w = pWeight + c * K;
       for (uint32_t ky = 0; ky < dim_kernel_y; ky++) {
-        const c42_v4s *xa = (const c42_v4s *)(srcA + ky * strideA);
-        const c42_v4s *xb = (const c42_v4s *)(srcB + ky * strideB);
+        const c42_v4s *xa = (const c42_v4s *)(fieldA + ky * rowStrideA);
+        const c42_v4s *xb = (const c42_v4s *)(fieldB + ky * rowStrideB);
         const c42_v4s *w0 = (const c42_v4s *)(w + ky * row_len);
         const c42_v4s *w1 = (const c42_v4s *)(w + K + ky * row_len);
         const c42_v4s *w2 = (const c42_v4s *)(w + 2u * K + ky * row_len);
@@ -152,15 +153,15 @@ void PULP_Conv4x2_i8_i8_i8_HWC(const int8_t *pIn, int8_t *pScratch, int8_t *pOut
           b3 = __builtin_pulp_sdotsp4(vb, v3, b3);
         }
       }
-      oA[c] = C42_RQ(a0, c);
-      oA[c + 1u] = C42_RQ(a1, c + 1u);
-      oA[c + 2u] = C42_RQ(a2, c + 2u);
-      oA[c + 3u] = C42_RQ(a3, c + 3u);
-      if (two) {
-        oB[c] = C42_RQ(b0, c);
-        oB[c + 1u] = C42_RQ(b1, c + 1u);
-        oB[c + 2u] = C42_RQ(b2, c + 2u);
-        oB[c + 3u] = C42_RQ(b3, c + 3u);
+      outA[c] = C42_RQ(a0, c);
+      outA[c + 1u] = C42_RQ(a1, c + 1u);
+      outA[c + 2u] = C42_RQ(a2, c + 2u);
+      outA[c + 3u] = C42_RQ(a3, c + 3u);
+      if (has_px_b) {
+        outB[c] = C42_RQ(b0, c);
+        outB[c + 1u] = C42_RQ(b1, c + 1u);
+        outB[c + 2u] = C42_RQ(b2, c + 2u);
+        outB[c + 3u] = C42_RQ(b3, c + 3u);
       }
     }
     /* ---- channel tail (ch_out % 4), 1 x 2 ---- */
@@ -168,8 +169,8 @@ void PULP_Conv4x2_i8_i8_i8_HWC(const int8_t *pIn, int8_t *pScratch, int8_t *pOut
       int32_t a = 0, b = 0;
       const int8_t *w = pWeight + c * K;
       for (uint32_t ky = 0; ky < dim_kernel_y; ky++) {
-        const c42_v4s *xa = (const c42_v4s *)(srcA + ky * strideA);
-        const c42_v4s *xb = (const c42_v4s *)(srcB + ky * strideB);
+        const c42_v4s *xa = (const c42_v4s *)(fieldA + ky * rowStrideA);
+        const c42_v4s *xb = (const c42_v4s *)(fieldB + ky * rowStrideB);
         const c42_v4s *w0 = (const c42_v4s *)(w + ky * row_len);
         for (uint32_t k = 0; k < row_words; k++) {
           const c42_v4s v0 = *w0++;
@@ -177,9 +178,9 @@ void PULP_Conv4x2_i8_i8_i8_HWC(const int8_t *pIn, int8_t *pScratch, int8_t *pOut
           b = __builtin_pulp_sdotsp4(*xb++, v0, b);
         }
       }
-      oA[c] = C42_RQ(a, c);
-      if (two)
-        oB[c] = C42_RQ(b, c);
+      outA[c] = C42_RQ(a, c);
+      if (has_px_b)
+        outB[c] = C42_RQ(b, c);
     }
   }
   pi_cl_team_barrier();

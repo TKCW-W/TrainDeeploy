@@ -246,22 +246,22 @@ writes W+ / W− at their HWC positions:
 - Because z = ±1, a channel has only two noise values, `up = (m + rnd) >> S` and `dn = (rnd − m) >> S`. The noise bit
   selects between them without branches. The function is out of line, because inlined it reloaded its pointers from
   the stack for every element.
-- The bias uses `dc_perturb_i32` (`DualPerturb.h:221`), with the same seed formula as the `RQSPerturbRademacher` node
+- The bias uses `dc_perturb_i32` (`DualPerturb.h:222`), with the same seed formula as the `RQSPerturbRademacher` node
   it replaces.
 - Cost: about 26 cycles per element for both signs, against about 141 cycles per element per sign in the standalone
   node.
 
-**Phase 2** (`:183`): Conv4x2's loop structure (`TrainDeeploy/TargetLibraries/PULPOpen/src/Conv4x2.c:75`), run once per
+**Phase 2** (`:184`): Conv4x2's loop structure (`TrainDeeploy/TargetLibraries/PULPOpen/src/Conv4x2.c:75`), run once per
 pass from **one copy** of the loop code:
 - a flat range of output pixels per core, two pixels at a time;
 - 4 output channels × 2 pixels per inner loop (8 accumulators, 6 loads feed 8 `sdotsp4`);
 - requant `D2_RQ` exactly as `pulp_nn_bn_quant_i8` (`:48`).
 
 Receptive fields:
-- interior fields are read in place (`in_place`, `:186`);
+- interior fields are read in place (`in_place`, `:187`);
 - fields that touch the padding are gathered word-wise into a patch with zeros (`d2_gather`, `:53`, out of line).
 
-The core split is chosen at run time (`:197-215`): output channels instead of pixels only if the pixel split leaves
+The core split is chosen at run time (`:198-237`): output channels instead of pixels only if the pixel split leaves
 cores idle **and** the channel split keeps more of them busy. `-D DUALCONV2IN_SPLIT=1|2` forces one split for
 measurement.
 
@@ -303,13 +303,13 @@ The exp6-style first version used two chains (column + job per pass). It reached
 The NE16 job itself was 3× faster than pulp-nn, but the byte-wise column builder cost 291 k cycles per pass.
 
 **The current node** (`TrainDeeploy/Deeploy/Targets/NE16/DualConv2in.py`, kernel
-`TrainDeeploy/TargetLibraries/GAP9/src/NE16DualConv2in.c:168` `PULP_NE16DualConv2in`) runs on the cluster master and
+`TrainDeeploy/TargetLibraries/GAP9/src/NE16DualConv2in.c:170` `PULP_NE16DualConv2in`) runs on the cluster master and
 dispatches the NE16 jobs itself (`Deeploy/Targets/NE16/Engine.py:35-44`, `:143`):
 - **Word-wise HWC column** (`n16d_build_col`, `:52`). x± are transposed to HWC. Per receptive-field row the valid taps
   are one contiguous run, copied as words with `^ 0x80808080` (signed → unsigned input offset); padding is
   `0x80808080`. The column order is (ky, kx, ci), and the weight is encoded in the same order
   (`NE16DualPerturbEncode` with `ne16_hwc = 1`).
-- **Job geometry** (`n16d_job_geometry`, `:151`). One job = 3 × w consecutive output pixels of one pass, presented to
+- **Job geometry** (`n16d_job_geometry`, `:152`). One job = 3 × w consecutive output pixels of one pass, presented to
   NE16 as a 3×w block. One-row jobs had left two of NE16's three 3×3-subtile rows idle. Jobs are sized from an 11 kB
   per-buffer budget.
 - **Double buffering + 2-deep queue.** The master dispatches job j, waits for a free queue slot (meaning job j−1 is
@@ -432,7 +432,7 @@ the template but unused by the pass.
   kernel interface from §3.2 is used unchanged.
 - **Tile constraint**: drops x− for the stacked form; the weight's channel dim must equal `in_ch`; the input tile keeps
   all 2·Ci channels.
-- **De-interleave** (`DualConv2In.c:157-176`, before phase 1's barrier at `:177`). With a stacked input and 1×K kernel rows, a row's taps are 2·Ci apart,
+- **De-interleave** (`DualConv2In.c:157-177`, before phase 1's barrier at `:178`). With a stacked input and 1×K kernel rows, a row's taps are 2·Ci apart,
   so they are not contiguous, and every receptive field would be gathered. The kernel therefore copies the tile once
   into contiguous x+ / x− scratch and then uses the in-place path. The copy shares phase 1's barrier. The template
   reserves the input size in the scratch (`DualConv2InTemplate.py:36`, `stacked_input` and Kw ≠ 1).

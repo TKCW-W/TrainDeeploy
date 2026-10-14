@@ -52,43 +52,43 @@ void NE16WeightEncode_i8_u8(const int8_t *__restrict__ src, uint8_t *__restrict_
   const uint32_t dstRowBytes = cinMajor * NE16_WEIGHT_BITS * (NE16_CIN_SUBTILE / 8);
 
   for (uint32_t row = row_start; row < row_start + row_count; row++) {
-    // row == j*cout + co  (taps-major, matching the host's concatenate along axis 0)
-    const uint32_t j = row / cout;
-    const uint32_t co = row - j * cout;
-    const int8_t *srcCo = src + (uint32_t)co * cin * taps + j;
+    // row == tap*cout + co  (taps-major, matching the host's concatenate along axis 0)
+    const uint32_t tap = row / cout;
+    const uint32_t co = row - tap * cout;
+    const int8_t *srcCo = src + (uint32_t)co * cin * taps + tap;
     uint8_t *dstRow = dst + (uint32_t)row * dstRowBytes;
 
     for (uint32_t cm = 0; cm < cinMajor; cm++) {
       const uint32_t ciBase = cm * NE16_CIN_SUBTILE;
 
-      for (uint32_t k = 0; k < NE16_CIN_SUBTILE / 8; k++) {
-        // eight bit-plane accumulators for this half-subtile
-        uint32_t acc0 = 0, acc1 = 0, acc2 = 0, acc3 = 0;
-        uint32_t acc4 = 0, acc5 = 0, acc6 = 0, acc7 = 0;
+      for (uint32_t half = 0; half < NE16_CIN_SUBTILE / 8; half++) {
+        // eight bit planes of this half-subtile: plane<b> collects bit b of its 8 lanes
+        uint32_t plane0 = 0, plane1 = 0, plane2 = 0, plane3 = 0;
+        uint32_t plane4 = 0, plane5 = 0, plane6 = 0, plane7 = 0;
 
-        for (uint32_t t = 0; t < 8; t++) {
-          const uint32_t ci = ciBase + 8 * k + t;
+        for (uint32_t lane = 0; lane < 8; lane++) {
+          const uint32_t ci = ciBase + 8 * half + lane;
           // w_u = w + 128; lanes past cin are zero (NOT 128) -- the host pads after the offset
-          const uint32_t v = (ci < cin) ? (uint32_t)((uint8_t)srcCo[ci * taps] ^ 0x80u) : 0u;
-          acc0 |= ((v >> 0) & 1u) << t;
-          acc1 |= ((v >> 1) & 1u) << t;
-          acc2 |= ((v >> 2) & 1u) << t;
-          acc3 |= ((v >> 3) & 1u) << t;
-          acc4 |= ((v >> 4) & 1u) << t;
-          acc5 |= ((v >> 5) & 1u) << t;
-          acc6 |= ((v >> 6) & 1u) << t;
-          acc7 |= ((v >> 7) & 1u) << t;
+          const uint32_t w_u = (ci < cin) ? (uint32_t)((uint8_t)srcCo[ci * taps] ^ 0x80u) : 0u;
+          plane0 |= ((w_u >> 0) & 1u) << lane;
+          plane1 |= ((w_u >> 1) & 1u) << lane;
+          plane2 |= ((w_u >> 2) & 1u) << lane;
+          plane3 |= ((w_u >> 3) & 1u) << lane;
+          plane4 |= ((w_u >> 4) & 1u) << lane;
+          plane5 |= ((w_u >> 5) & 1u) << lane;
+          plane6 |= ((w_u >> 6) & 1u) << lane;
+          plane7 |= ((w_u >> 7) & 1u) << lane;
         }
 
-        uint8_t *o = dstRow + cm * (NE16_WEIGHT_BITS * (NE16_CIN_SUBTILE / 8)) + k;
-        o[0 * 2] = (uint8_t)acc0;
-        o[1 * 2] = (uint8_t)acc1;
-        o[2 * 2] = (uint8_t)acc2;
-        o[3 * 2] = (uint8_t)acc3;
-        o[4 * 2] = (uint8_t)acc4;
-        o[5 * 2] = (uint8_t)acc5;
-        o[6 * 2] = (uint8_t)acc6;
-        o[7 * 2] = (uint8_t)acc7;
+        uint8_t *dstHalf = dstRow + cm * (NE16_WEIGHT_BITS * (NE16_CIN_SUBTILE / 8)) + half;
+        dstHalf[0 * 2] = (uint8_t)plane0;
+        dstHalf[1 * 2] = (uint8_t)plane1;
+        dstHalf[2 * 2] = (uint8_t)plane2;
+        dstHalf[3 * 2] = (uint8_t)plane3;
+        dstHalf[4 * 2] = (uint8_t)plane4;
+        dstHalf[5 * 2] = (uint8_t)plane5;
+        dstHalf[6 * 2] = (uint8_t)plane6;
+        dstHalf[7 * 2] = (uint8_t)plane7;
       }
     }
   }
@@ -131,10 +131,10 @@ void NE16SignedInputBias_i32(const int8_t *__restrict__ weight, const int32_t *_
   (void)cout;
   for (uint32_t co = co_start; co < co_start + co_count; co++) {
     const int8_t *w = weight + (uint32_t)co * cinTaps;
-    int32_t acc = 0;
+    int32_t w_sum = 0;
     for (uint32_t i = 0; i < cinTaps; i++) {
-      acc += (int32_t)w[i];
+      w_sum += (int32_t)w[i];
     }
-    out[co] = add[co] - offset * acc * mul[co];
+    out[co] = add[co] - offset * w_sum * mul[co];
   }
 }

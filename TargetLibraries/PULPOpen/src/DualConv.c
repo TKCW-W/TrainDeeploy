@@ -51,7 +51,7 @@
  *   [wsize, 2*wsize)      W-
  *   off_addp (4-aligned)  add+     ch_out * int32
  *   off_addm              add-     ch_out * int32
- *   off_pat               one Kpad-byte patch per core, Kpad = K rounded up to 4
+ *   off_patch             one Kpad-byte patch per core, Kpad = K rounded up to 4
  */
 
 #include "DeeployPULPMath.h"
@@ -81,22 +81,22 @@ void PULP_DualConv2d_i8_i8_i8_HWC(
   /* scratch layout -- must match DualConvTemplate.computeTransientBuffersSize */
   const uint32_t off_addp = (2u * wsize + 3u) & ~3u;
   const uint32_t off_addm = off_addp + 4u * ch_out;
-  const uint32_t off_pat = off_addm + 4u * ch_out;
+  const uint32_t off_patch = off_addm + 4u * ch_out;
   int8_t *wp = pScratch;
   int8_t *wm = pScratch + wsize;
   int32_t *addp = (int32_t *)(pScratch + off_addp);
   int32_t *addm = (int32_t *)(pScratch + off_addm);
-  int8_t *patch = pScratch + off_pat + core_id * Kpad;
+  int8_t *patch = pScratch + off_patch + core_id * Kpad;
 
   /* ---------------- phase 1: perturb my chunk, both signs, exactly as the two nodes would ---- */
-  uint32_t s, n;
-  dc_chunk(wsize, num_cores, core_id, &s, &n);
-  if (n)
-    dc_perturb_i8(pWeight, wp, wm, pWMul, K, (seed_w_base + core_id) ^ tile_seed_xor, s, n, log2D_w,
-                  eps_scale);
-  dc_chunk((uint32_t)ch_out, num_cores, core_id, &s, &n);
-  if (n)
-    dc_perturb_i32(pAdd, addp, addm, pBMul, 1u, (seed_b_base + core_id) ^ tile_seed_xor, s, n,
+  uint32_t chunk_begin, chunk_len;
+  dc_chunk(wsize, num_cores, core_id, &chunk_begin, &chunk_len);
+  if (chunk_len)
+    dc_perturb_i8(pWeight, wp, wm, pWMul, K, (seed_w_base + core_id) ^ tile_seed_xor, chunk_begin, chunk_len,
+                  log2D_w, eps_scale);
+  dc_chunk((uint32_t)ch_out, num_cores, core_id, &chunk_begin, &chunk_len);
+  if (chunk_len)
+    dc_perturb_i32(pAdd, addp, addm, pBMul, 1u, (seed_b_base + core_id) ^ tile_seed_xor, chunk_begin, chunk_len,
                    log2D_b, eps_scale);
   for (uint32_t k = K; k < Kpad; k++)
     patch[k] = 0; /* zero tail: the vector loop may read up to Kpad */
@@ -115,21 +115,21 @@ void PULP_DualConv2d_i8_i8_i8_HWC(
 #endif
 
   /* ---------------- phase 2: one pass over the pixels, both weight sets per patch ------------ */
-  const uint32_t total = (uint32_t)dim_out_y * dim_out_x; // (14,701)
-  const uint32_t chunk = (total + num_cores - 1u) / num_cores; // ceiling, each core processes same number of pixels
-  uint32_t p0 = chunk * core_id;
-  if (p0 > total)
-    p0 = total; //core0: 0, core1: 1227
-  uint32_t p1 = p0 + chunk; //core0: 1227
-  if (p1 > total)
-    p1 = total;
-  uint32_t oy = p0 / dim_out_x; //core1: 1227/701 = 1, core1 starts at row 1
-  uint32_t ox = p0 - oy * dim_out_x; // 1227 - 1*701 = 525, starts at col 526
-  const uint32_t ch2 = 2u * ch_out;
+  const uint32_t n_out_px = (uint32_t)dim_out_y * dim_out_x;
+  const uint32_t px_chunk = (n_out_px + num_cores - 1u) / num_cores; /* ceiling: every core gets the same count */
+  uint32_t px_begin = px_chunk * core_id;
+  if (px_begin > n_out_px)
+    px_begin = n_out_px;
+  uint32_t px_end = px_begin + px_chunk;
+  if (px_end > n_out_px)
+    px_end = n_out_px;
+  uint32_t oy = px_begin / dim_out_x;
+  uint32_t ox = px_begin - oy * dim_out_x;
+  const uint32_t out_px_stride = 2u * ch_out;
 
-  for (uint32_t p = p0; p < p1; p++) {
+  for (uint32_t px = px_begin; px < px_end; px++) {
     /* gather the receptive field once (shared by both passes) */
-    int8_t *pp = patch;
+    int8_t *dst = patch;
     const int32_t iy0 = (int32_t)oy * (int32_t)stride_y - (int32_t)pad_y_top;
     const int32_t ix0 = (int32_t)ox * (int32_t)stride_x - (int32_t)pad_x_left;
     for (uint32_t ky = 0; ky < dim_kernel_y; ky++) {
@@ -138,30 +138,30 @@ void PULP_DualConv2d_i8_i8_i8_HWC(
         const int32_t ix = ix0 + (int32_t)kx;
         if (iy < 0 || iy >= (int32_t)dim_in_y || ix < 0 || ix >= (int32_t)dim_in_x) {
           for (uint32_t ci = 0; ci < ch_in; ci++)
-            *pp++ = 0;
+            *dst++ = 0;
         } else {
           const int8_t *src = pIn + ((uint32_t)iy * dim_in_x + (uint32_t)ix) * ch_in;
           for (uint32_t ci = 0; ci < ch_in; ci++)
-            *pp++ = src[ci]; //interior pixel, four ld of single bytes instead of one single load word? 
+            *dst++ = src[ci];
         }
       }
     }
 
-    int8_t *o = pOut + p * ch2;
-    for (uint32_t c = 0; c < ch_out; c++) {
-      const int8_t *wpc = wp + c * K;
-      const int8_t *wmc = wm + c * K;
-      int32_t ap = 0, am = 0;
+    int8_t *out_px = pOut + px * out_px_stride;
+    for (uint32_t co = 0; co < ch_out; co++) {
+      const int8_t *wp_row = wp + co * K;
+      const int8_t *wm_row = wm + co * K;
+      int32_t acc_p = 0, acc_m = 0;
       for (uint32_t k = 0; k < Kpad; k += 4u) {
-        const dc_v4s x = *(const dc_v4s *)(patch + k);
-        ap = __builtin_pulp_sdotsp4(x, *(const dc_v4s *)(wpc + k), ap);
-        am = __builtin_pulp_sdotsp4(x, *(const dc_v4s *)(wmc + k), am);
+        const dc_v4s x_word = *(const dc_v4s *)(patch + k);
+        acc_p = __builtin_pulp_sdotsp4(x_word, *(const dc_v4s *)(wp_row + k), acc_p);
+        acc_m = __builtin_pulp_sdotsp4(x_word, *(const dc_v4s *)(wm_row + k), acc_m);
       }
       /* requant exactly as pulp_nn_bn_quant_i8 (32-bit variant): int32 wrap, arithmetic shift, clip */
-      const int32_t yp = (int32_t)((uint32_t)ap * (uint32_t)pMul[c] + (uint32_t)addp[c]) >> out_shift;
-      const int32_t ym = (int32_t)((uint32_t)am * (uint32_t)pMul[c] + (uint32_t)addm[c]) >> out_shift;
-      o[c] = (int8_t)__builtin_pulp_clip_r(yp, 127);
-      o[ch_out + c] = (int8_t)__builtin_pulp_clip_r(ym, 127);
+      const int32_t y_p = (int32_t)((uint32_t)acc_p * (uint32_t)pMul[co] + (uint32_t)addp[co]) >> out_shift;
+      const int32_t y_m = (int32_t)((uint32_t)acc_m * (uint32_t)pMul[co] + (uint32_t)addm[co]) >> out_shift;
+      out_px[co] = (int8_t)__builtin_pulp_clip_r(y_p, 127);
+      out_px[ch_out + co] = (int8_t)__builtin_pulp_clip_r(y_m, 127);
     }
     if (++ox == dim_out_x) {
       ox = 0;

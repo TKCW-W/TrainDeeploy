@@ -8,8 +8,8 @@
  * same code as the cluster fused kernel: same per-core chunking as the standalone RQSPerturbRademacher
  * node (`(size >> log2(cores)) + (size % cores != 0)`), same LCG warm-up + Xorshift32 stream (one
  * 32-bit draw per 32 elements, LSB first), same per-output-channel multiplier, same rounding, same
- * int8 clamp -- and the exp5 §7.3 rule: form `prod = r*m` once and derive the -eps noise as
- * `(rounding - prod) >> S`, never as `(-r)*m` (mis-evaluated by the PULP clang-15 build). -- QW
+ * int8 clamp -- and the exp5 §7.3 rule: form `prod = z*mul` once and derive the -eps noise as
+ * `(rounding - prod) >> shift`, never as `(-z)*mul` (mis-evaluated by the PULP clang-15 build). -- QW
  */
 #ifndef __DEEPLOY_MATH_DUALPERTURB_KERNEL_HEADER_
 #define __DEEPLOY_MATH_DUALPERTURB_KERNEL_HEADER_
@@ -30,46 +30,46 @@ static inline uint32_t dc_xorshift32(uint32_t s) {
 
 /* The perturb nodes' per-core split: chunk = (size >> log2(NUM_CORES)) + (size % NUM_CORES != 0). */
 static inline void dc_chunk(uint32_t size, uint32_t num_cores, uint32_t core_id, uint32_t *start,
-                            uint32_t *local) {
-  uint32_t log2c = 0;
-  while ((1u << (log2c + 1u)) <= num_cores)
-    log2c++;
-  uint32_t chunk = (size >> log2c) + ((size & (num_cores - 1u)) != 0u);
-  uint32_t s = chunk * core_id;
-  if (s > size)
-    s = size;
-  uint32_t e = s + chunk;
-  if (e > size)
-    e = size;
-  *start = s;
-  *local = e - s;
+                            uint32_t *count) {
+  uint32_t log2_cores = 0;
+  while ((1u << (log2_cores + 1u)) <= num_cores)
+    log2_cores++;
+  uint32_t chunk = (size >> log2_cores) + ((size & (num_cores - 1u)) != 0u);
+  uint32_t begin = chunk * core_id;
+  if (begin > size)
+    begin = size;
+  uint32_t end = begin + chunk;
+  if (end > size)
+    end = size;
+  *start = begin;
+  *count = end - begin;
 }
 
 /* int8 weight: both signs from one stream, clamped to [-127, 127] like ApplyPerturbQuantRademacher_CHW. */
-static inline void dc_perturb_i8(const int8_t *w, int8_t *wp, int8_t *wm, const int32_t *M,
-                                 uint32_t channel_width, uint32_t seed, uint32_t start, uint32_t local,
-                                 uint32_t S, float eps_scale) {
+static inline void dc_perturb_i8(const int8_t *w, int8_t *wp, int8_t *wm, const int32_t *noise_mul,
+                                 uint32_t channel_width, uint32_t seed, uint32_t start, uint32_t count,
+                                 uint32_t shift, float eps_scale) {
   uint32_t rng = seed * 1664525u + 1013904223u;
-  const int32_t rounding = (S > 0u) ? (int32_t)(1u << (S - 1u)) : 0;
+  const int32_t rounding = (shift > 0u) ? (int32_t)(1u << (shift - 1u)) : 0;
   uint32_t i = start;
-  const uint32_t end = start + local;
+  const uint32_t end = start + count;
   while (i < end) {
     rng = dc_xorshift32(rng);
     uint32_t bits = rng;
-    uint32_t n = end - i;
-    if (n > 32u)
-      n = 32u;
-    for (uint32_t k = 0; k < n; k++, i++) {
-      const int32_t r = (bits & 1u) ? 1 : -1;
-      int32_t m = M[i / channel_width];
+    uint32_t run_len = end - i;
+    if (run_len > 32u)
+      run_len = 32u;
+    for (uint32_t k = 0; k < run_len; k++, i++) {
+      const int32_t z = (bits & 1u) ? 1 : -1;
+      int32_t mul = noise_mul[i / channel_width];
       if (eps_scale != 1.0f)
-        m = (int32_t)lrintf((float)m * eps_scale);
-      const int32_t prod = r * m;
-      const int32_t nqp = (prod + rounding) >> (int32_t)S;
-      const int32_t nqm = (rounding - prod) >> (int32_t)S;
-      const int32_t v = (int32_t)w[i];
-      wp[i] = (int8_t)DC_CLAMP(v + nqp, -127, 127);
-      wm[i] = (int8_t)DC_CLAMP(v + nqm, -127, 127);
+        mul = (int32_t)lrintf((float)mul * eps_scale);
+      const int32_t prod = z * mul;
+      const int32_t noise_p = (prod + rounding) >> (int32_t)shift;
+      const int32_t noise_m = (rounding - prod) >> (int32_t)shift;
+      const int32_t w_val = (int32_t)w[i];
+      wp[i] = (int8_t)DC_CLAMP(w_val + noise_p, -127, 127);
+      wm[i] = (int8_t)DC_CLAMP(w_val + noise_m, -127, 127);
       bits >>= 1;
     }
   }
@@ -77,15 +77,15 @@ static inline void dc_perturb_i8(const int8_t *w, int8_t *wp, int8_t *wm, const 
 
 /* QW (dual_pass_fusion exp7, step 3): int8 weight, both signs, for Ci > 1. The source `w` is the RAW CHW
  * weight [co][ci][ky][kx] -- the layout the reference RQSPerturbRademacher node perturbs -- and this core walks
- * ITS CHW chunk [start, start+local) in memory order, so noise bit i lands on CHW element i exactly as in the
+ * ITS CHW chunk [start, start+count) in memory order, so noise bit i lands on CHW element i exactly as in the
  * reference (same stream, chunking, seed, rounding, clamp as dc_perturb_i8). Each result is written to the
  * element's HWC position j = ((co*kh + ky)*kw + kx)*ci + c_i in wp / wm, the layout the conv loop reads.
  * dc_perturb_i8 on an already transposed weight is only correct for ci == 1 (block 0), where the two orders
  * coincide. The (co, ci, ky, kx) position is decoded once and then advanced incrementally (no division per
  * element); the multiplier is reloaded only when co changes. -- QW */
-static inline void dc_perturb_i8_chw_v1(const int8_t *w, int8_t *wp, int8_t *wm, const int32_t *M, uint32_t ch_in,
-                                        uint32_t kh, uint32_t kw, uint32_t seed, uint32_t start, uint32_t local,
-                                        uint32_t S, float eps_scale) {
+static inline void dc_perturb_i8_chw_v1(const int8_t *w, int8_t *wp, int8_t *wm, const int32_t *noise_mul, uint32_t ch_in,
+                                        uint32_t kh, uint32_t kw, uint32_t seed, uint32_t start, uint32_t count,
+                                        uint32_t shift, float eps_scale) {
   /* QW exp7 step 3 version (43-51 cycles per element for both signs); kept as the reference of the step-5b rewrite */
   const uint32_t K = ch_in * kh * kw;
   uint32_t co = start / K;
@@ -95,30 +95,30 @@ static inline void dc_perturb_i8_chw_v1(const int8_t *w, int8_t *wp, int8_t *wm,
   uint32_t ky = t % kh;
   uint32_t ci = t / kh;
   uint32_t j = co * K + (ky * kw + kx) * ch_in + ci;
-  int32_t m = 0;
-  if (local) {
-    m = M[co];
+  int32_t mul = 0;
+  if (count) {
+    mul = noise_mul[co];
     if (eps_scale != 1.0f)
-      m = (int32_t)lrintf((float)m * eps_scale);
+      mul = (int32_t)lrintf((float)mul * eps_scale);
   }
   uint32_t rng = seed * 1664525u + 1013904223u;
-  const int32_t rounding = (S > 0u) ? (int32_t)(1u << (S - 1u)) : 0;
+  const int32_t rounding = (shift > 0u) ? (int32_t)(1u << (shift - 1u)) : 0;
   uint32_t i = start;
-  const uint32_t end = start + local;
+  const uint32_t end = start + count;
   while (i < end) {
     rng = dc_xorshift32(rng);
     uint32_t bits = rng;
-    uint32_t n = end - i;
-    if (n > 32u)
-      n = 32u;
-    for (uint32_t k = 0; k < n; k++, i++) {
-      const int32_t r = (bits & 1u) ? 1 : -1;
-      const int32_t prod = r * m;
-      const int32_t nqp = (prod + rounding) >> (int32_t)S;
-      const int32_t nqm = (rounding - prod) >> (int32_t)S;
-      const int32_t v = (int32_t)w[i];
-      wp[j] = (int8_t)DC_CLAMP(v + nqp, -127, 127);
-      wm[j] = (int8_t)DC_CLAMP(v + nqm, -127, 127);
+    uint32_t run_len = end - i;
+    if (run_len > 32u)
+      run_len = 32u;
+    for (uint32_t k = 0; k < run_len; k++, i++) {
+      const int32_t z = (bits & 1u) ? 1 : -1;
+      const int32_t prod = z * mul;
+      const int32_t noise_p = (prod + rounding) >> (int32_t)shift;
+      const int32_t noise_m = (rounding - prod) >> (int32_t)shift;
+      const int32_t w_val = (int32_t)w[i];
+      wp[j] = (int8_t)DC_CLAMP(w_val + noise_p, -127, 127);
+      wm[j] = (int8_t)DC_CLAMP(w_val + noise_m, -127, 127);
       bits >>= 1;
       /* advance (co, ci, ky, kx) in CHW order; j follows in HWC */
       if (++kx < kw) {
@@ -131,9 +131,9 @@ static inline void dc_perturb_i8_chw_v1(const int8_t *w, int8_t *wp, int8_t *wm,
         if (++ci == ch_in) {
           ci = 0;
           if (i + 1u < end) {
-            m = M[++co];
+            mul = noise_mul[++co];
             if (eps_scale != 1.0f)
-              m = (int32_t)lrintf((float)m * eps_scale);
+              mul = (int32_t)lrintf((float)mul * eps_scale);
           } else {
             ++co;
           }
@@ -145,100 +145,101 @@ static inline void dc_perturb_i8_chw_v1(const int8_t *w, int8_t *wp, int8_t *wm,
 }
 
 /* QW (dual_pass_fusion exp7, step 5b): same contract and bit-identical result as dc_perturb_i8_chw_v1, cheaper.
- *  - r is +-1, so per output channel there are only two noise values: up = (m + rnd) >> S and dn = (rnd - m) >> S;
- *    r = +1 gives (+pass, -pass) = (up, dn), r = -1 gives (dn, up). Computed once per channel; the noise bit
+ *  - z is +-1, so per output channel there are only two noise values: up = (mul + rounding) >> shift and
+ *    dn = (rounding - mul) >> shift; z = +1 gives (+pass, -pass) = (up, dn), z = -1 gives (dn, up). Computed once per channel; the noise bit
  *    selects branch-free (xor mask) -- no multiply, no shift per element.
  *  - within one (co, ci) row the CHW chunk is kh*kw contiguous elements whose HWC positions advance by ch_in, for
  *    1xK and Kx1 kernels alike. The element loop runs over RUNS of min(bits left in the draw, row left, chunk left)
  *    elements, so its body has no branch (a hardware loop on RI5CY); row / channel / draw changes happen between runs.
  *  - out of line (noinline): inlined into the conv kernel it ran short of registers and reloaded its pointers from
  *    the stack every element (step-5b disassembly). -- QW */
-static inline __attribute__((noinline)) void dc_perturb_i8_chw(const int8_t *w, int8_t *wp, int8_t *wm, const int32_t *M,
-                                                        uint32_t ch_in, uint32_t kh, uint32_t kw, uint32_t seed,
-                                                        uint32_t start, uint32_t local, uint32_t S, float eps_scale) {
-  if (!local)
+static inline __attribute__((noinline)) void dc_perturb_i8_chw(const int8_t *w, int8_t *wp, int8_t *wm,
+                                                        const int32_t *noise_mul, uint32_t ch_in, uint32_t kh,
+                                                        uint32_t kw, uint32_t seed, uint32_t start, uint32_t count,
+                                                        uint32_t shift, float eps_scale) {
+  if (!count)
     return;
-  const uint32_t L = kh * kw;
-  const uint32_t K = ch_in * L;
+  const uint32_t taps = kh * kw;
+  const uint32_t K = ch_in * taps;
   uint32_t co = start / K;
-  uint32_t rem = start - co * K; /* CHW: rem = ci*L + t */
-  uint32_t ci = rem / L;
-  uint32_t t = rem - ci * L;
-  const int32_t rnd = (S > 0u) ? (int32_t)(1u << (S - 1u)) : 0;
-  int32_t m = M[co];
+  uint32_t rem = start - co * K; /* CHW: rem = ci*taps + tap */
+  uint32_t ci = rem / taps;
+  uint32_t tap = rem - ci * taps;
+  const int32_t rounding = (shift > 0u) ? (int32_t)(1u << (shift - 1u)) : 0;
+  int32_t mul = noise_mul[co];
   if (eps_scale != 1.0f)
-    m = (int32_t)lrintf((float)m * eps_scale);
-  int32_t up = (m + rnd) >> (int32_t)S;
-  int32_t dn = (rnd - m) >> (int32_t)S;
+    mul = (int32_t)lrintf((float)mul * eps_scale);
+  int32_t up = (mul + rounding) >> (int32_t)shift;
+  int32_t dn = (rounding - mul) >> (int32_t)shift;
   const int8_t *src = w + start;
-  int8_t *pp = wp + co * K + t * ch_in + ci;
-  int8_t *pm = wm + co * K + t * ch_in + ci;
+  int8_t *pWPlus = wp + co * K + tap * ch_in + ci;
+  int8_t *pWMinus = wm + co * K + tap * ch_in + ci;
   uint32_t rng = seed * 1664525u + 1013904223u;
-  uint32_t bits = 0, nbits = 0, left = local;
-  while (left) {
-    if (nbits == 0u) {
+  uint32_t bits = 0, bits_left = 0, remaining = count;
+  while (remaining) {
+    if (bits_left == 0u) {
       rng = dc_xorshift32(rng);
       bits = rng;
-      nbits = 32u;
+      bits_left = 32u;
     }
-    uint32_t n = L - t;
-    if (n > nbits)
-      n = nbits;
-    if (n > left)
-      n = left;
-    const int32_t d = up ^ dn;
-    for (uint32_t k = 0; k < n; k++) {
-      const int32_t v = (int32_t)*src++;
-      const int32_t np = dn ^ (d & -(int32_t)(bits & 1u));
-      const int32_t nm = np ^ d;
-      *pp = (int8_t)DC_CLAMP(v + np, -127, 127);
-      *pm = (int8_t)DC_CLAMP(v + nm, -127, 127);
-      pp += ch_in;
-      pm += ch_in;
+    uint32_t run_len = taps - tap;
+    if (run_len > bits_left)
+      run_len = bits_left;
+    if (run_len > remaining)
+      run_len = remaining;
+    const int32_t up_xor_dn = up ^ dn;
+    for (uint32_t k = 0; k < run_len; k++) {
+      const int32_t w_val = (int32_t)*src++;
+      const int32_t noise_p = dn ^ (up_xor_dn & -(int32_t)(bits & 1u));
+      const int32_t noise_m = noise_p ^ up_xor_dn;
+      *pWPlus = (int8_t)DC_CLAMP(w_val + noise_p, -127, 127);
+      *pWMinus = (int8_t)DC_CLAMP(w_val + noise_m, -127, 127);
+      pWPlus += ch_in;
+      pWMinus += ch_in;
       bits >>= 1;
     }
-    left -= n;
-    nbits -= n;
-    t += n;
-    if (t == L && left) { /* next (co, ci) row */
-      t = 0;
+    remaining -= run_len;
+    bits_left -= run_len;
+    tap += run_len;
+    if (tap == taps && remaining) { /* next (co, ci) row */
+      tap = 0;
       if (++ci == ch_in) {
         ci = 0;
         ++co;
-        m = M[co];
+        mul = noise_mul[co];
         if (eps_scale != 1.0f)
-          m = (int32_t)lrintf((float)m * eps_scale);
-        up = (m + rnd) >> (int32_t)S;
-        dn = (rnd - m) >> (int32_t)S;
+          mul = (int32_t)lrintf((float)mul * eps_scale);
+        up = (mul + rounding) >> (int32_t)shift;
+        dn = (rounding - mul) >> (int32_t)shift;
       }
-      pp = wp + co * K + ci;
-      pm = wm + co * K + ci;
+      pWPlus = wp + co * K + ci;
+      pWMinus = wm + co * K + ci;
     }
   }
 }
 
 /* int32 requant-add: same stream shape, NO clamp, like ApplyPerturbQuantRademacher_i32. */
-static inline void dc_perturb_i32(const int32_t *b, int32_t *bp, int32_t *bm, const int32_t *M,
-                                  uint32_t channel_width, uint32_t seed, uint32_t start, uint32_t local,
-                                  uint32_t S, float eps_scale) {
+static inline void dc_perturb_i32(const int32_t *b, int32_t *bp, int32_t *bm, const int32_t *noise_mul,
+                                  uint32_t channel_width, uint32_t seed, uint32_t start, uint32_t count,
+                                  uint32_t shift, float eps_scale) {
   uint32_t rng = seed * 1664525u + 1013904223u;
-  const int32_t rounding = (S > 0u) ? (int32_t)(1u << (S - 1u)) : 0;
+  const int32_t rounding = (shift > 0u) ? (int32_t)(1u << (shift - 1u)) : 0;
   uint32_t i = start;
-  const uint32_t end = start + local;
+  const uint32_t end = start + count;
   while (i < end) {
     rng = dc_xorshift32(rng);
     uint32_t bits = rng;
-    uint32_t n = end - i;
-    if (n > 32u)
-      n = 32u;
-    for (uint32_t k = 0; k < n; k++, i++) {
-      const int32_t r = (bits & 1u) ? 1 : -1;
-      int32_t m = M[i / channel_width];
+    uint32_t run_len = end - i;
+    if (run_len > 32u)
+      run_len = 32u;
+    for (uint32_t k = 0; k < run_len; k++, i++) {
+      const int32_t z = (bits & 1u) ? 1 : -1;
+      int32_t mul = noise_mul[i / channel_width];
       if (eps_scale != 1.0f)
-        m = (int32_t)lrintf((float)m * eps_scale);
-      const int32_t prod = r * m;
-      bp[i] = b[i] + ((prod + rounding) >> (int32_t)S);
-      bm[i] = b[i] + ((rounding - prod) >> (int32_t)S);
+        mul = (int32_t)lrintf((float)mul * eps_scale);
+      const int32_t prod = z * mul;
+      bp[i] = b[i] + ((prod + rounding) >> (int32_t)shift);
+      bm[i] = b[i] + ((rounding - prod) >> (int32_t)shift);
       bits >>= 1;
     }
   }

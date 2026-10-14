@@ -42,32 +42,32 @@ void PULP_Im2ColU8_NCHW_to_HWC(const int8_t *pIn, uint8_t *pOut, uint32_t num_co
   const uint32_t K = (uint32_t)ch_in * ky_n * kx_n;
   const uint32_t plane = (uint32_t)in_rows * in_cols; /* NCHW: one input channel plane */
 
-  const uint32_t total = (uint32_t)out_rows * out_cols;
-  const uint32_t chunk = (total + num_cores - 1u) / num_cores;
-  uint32_t p0 = chunk * core_id;
-  if (p0 > total)
-    p0 = total;
-  uint32_t p1 = p0 + chunk;
-  if (p1 > total)
-    p1 = total;
-  uint32_t oy = p0 / out_cols;
-  uint32_t ox = p0 - oy * out_cols;
+  const uint32_t n_out_px = (uint32_t)out_rows * out_cols;
+  const uint32_t px_chunk = (n_out_px + num_cores - 1u) / num_cores;
+  uint32_t px_begin = px_chunk * core_id;
+  if (px_begin > n_out_px)
+    px_begin = n_out_px;
+  uint32_t px_end = px_begin + px_chunk;
+  if (px_end > n_out_px)
+    px_end = n_out_px;
+  uint32_t oy = px_begin / out_cols;
+  uint32_t ox = px_begin - oy * out_cols;
 
-  for (uint32_t p = p0; p < p1; p++) {
-    uint8_t *pp = pOut + p * K;
+  for (uint32_t px = px_begin; px < px_end; px++) {
+    uint8_t *dst = pOut + px * K;
     const int32_t iy0 = (int32_t)oy * (int32_t)stride_y - (int32_t)pad_top;
     const int32_t ix0 = (int32_t)ox * (int32_t)stride_x - (int32_t)pad_left;
     for (uint32_t ci = 0; ci < ch_in; ci++) {
-      const int8_t *src_c = pIn + ci * plane;
+      const int8_t *src_ch = pIn + ci * plane;
       for (uint32_t ky = 0; ky < ky_n; ky++) {
         const int32_t iy = iy0 + (int32_t)ky;
-        const int inRow = (iy >= 0) && (iy < (int32_t)in_rows);
+        const int row_in_bounds = (iy >= 0) && (iy < (int32_t)in_rows);
         for (uint32_t kx = 0; kx < kx_n; kx++) {
           const int32_t ix = ix0 + (int32_t)kx;
-          if (inRow && ix >= 0 && ix < (int32_t)in_cols)
-            *pp++ = (uint8_t)((uint8_t)src_c[(uint32_t)iy * in_cols + (uint32_t)ix] ^ xor_mask);
+          if (row_in_bounds && ix >= 0 && ix < (int32_t)in_cols)
+            *dst++ = (uint8_t)((uint8_t)src_ch[(uint32_t)iy * in_cols + (uint32_t)ix] ^ xor_mask);
           else
-            *pp++ = pad_value;
+            *dst++ = pad_value;
         }
       }
     }
