@@ -285,7 +285,7 @@ Every change is marked `-- QW` in the code.
 
 | piece | location | what it does |
 |---|---|---|
-| parser | `TrainDeeploy/Deeploy/Targets/PULPOpen/Parsers.py:838` `PULPDualConv2D2InParser` | 7 inputs `[x+, W, mul, add, wmul, bmul, x−]`, `weight_chw = 1`; the block-0 parser `PULPDualConv2DParser` (`:715`) now requires 6 inputs |
+| parser | `TrainDeeploy/Deeploy/Targets/PULPOpen/Parsers.py:828` `PULPDualConv2D2InParser` | 7 inputs `[x+, W, mul, add, wmul, bmul, x−]`, `weight_chw = 1`; the block-0 parser `PULPDualConv2DParser` (`:715`) now requires 6 inputs |
 | template | `Templates/DualConv2InTemplate.py:62` `referenceTemplate` | seeds = block 0's formula; stacked output (`pOutP = out`, `pOutM = out + Co`, stride 2·Co) |
 | tile constraint | `TrainDeeploy/Deeploy/Targets/PULPOpen/TileConstraints/DualConv2InTileConstraint.py` | x− gets exactly x+'s tile; weight dims in CHW order; output channels never tiled (the perturbation needs the whole weight) |
 | layout pass | `TrainDeeploy/Deeploy/CommonExtensions/OptimizationPasses/TopologyOptimizationPasses/LoweringOptimizationPasses.py:326` | a `weight_chw` weight is not transposed (like `ne16_weight_preencoded`); x− is transposed like any activation |
@@ -381,12 +381,12 @@ lowered to the NE16 form. The MeZO runner forwards both flags and adds `-DZO_FUS
 
 | node | condition | rewrite | line |
 |---|---|---|---|
-| `Conv` + `RequantShift` | weight and requant add come from `RQSPerturbRademacher` | one `RequantizedDualConv` with `[x, W, mul, add, wmul, bmul]`; attrs kernel/pads/strides/dilations/group, `shift = log2(div)`, `seed_w/idx_w/div_w`, `seed_b/idx_b/div_b`, `div/n_levels/signed` from the RQS. If x is already stacked: `weight_chw = 1, stacked_input = 1`. The output gets 2·C channels and joins `dual`. If the conv index is in `ne16_convs`: NE16 form (§4.4) | `:84` |
-| `Quant`, `Dequant`, `Relu`, `MaxPool`, `GlobalAveragePool` | input in `dual` | unchanged; output shape 2·C (`_ELEMENTWISE`, `:32`) | `:123` |
-| `BatchNormInternal` | input in `dual` | γ, β from `PerturbRademacherFixed` mode 0 ([+; −] stacked); running mean / var constants concatenated with themselves | `:128` |
-| `Reshape` | input in `dual` | new shape constant with 2·C | `:143` |
-| `Gemm` (classifier) | input in `dual`, feeds the loss | `DualHalf` half 0 and half 1; the original Gemm re-wired to (half 0, W mode 1, b mode 1); a new Gemm (half 1, W mode 2, b mode 2) and a new `SoftmaxCrossEntropyLoss` → `loss_minus`; `graph.outputs = [loss, loss_minus]` | `:151` |
-| anything else with a `dual` input | — | `NotImplementedError` | `:182` |
+| `Conv` + `RequantShift` | weight and requant add come from `RQSPerturbRademacher` | one `RequantizedDualConv` with `[x, W, mul, add, wmul, bmul]`; attrs kernel/pads/strides/dilations/group, `shift = log2(div)`, `seed_w/idx_w/div_w`, `seed_b/idx_b/div_b`, `div/n_levels/signed` from the RQS. If x is already stacked: `weight_chw = 1, stacked_input = 1`. The output gets 2·C channels and joins `dual`. If the conv index is in `ne16_convs`: NE16 form (§4.4) | `:82` |
+| `Quant`, `Dequant`, `Relu`, `MaxPool`, `GlobalAveragePool` | input in `dual` | unchanged; output shape 2·C (`_ELEMENTWISE`, `:32`) | `:121` |
+| `BatchNormInternal` | input in `dual` | γ, β from `PerturbRademacherFixed` mode 0 ([+; −] stacked); running mean / var constants concatenated with themselves | `:126` |
+| `Reshape` | input in `dual` | new shape constant with 2·C | `:141` |
+| `Gemm` (classifier) | input in `dual`, feeds the loss | `DualHalf` half 0 and half 1; the original Gemm re-wired to (half 0, W mode 1, b mode 1); a new Gemm (half 1, W mode 2, b mode 2) and a new `SoftmaxCrossEntropyLoss` → `loss_minus`; `graph.outputs = [loss, loss_minus]` | `:149` |
+| anything else with a `dual` input | — | `NotImplementedError` | `:180` |
 
 The pass does not touch the update graph. The exported ONNX file is not modified. Without `--zo-fused-dual` the
 build is exactly the old one.
@@ -409,9 +409,9 @@ Other pieces:
 - untiled tile constraint in `TileConstraints/UntiledTileConstraint.py`;
 - mappers `PULPOpen/Platform.py:161-163, :257` and `GAP9/Platform.py:164-166`.
 
-The template always hoists its transient buffer (4 B when unused), because the tiler looks up whatever
-`computeTransientBuffersSize` names (§8). A `pad_cols` path left over from the first classifier workaround is still in
-the template but unused by the pass.
+The template always hoists a 4 B transient buffer, because the tiler looks up whatever `computeTransientBuffersSize`
+names (§8). (A `pad_cols` path left over from the zero-padded classifier workaround was removed on 2026-10-14; it
+used the strided per-core loop of §8 bug 4.)
 
 ### 4.3 `DualHalf` — the classifier input split
 
@@ -426,7 +426,7 @@ the template but unused by the pass.
 ### 4.4 Stacked-input convolutions (blocks 1–4)
 
 **Cluster form** (`RequantizedDualConv` with `stacked_input = 1`):
-- **Parser** `PULPDualConv2DStackedParser` (`PULPOpen/Parsers.py:880`): 6 inputs; stores `ch_im_in` = 2·Ci,
+- **Parser** `PULPDualConv2DStackedParser` (`PULPOpen/Parsers.py:870`): 6 inputs; stores `ch_im_in` = 2·Ci,
   `in_ch` = Ci per pass, `in_stride` = 2·Ci.
 - **Template** `stackedTemplate` (`DualConv2InTemplate.py:78`): x− = `data_in + in_ch`, pixel stride `in_stride`. The
   kernel interface from §3.2 is used unchanged.
@@ -439,7 +439,7 @@ the template but unused by the pass.
 - **Effect:** block 1 kernel fixture `QZO_DualConv2in_stacked_B1` 607,791 → 533,330 cycles, equal to the two-input
   kernel's 534,483. The 7×1 kernels of blocks 3–4 have one tap per row and were already read in place.
 
-**NE16 form** (GAP9, `--zo-fused-dual-ne16`), built by `_ne16_dual_conv` (`ZODualPassFusion.py:194`):
+**NE16 form** (GAP9, `--zo-fused-dual-ne16`), built by `_ne16_dual_conv` (`ZODualPassFusion.py:192`):
 - **Block 0** (input not stacked) uses exp6's form: `NE16Im2ColU8` + `NE16DualPerturbEncode` (sel 0) +
   `NE16DualBias` + a 1×1 `Conv` (`ne16_weight_preencoded = 1`, `weight_offset = −128`) + `RequantShift` with the
   multiplier duplicated for 2·Co. That is one NE16 job for both passes over the shared column.
@@ -995,8 +995,8 @@ confirm the fused run prints the same value.
    on block 4, which is more than 32 channels should need.
 8. **A full fused round** (QZO + ECO, lr 3e-6, SR) on the board once items 3–4 are done, judged by batch-2 accuracy
    against Run's unfused board rounds.
-9. **Cleanups:** remove the unused `pad_cols` path in `FloatPerturbRademacherFixedTemplate.py`; decide whether
-   `DEEPLOY_RQCONV_KERNEL=4x2` stays as a feature. (CI gates were added 2026-10-14, §7.6.)
+9. **Cleanups:** decide whether `DEEPLOY_RQCONV_KERNEL=4x2` stays as a feature. (CI gates were added and the unused
+   `pad_cols` path was removed on 2026-10-14.)
 
 ---
 

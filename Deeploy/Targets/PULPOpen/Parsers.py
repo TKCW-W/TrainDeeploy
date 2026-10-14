@@ -816,17 +816,7 @@ class PerturbRademacherFixedParser(NodeParser):  # -- QW (dual_pass_fusion exp8)
         size = int(np.prod(data_in.shape))
         mode = int(node.attrs['mode'])
         r = self.operatorRepresentation
-        # pad_cols / col_offset: [rows, cols] weight written into [rows, pad_cols] at column col_offset, zeros elsewhere
-        r['pad_cols'] = int(node.attrs.get('pad_cols', 0))
-        r['col_offset'] = int(node.attrs.get('col_offset', 0))
-        r['rows'], r['cols'] = 0, 0  # set below when padded (the template references them either way)
-        if r['pad_cols']:
-            if mode == 0 or len(data_in.shape) != 2:
-                return ctxt, False
-            r['rows'], r['cols'] = int(data_in.shape[0]), int(data_in.shape[1])
-            if tuple(data_out.shape) != (r['rows'], r['pad_cols']) or r['col_offset'] + r['cols'] > r['pad_cols']:
-                return ctxt, False
-        elif int(np.prod(data_out.shape)) != (2 * size if mode == 0 else size):
+        if int(np.prod(data_out.shape)) != (2 * size if mode == 0 else size):
             return ctxt, False
         r['data_in'], r['data_out'] = data_in.name, data_out.name
         r['seed'], r['eps'], r['mode'] = node.attrs['seed'], node.attrs['eps'], mode

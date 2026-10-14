@@ -68,13 +68,11 @@ def zoDualPassFusion(graph: gs.Graph, ne16_convs: Optional[Set[int]] = None) -> 
         uid[0] += 1
         return f"{base}__dual{uid[0]}"
 
-    def fixed_perturb(p: gs.Node, mode: int, out_shape: List[int], pad_cols: int = 0, col_offset: int = 0) -> gs.Variable:
+    def fixed_perturb(p: gs.Node, mode: int, out_shape: List[int]) -> gs.Variable:
         assert p.op == "PerturbRademacher", p.op
         out = gs.Variable(name(p.outputs[0].name + ("_pm" if mode == 0 else "_p" if mode == 1 else "_m")),
                           dtype = p.outputs[0].dtype, shape = out_shape)
         attrs = {"seed": p.attrs["seed"], "eps": p.attrs["eps"], "idx": p.attrs["idx"], "mode": mode}
-        if pad_cols:
-            attrs.update(pad_cols = pad_cols, col_offset = col_offset)
         new_nodes.append(
             gs.Node(op = "PerturbRademacherFixed", name = name(p.name + f"_mode{mode}"), inputs = [p.inputs[0]],
                     outputs = [out], attrs = attrs))
