@@ -2953,6 +2953,11 @@ class NetworkContainer():
 
         callStack += "};"
 
+        # QW (exp8): element counts too -- the GAP9 MeZO harness sizes the ECO fp32 momentum per tensor from it
+        callStack += "static const uint32_t " + self.ctxt._mangle("inputs_elems") + f"[{len(inputs)}] = " + "{"
+        callStack += ", ".join(str(int(np.prod(node.shape))) for node in inputs)
+        callStack += "};"
+
         callStack += "static const uint32_t " + self.ctxt._mangle("outputs_bytes") + f"[{len(outputs)}] = " + "{"
 
         numBytes = []

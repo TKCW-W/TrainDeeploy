@@ -610,7 +610,11 @@ int main(void) {                 // -- QW
   {
     uint32_t tot = 0;
     for (uint32_t k = 0; k < DeeployOptNetwork_num_inputs && k < ZO_ECO_MAX_TENSORS; k++) {
-      uint32_t bytes = DeeployOptNetwork_inputs_bytes[k] * 4u;
+      // uint32_t bytes = DeeployOptNetwork_inputs_bytes[k] * 4u;
+      /* QW (exp8): one fp32 per ELEMENT -- bytes*4 over-allocated the int32 / fp32 tensors 4x (69,264 B instead of
+       * 61,956 B for SpeechNet), and the fused dual-pass graph's larger L2 arena left too little heap for that. The
+       * update node idx k is the optimizer input k (checked for the SpeechNet update graph). -- QW */
+      uint32_t bytes = DeeployOptNetwork_inputs_elems[k] * 4u;
       zo_eco_mom[k] = (float32_t *)pi_l2_malloc(bytes);
       if (zo_eco_mom[k] == NULL) { printf("[ECO] momentum alloc failed (k=%u)\r\n", (unsigned)k); return -1; }
       memset(zo_eco_mom[k], 0, bytes);
