@@ -195,6 +195,10 @@ struct pi_device cluster_dev;
 
 static unsigned int g_train_cycles_acc = 0;
 static unsigned int g_opt_cycles_acc = 0;
+/* RW 2026-10-15: 64-bit totals -- a 540-step BP round (2160 fwd+bwd, ~44 G cycles) wraps the 32-bit counters
+ * above (they stay for the single-step CI parsers); printed as hi/lo halves like the MeZO harness. */
+static uint64_t g_train_cycles_acc64 = 0;
+static uint64_t g_opt_cycles_acc64 = 0;
 
 /* Summary-mode tiling profile (DEEPLOY_PROFILE_SUMMARY=1 at code generation):
  * every tile loop adds its waits here, [level*3 + {ingress wait, kernel, egress
@@ -233,7 +237,7 @@ static void RunTrainingNetworkWrapper(void *args) {
   ResetTimer();
   StartTimer();
   RunTrainingNetwork(pi_core_id(), pi_cl_cluster_nb_cores());
-  g_train_cycles_acc += getCycles();
+  { unsigned int _c = getCycles(); g_train_cycles_acc += _c; g_train_cycles_acc64 += _c; }
   StopTimer();
 }
 
@@ -247,7 +251,7 @@ static void RunOptimizerNetworkWrapper(void *args) {
   ResetTimer();
   StartTimer();
   RunOptimizerNetwork(pi_core_id(), pi_cl_cluster_nb_cores());
-  g_opt_cycles_acc += getCycles();
+  { unsigned int _c = getCycles(); g_opt_cycles_acc += _c; g_opt_cycles_acc64 += _c; }
   StopTimer();
 }
 
@@ -760,6 +764,9 @@ int main(void) {
 
   printf("BENCH train_cycles=%u opt_cycles=%u trainable_bytes=%u\r\n",
          g_train_cycles_acc, g_opt_cycles_acc, trainable_bytes_total);
+  printf("BENCH64 train_cycles_hi=%u train_cycles_lo=%u opt_cycles_hi=%u opt_cycles_lo=%u\r\n",  // RW
+         (unsigned)(g_train_cycles_acc64 >> 32), (unsigned)(g_train_cycles_acc64 & 0xffffffffu),
+         (unsigned)(g_opt_cycles_acc64 >> 32), (unsigned)(g_opt_cycles_acc64 & 0xffffffffu));
   if (deeploy_prof_acc[1] != 0) {
     printf("PROFSUM l2_in=%u l2_kernel=%u l2_out=%u l3_in=%u l3_kernel=%u "
            "l3_out=%u\r\n",
