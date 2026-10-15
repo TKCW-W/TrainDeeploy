@@ -57,6 +57,9 @@ class NE16DualConv2inParser(NodeParser):
         r['log2D'] = int(node.attrs['shift'])
         r['weight_offset'] = int(node.attrs.get('weight_offset', -128))
         r['pipelined'] = int(node.attrs.get('ne16_pipeline', 1))
+        import os as _os  # RW 2026-10-15: board A/B -- DEEPLOY_NE16_PIPELINE=0 forces the sequential form
+        if _os.environ.get('DEEPLOY_NE16_PIPELINE') is not None:
+            r['pipelined'] = int(_os.environ['DEEPLOY_NE16_PIPELINE'])
         return True
 
     def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node,

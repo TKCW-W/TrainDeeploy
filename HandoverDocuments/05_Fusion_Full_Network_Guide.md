@@ -993,6 +993,12 @@ confirm the fused run prints the same value.
    - Needs `--l2 1340000`: at the board scripts' `--l2 1300000` the arena cannot be allocated (MiniMalloc fails,
      `TrainDeeploy/SpeechNet_Test/logs/smoke/board_build_fused_ne16_eco_round1.log`).
    - The 54 windows are staged in L3 through readfs (`[testData->L3] 2117232 B`).
+   - **First board runs (RW, 2026-10-15)**, round-1 fixture `..._QZOECO_full_fused_round1`, one update step, n_accum 4,
+     `Errors` over the 4 loss pairs: fused cluster only 0/8 (10,721,307 train cycles); fused, NE16 for block 0 only 0/8
+     (9,512,093); fused, NE16 for block 1 only **7/8** -- the very first L+ is 0.039707 vs 0.038565, before any update,
+     and identical with `DEEPLOY_NE16_PIPELINE=0` (sequential jobs), so it is not the pipeline race: `NE16DualConv2in`
+     (the stacked-input HWC column job) computes differently on the silicon than in GVSoC. Block 0's NE16 form (im2col +
+     plain 1x1) is exact on the board. Until this is fixed the board configuration is `--zo-fused-dual-ne16 0`.
 4. **Stack depth.** Worst slave-stack chain 576 B of the 768 B L1 slave stack (`silentwear-zo/scripts/stack_depth.py`
    on the board ELF): `PULP_DualConv2d_2in_i8_i8_i8_HWC` [336] -> `dc_perturb_i8_chw` [96] -> `lrintf` [16] under a
    128 B closure. The NE16 prep chains are 304–336 B. The tool covers worker-core entries only; `NE16DualConv2in` runs
