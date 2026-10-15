@@ -440,9 +440,8 @@ SPEECHNET_BP_SINGLE_STEP = {
 # makes the update move many int8 / int32 weights ([WCHK]: 21/22 tensors
 # changed). 0xb11cc64f = unfused GAP9 cluster run = fused NE16 run (2026-10-14, SpeechNet_Test/logs/smoke/ci_wsum_*.log).
 SPEECHNET_FUSED_TESTS = {
-    # RW 2026-10-15: the BOARD configuration -- NE16 for block 0 only. NE16DualConv2in (blocks 1-4 on NE16) is exact on
-    # GVSoC but wrong on the GAP9 silicon (first loss off before any update, also with the pipeline off), so the board
-    # runs use --zo-fused-dual-ne16 0. Same expected hash: fused == unfused, whatever runs on NE16.
+    # RW 2026-10-15: NE16 for block 0 only (the board configuration until eabbb0b2 fixed NE16DualConv2in's job widths
+    # for the silicon; the board now runs --zo-fused-dual-ne16 0,1,2, gated below). Same expected hash: fused == unfused.
     "SpeechNet_QZO_ECO_fused_NE16b0_single_update_step": {
         "train_dir": "../SpeechNet_Test/speechnet_train_QZOECO_full_fused_single_update_step",
         "update_dir": "../SpeechNet_Test/speechnet_update_QZOECO_full_fused_single_update_step",

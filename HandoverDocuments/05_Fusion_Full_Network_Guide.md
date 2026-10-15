@@ -999,6 +999,14 @@ confirm the fused run prints the same value.
      and identical with `DEEPLOY_NE16_PIPELINE=0` (sequential jobs), so it is not the pipeline race: `NE16DualConv2in`
      (the stacked-input HWC column job) computes differently on the silicon than in GVSoC. Block 0's NE16 form (im2col +
      plain 1x1) is exact on the board. Until this is fixed the board configuration is `--zo-fused-dual-ne16 0`.
+   - **Fixed (RW, eabbb0b2).** Block-1 kernel fixture on the board: 152 of 39,424 outputs +1 LSB; 137 of them in
+     column 2 of the first 3x3 output subtile of every job after the first (job width 29), the rest in the 3 x 5
+     remainder job. The silicon NE16 corrupts that column when a job is wider than 3 and its width is not a multiple
+     of 3 (GVSoC does not model it). `job_w` is now a multiple of 3 and the remainder is split into 3 x 3k, 1 x 3m and
+     1 x (<3) jobs: 0 / 39,424 on the board. **L2**: `FoldDequantIntoFrozenBNPass` lets the frozen BN read the int8
+     conv output (the fp32 dequantized tensor was half of the peak): training arena 1,317,012 -> 854,452 B, so fused
+     QZO+ECO fits. Board, 120-epoch round 1, `--zo-fused-dual-ne16 0,1,2`, weights == unfused board rounds:
+     QZO 12.99 G cycles = **35.1 s**, QZO+ECO (SR) 13.37 G = **36.1 s** @ 370 MHz.
 4. **Stack depth.** Worst slave-stack chain 576 B of the 768 B L1 slave stack (`silentwear-zo/scripts/stack_depth.py`
    on the board ELF): `PULP_DualConv2d_2in_i8_i8_i8_HWC` [336] -> `dc_perturb_i8_chw` [96] -> `lrintf` [16] under a
    128 B closure. The NE16 prep chains are 304–336 B. The tool covers worker-core entries only; `NE16DualConv2in` runs
