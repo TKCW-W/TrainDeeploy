@@ -69,6 +69,12 @@
 #include "testinputs.h"         // -- QW
 #include "testoutputs.h"        // -- QW
 
+#ifdef POWER_MEASUREMENT
+/* RW 2026-10-15: PPK2 trigger for the power rig (AI_AGENT/Deeploy_Basics/GAP9_Power_Measurement.md). GPIO 89 is
+ * high for the whole update loop (all forward passes + updates of the round), low for boot / init / verification. */
+static unsigned int GPIOs = 89;
+#endif
+
 // RW 2026-10-13: ZO_QUIET (see ZTRACE below) -- print only mismatching / every 500th loss comparison
 #if defined(ZO_ECO)
 // RW 2026-10-13: the fixture's reference losses are the plain-ZO trajectory, so with ECO nearly every comparison
@@ -500,6 +506,11 @@ static uint32_t wchk_all(void) {
 #endif
 
 int main(void) {                 // -- QW
+#ifdef POWER_MEASUREMENT         // RW 2026-10-15: configure the trigger first, as in deeploytraintest.c
+  pi_pad_function_set(GPIOs, 1);
+  pi_gpio_pin_configure(GPIOs, PI_GPIO_OUTPUT);
+  pi_gpio_pin_write(GPIOs, 0);
+#endif
 
   ZTRACE("=== GAP9 MeZO (ZO) Training Harness ===\r\n");  // -- QW (ported from Siracusa)
   printf("N_TRAIN_STEPS=%u  N_ACCUM_STEPS=%u  DATA_INPUTS=%u\r\n",  // -- QW
@@ -524,7 +535,8 @@ int main(void) {                 // -- QW
     return -1;                   // -- QW
 
 #ifndef NOFLASH                  // -- QW
-#if !defined(POWER_MEASUREMENT) && !defined(GVSOC_DEFAULT_FREQ)
+// #if !defined(POWER_MEASUREMENT) && !defined(GVSOC_DEFAULT_FREQ)
+#if !defined(GVSOC_DEFAULT_FREQ)  // RW 2026-10-15: power runs use the same 370 MHz / 0.8 V point
   /* RW 2026-10-13 (from the Mamba harness, AI_AGENT/Mamba/board_bringup_2026-10-06.md 2.1): run gvsoc at the
    * EVK operating point. At the SDK default (cluster 50 MHz) every PSRAM wait is ~7x cheaper in cycles
    * (FEMBA: 65.0 M gvsoc-default vs 107.8 M gvsoc@370 vs 108.8 M board). -DGVSOC_DEFAULT_FREQ = old clocks. */
@@ -534,6 +546,11 @@ int main(void) {                 // -- QW
   pi_pmu_voltage_set(PI_PMU_VOLTAGE_DOMAIN_CHIP, 800);
   printf("[FREQ] FC=%d CL=%d PE=%d Hz\r\n", pi_freq_get(PI_FREQ_DOMAIN_FC), pi_freq_get(PI_FREQ_DOMAIN_CL),
          pi_freq_get(PI_FREQ_DOMAIN_PERIPH));
+#endif
+#ifdef POWER_MEASUREMENT         // RW 2026-10-15: re-assert the pad after the PERIPH retune
+  pi_pad_function_set(GPIOs, 1);
+  pi_gpio_pin_configure(GPIOs, PI_GPIO_OUTPUT);
+  pi_gpio_pin_write(GPIOs, 0);
 #endif
   mem_init();                    // -- QW
   open_fs();                     // -- QW
@@ -639,6 +656,9 @@ int main(void) {                 // -- QW
 #if defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
   for (uint32_t wi = 0; wi < (uint32_t)TRAINING_NUM_WEIGHT_INPUTS; wi++) g_wchk0[wi] = wchk_hash(wi);  // RW
   printf("[WSUM s=init] 0x%08x\r\n", (unsigned)wchk_all());                                            // RW
+#endif
+#ifdef POWER_MEASUREMENT
+  pi_gpio_pin_write(GPIOs, 1);   // RW 2026-10-15: power window = the update loop
 #endif
   for (uint32_t update_step = 0; update_step < N_TRAIN_STEPS; update_step++) {  // -- QW
 
@@ -790,6 +810,9 @@ int main(void) {                 // -- QW
 #endif
 
   } /* end update_step loop -- QW */
+#ifdef POWER_MEASUREMENT
+  pi_gpio_pin_write(GPIOs, 0);   // RW 2026-10-15
+#endif
 #if defined(ZO_PERSIST) && defined(TRAINING_NUM_WEIGHT_INPUTS) && (TRAINING_NUM_WEIGHT_INPUTS > 0)
   zop_save((uint32_t)N_TRAIN_STEPS);  // RW 2026-10-13: keep the weights on the device for the next round
 #endif
