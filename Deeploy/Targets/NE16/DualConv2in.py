@@ -57,6 +57,7 @@ class NE16DualConv2inParser(NodeParser):
         r['log2D'] = int(node.attrs['shift'])
         r['weight_offset'] = int(node.attrs.get('weight_offset', -128))
         r['pipelined'] = int(node.attrs.get('ne16_pipeline', 1))
+        r['input_offset'] = int(node.attrs.get('ne16_input_offset', 128))  # RW 2026-10-15: 0 = input known >= 0
         import os as _os  # RW 2026-10-15: board A/B -- DEEPLOY_NE16_PIPELINE=0 forces the sequential form
         if _os.environ.get('DEEPLOY_NE16_PIPELINE') is not None:
             r['pipelined'] = int(_os.environ['DEEPLOY_NE16_PIPELINE'])
@@ -85,7 +86,12 @@ class NE16DualConv2inParser(NodeParser):
         r['dim_im_out_x'], r['dim_im_out_y'], r['ch_im_out'] = Ho, Wo, C2
         r['ch_out_pass'], r['col_len'], r['wo_full'] = C2 // 2, K, Wo
         # job = 3 x job_w output pixels; two column buffers of 3 * job_w * K bytes within _COL_BUDGET each
+        # r['job_w'] = max(1, min(_COL_BUDGET // K, Ho * Wo) // 3)
+        # RW 2026-10-15: a multiple of 3 -- with job_w = 29 the GAP9 silicon NE16 put +Δacc into column 2 of the first
+        # 3x3 output subtile of every job after the first (block 1: 137 of 152 wrong outputs, all +1 LSB), exact in GVSoC.
         r['job_w'] = max(1, min(_COL_BUDGET // K, Ho * Wo) // 3)
+        if r['job_w'] >= 3:
+            r['job_w'] -= r['job_w'] % 3
         r['nodeName'] = node.name
         # NE16 job configuration, exactly as NE162DPWConvTemplate + getNormQuantConf0 for this node
         # (8-bit weights, 8-bit signed output -> no ReLU, unsigned column input, 32-bit scale, bias, no per-channel shift)
@@ -124,7 +130,12 @@ class NE16DualConv2inStackedParser(NE16DualConv2inParser):
         r['dim_im_in_x'], r['dim_im_in_y'], r['ch_im_in'] = H, W, Ci
         r['dim_im_out_x'], r['dim_im_out_y'], r['ch_im_out'] = Ho, Wo, C2
         r['ch_out_pass'], r['col_len'], r['wo_full'] = C2 // 2, K, Wo
+        # r['job_w'] = max(1, min(_COL_BUDGET // K, Ho * Wo) // 3)
+        # RW 2026-10-15: a multiple of 3 -- with job_w = 29 the GAP9 silicon NE16 put +Δacc into column 2 of the first
+        # 3x3 output subtile of every job after the first (block 1: 137 of 152 wrong outputs, all +1 LSB), exact in GVSoC.
         r['job_w'] = max(1, min(_COL_BUDGET // K, Ho * Wo) // 3)
+        if r['job_w'] >= 3:
+            r['job_w'] -= r['job_w'] % 3
         r['nodeName'] = node.name
         conf0 = NE162DPWConvTemplate.getConf0(output_bits = 8, weight_bits = 8, input_signed = False, use_wmem = False)
         conf0 |= getNormQuantConf0(False, r['log2D'], 32, True, False)
@@ -157,7 +168,7 @@ PULP_NE16DualConv2in((const int8_t *) ${data_in}, (const int8_t *) ${data_in_m},
     (const int32_t *) ${mul}, (const int32_t *) ${add}, (int8_t *) ${data_out}, (uint8_t *) ${ctxtBuffer}, NUM_CORES,
     ${conf0}u, ${dim_im_in_x}, ${dim_im_in_y}, ${ch_im_in}, ${dim_im_out_x}, ${dim_im_out_y}, ${ch_out_pass},
     ${dim_kernel_x}, ${dim_kernel_y}, ${padding_y_top}, ${padding_y_bottom}, ${padding_x_left}, ${padding_x_right},
-    ${stride_x}, ${stride_y}, ${weight_offset}, ${pipelined}, ${job_w}, ${ch_im_in});
+    ${stride_x}, ${stride_y}, ${weight_offset}, ${pipelined}, ${job_w}, ${ch_im_in}, ${input_offset});
 """)
 
 # QW (exp8): the stacked-input form (dual-pass graph): ONE input [1, H, W, 2*Ci] = [x+ | x-] per pixel.
@@ -167,7 +178,7 @@ PULP_NE16DualConv2in((const int8_t *) ${data_in}, (const int8_t *) ${data_in} + 
     (const int32_t *) ${mul}, (const int32_t *) ${add}, (int8_t *) ${data_out}, (uint8_t *) ${ctxtBuffer}, NUM_CORES,
     ${conf0}u, ${dim_im_in_x}, ${dim_im_in_y}, ${ch_im_in}, ${dim_im_out_x}, ${dim_im_out_y}, ${ch_out_pass},
     ${dim_kernel_x}, ${dim_kernel_y}, ${padding_y_top}, ${padding_y_bottom}, ${padding_x_left}, ${padding_x_right},
-    ${stride_x}, ${stride_y}, ${weight_offset}, ${pipelined}, ${job_w}, 2 * ${ch_im_in});
+    ${stride_x}, ${stride_y}, ${weight_offset}, ${pipelined}, ${job_w}, 2 * ${ch_im_in}, ${input_offset});
 """)
 
 

@@ -186,6 +186,25 @@ def zoDualPassFusion(graph: gs.Graph, ne16_convs: Optional[Set[int]] = None) -> 
     return graph
 
 
+
+def _nonnegative(t: gs.Tensor) -> bool:
+    """RW 2026-10-15: True if t is provably >= 0 -- a Relu reached upstream through ops that keep the sign (Quant with
+    zero point 0, MaxPool, Transpose, Reshape, the dual-pass stacking). SpeechNet blocks 1-4: Relu -> MaxPool -> Quant."""
+    seen = 0
+    while seen < 16:
+        p = _producer(t)
+        if p is None:
+            return False
+        if p.op == "Relu":
+            return True
+        if p.op not in ("Quant", "MaxPool", "Transpose", "Reshape"):
+            return False
+        if p.op == "Quant" and float(p.attrs.get("zero_point", 0.0)) != 0.0:
+            return False
+        t = p.inputs[0]
+        seen += 1
+    return False
+
 _NE16_INPUT_OFFSET, _NE16_WEIGHT_OFFSET, _NE16_CIN_SUBTILE = 128, -128, 16
 
 
@@ -200,6 +219,10 @@ def _ne16_dual_conv(name, conv: gs.Node, rqs: gs.Node, pw: gs.Node, pb: gs.Node,
     seeds = {"seed_w": pw.attrs["seed"], "idx_w": pw.attrs["idx"], "div_w": pw.attrs["div"],
              "seed_b": pb.attrs["seed"], "idx_b": pb.attrs["idx"], "div_b": pb.attrs["div"]}
     pads, strides = list(conv.attrs["pads"]), list(conv.attrs["strides"])
+    # RW 2026-10-15: NE16 reads unsigned input. Block 0's input is signed (+128 offset, corrected in the bias). A
+    # stacked input behind a Relu is already >= 0: no offset. With the offset, NE16DualConv2in was off by +1 LSB on
+    # ~0.4 % of the outputs on the GAP9 silicon (exact in GVSoC; the int32 bias correction 128*sum(w)*mul wraps).
+    in_off = 0 if (stacked and _nonnegative(x)) else _NE16_INPUT_OFFSET
     nodes = []
     wenc = gs.Variable(name(W.name + "_ne16enc"), dtype = np.uint8, shape = [2 * Co, cinMajor, 16])
     add2 = gs.Variable(name(add.name + "_ne16add2"), dtype = np.int32, shape = [2 * Co])
@@ -208,7 +231,7 @@ def _ne16_dual_conv(name, conv: gs.Node, rqs: gs.Node, pw: gs.Node, pb: gs.Node,
                                                     "div_w": seeds["div_w"], "ne16_sign_sel": 0,
                                                     "ne16_hwc": 1 if stacked else 0}))
     nodes.append(gs.Node(op = "NE16DualBias", name = name(conv.name + "_ne16bias"), inputs = [W, wmul, add, bmul, mul],
-                         outputs = [add2], attrs = dict(seeds, ne16_input_offset = _NE16_INPUT_OFFSET, ne16_sign_sel = 0)))
+                         outputs = [add2], attrs = dict(seeds, ne16_input_offset = in_off, ne16_sign_sel = 0)))
     y_hwc = gs.Variable(name(out.name + "_hwc"), dtype = np.int8, shape = [1, Ho, Wo, C2])
     if stacked:
         _, C2in, H, Win = (int(v) for v in x.shape)
@@ -219,7 +242,7 @@ def _ne16_dual_conv(name, conv: gs.Node, rqs: gs.Node, pw: gs.Node, pb: gs.Node,
                              outputs = [y_hwc], attrs = {"kernel_shape": [kh, kw], "pads": pads, "strides": strides,
                                                          "shift": int(math.log2(_scalar(rqs.attrs["div"]))),
                                                          "weight_offset": _NE16_WEIGHT_OFFSET, "ne16_pipeline": 1,
-                                                         "stacked_input": 1}))
+                                                         "stacked_input": 1, "ne16_input_offset": in_off}))
     else:  # exp6 form: one column shared by both passes, one NE16 job with 2*Co outputs
         col = gs.Variable(name(x.name + "_col"), dtype = np.uint8, shape = [1, Ho, Wo, K])
         nodes.append(gs.Node(op = "NE16Im2ColU8", name = name(conv.name + "_im2col"), inputs = [x], outputs = [col],

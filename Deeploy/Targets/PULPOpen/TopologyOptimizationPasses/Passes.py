@@ -618,3 +618,44 @@ class SwapReluMaxPoolPass(ReplaceSequentialPatternPass):
         graph.outputs.append(output)
         graph.inputs.append(_input)
         super().__init__(graph, _swap_relu_maxpool_fun, "_SWAP_RELU_MAXPOOL_PASS")
+
+
+# RW 2026-10-15: Dequant -> BatchNormInternal  ==>  BatchNormInternal reading the int8 tensor (attrs dq_scale,
+# dq_zero_point). Only for frozen-stat BN (DEEPLOY_BN_FROZEN_NHWC, set by the MeZO runner for -D BN_FROZEN_STATS=ON),
+# where BN is an elementwise per-channel map: the kernel dequantizes each element exactly as the Dequant kernel does
+# ((float)q - zp) * scale) and goes on with it, so the result is bit-identical while the fp32 dequantized tensor
+# never exists. SpeechNet block 0: that tensor and the BN output were the L2 peak (2 x 628 KB in the dual-pass graph).
+def _fold_dequant_bn_fun(graph: gs.Graph, match: Match, name: str):
+    import os as _os
+    if _os.environ.get("DEEPLOY_BN_FROZEN_NHWC", "0") != "1":
+        return graph
+    dq, bn = list(match.nodes_map.values())
+    if dq.op != "Dequant" or bn.op != "BatchNormInternal":
+        return graph
+    t = dq.outputs[0]
+    if len(t.outputs) != 1 or t in graph.outputs or any(len(o.outputs) > 0 for o in bn.outputs[1:]):
+        return graph
+    bn.attrs["dq_scale"] = float(dq.attrs["scale"])
+    bn.attrs["dq_zero_point"] = float(dq.attrs.get("zero_point", 0.0))
+    bn.inputs[0] = dq.inputs[0]
+    dq.inputs = []
+    dq.outputs = []
+    graph.cleanup().toposort()
+    return graph
+
+
+@contextagnostic
+class FoldDequantIntoFrozenBNPass(Pass):
+    # A plain node walk: the sequential pattern matcher does not match BatchNormInternal's five outputs.
+
+    def __init__(self):
+        super().__init__()
+        self.name = "_FOLD_DEQUANT_INTO_FROZEN_BN_PASS"
+
+    def run_pass(self, graph: gs.Graph) -> gs.Graph:
+        for bn in [n for n in graph.nodes if n.op == "BatchNormInternal"]:
+            src = bn.inputs[0]
+            dq = src.inputs[0] if len(src.inputs) == 1 else None
+            if dq is not None and dq.op == "Dequant":
+                graph = _fold_dequant_bn_fun(graph, Match(None, {"dq": dq, "bn": bn}), self.name)
+        return graph

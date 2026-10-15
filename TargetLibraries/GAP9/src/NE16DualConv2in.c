@@ -45,6 +45,7 @@ typedef struct {
   uint8_t *col;
   uint32_t px_begin, px_count; /* flat output-pixel range [px_begin, px_begin+px_count) of the job, may span rows */
   uint32_t in_stride; /* bytes between input pixels: ch_in, or 2*ch_in for the stacked [x+ | x-] input (exp8) */
+  uint32_t xor_word;  /* RW 2026-10-15: 0x80808080 (signed input + 128) or 0 (input known >= 0, no offset) */
   uint16_t dim_in_y, dim_in_x, ch_in, dim_out_x, kh, kw, pad_top, pad_left, stride_y, stride_x;
 } n16d_col_args_t;
 
@@ -77,26 +78,26 @@ static void n16d_build_col(void *arg) {
       const int32_t iy = iy0 + (int32_t)ky;
       if (iy < 0 || iy >= (int32_t)a->dim_in_y) {
         for (uint32_t k = 0; k < (uint32_t)a->kw * tap_words; k++)
-          *dst++ = N16D_PAD_WORD;
+          *dst++ = a->xor_word;
         continue;
       }
       for (uint32_t k = 0; k < (uint32_t)kx_lo * tap_words; k++)
-        *dst++ = N16D_PAD_WORD;
+        *dst++ = a->xor_word;
       if (a->in_stride == a->ch_in) { /* one contiguous run */
         const uint32_t *src =
             (const uint32_t *)(a->in + ((uint32_t)iy * a->dim_in_x + (uint32_t)(ix0 + kx_lo)) * a->ch_in);
         for (uint32_t k = 0; k < (uint32_t)(kx_hi - kx_lo) * tap_words; k++)
-          *dst++ = *src++ ^ N16D_PAD_WORD;
+          *dst++ = *src++ ^ a->xor_word;
       } else { /* exp8: stacked input -- tap_words words per tap, taps in_stride apart */
         for (int32_t kx = kx_lo; kx < kx_hi; kx++) {
           const uint32_t *src =
               (const uint32_t *)(a->in + ((uint32_t)iy * a->dim_in_x + (uint32_t)(ix0 + kx)) * a->in_stride);
           for (uint32_t k = 0; k < tap_words; k++)
-            *dst++ = src[k] ^ N16D_PAD_WORD;
+            *dst++ = src[k] ^ a->xor_word;
         }
       }
       for (uint32_t k = 0; k < (uint32_t)((int32_t)a->kw - kx_hi) * tap_words; k++)
-        *dst++ = N16D_PAD_WORD;
+        *dst++ = a->xor_word;
     }
     if (++ox == a->dim_out_x) {
       ox = 0;
@@ -142,29 +143,59 @@ static void n16d_task(ne16_task_t *task, const uint8_t *col, const uint8_t *w_en
   task->depthwise = 0;
 }
 
-/* jobs of one pass over `n_out_px` output pixels: n_full jobs of 3 x job_cols_full, then the remainder r as
- * 3 x (r/3) and 1 x (r%3) (at most one each) -- a single 1 x r job would leave two of three subtile rows idle. */
+/* RW 2026-10-15: GAP9 silicon NE16 (not GVSoC) gets column 2 of the first 3x3 output subtile of a job wrong (+1 LSB on
+ * ~0.4 % of block 1's outputs) when the job is wider than 3 and its width is not a multiple of 3. So every job is
+ * either a multiple of 3 wide or narrower than 3: n_full jobs of 3 x job_cols_full (job_cols_full a multiple of 3,
+ * DualConv2in.py), then the remainder r as 3 x 3k (k = r / 9), 1 x 3m (m = (r - 9k) / 3, i.e. 3 or 6), 1 x (r % 3).
+ * (Was: 3 x (r/3) and 1 x (r%3).) Board, block-1 fixture: 152 -> 5 -> 0 wrong outputs of 39,424. */
+static void n16d_rem_split(uint32_t r, uint32_t *a, uint32_t *b, uint32_t *c) {
+  *a = (r / 9u) * 3u;          /* columns of the 3-row job */
+  *b = ((r - 3u * *a) / 3u) * 3u; /* columns of the first 1-row job (multiple of 3) */
+  *c = r - 3u * *a - *b;       /* columns of the last 1-row job (< 3) */
+}
+
 static uint32_t n16d_jobs_per_pass(uint32_t n_out_px, uint32_t job_cols_full) {
   const uint32_t n_full = n_out_px / (3u * job_cols_full), r = n_out_px - n_full * 3u * job_cols_full;
-  return n_full + ((r / 3u) ? 1u : 0u) + ((r % 3u) ? 1u : 0u);
+  uint32_t a, b, c;
+  n16d_rem_split(r, &a, &b, &c);
+  return n_full + (a ? 1u : 0u) + (b ? 1u : 0u) + (c ? 1u : 0u);
 }
 
 static void n16d_job_geometry(uint32_t j, uint32_t n_out_px, uint32_t job_cols_full, uint32_t *px_begin,
                               uint32_t *job_rows, uint32_t *job_cols) {
   const uint32_t n_full = n_out_px / (3u * job_cols_full), r = n_out_px - n_full * 3u * job_cols_full;
+  uint32_t a, b, c, base = n_full * 3u * job_cols_full;
+  n16d_rem_split(r, &a, &b, &c);
   if (j < n_full) {
     *px_begin = j * 3u * job_cols_full;
     *job_rows = 3u;
     *job_cols = job_cols_full;
-  } else if (j == n_full && (r / 3u)) {
-    *px_begin = n_full * 3u * job_cols_full;
-    *job_rows = 3u;
-    *job_cols = r / 3u;
-  } else {
-    *px_begin = n_out_px - (r % 3u);
-    *job_rows = 1u;
-    *job_cols = r % 3u;
+    return;
   }
+  j -= n_full;
+  if (a) {
+    if (j == 0u) {
+      *px_begin = base;
+      *job_rows = 3u;
+      *job_cols = a;
+      return;
+    }
+    j--;
+    base += 3u * a;
+  }
+  if (b) {
+    if (j == 0u) {
+      *px_begin = base;
+      *job_rows = 1u;
+      *job_cols = b;
+      return;
+    }
+    j--;
+    base += b;
+  }
+  *px_begin = base;
+  *job_rows = 1u;
+  *job_cols = c;
 }
 
 void PULP_NE16DualConv2in(const int8_t *pInP, const int8_t *pInM, const uint8_t *pWEnc2, const int32_t *pMul,
@@ -173,7 +204,7 @@ void PULP_NE16DualConv2in(const int8_t *pInP, const int8_t *pInM, const uint8_t 
                           uint16_t ch_out, uint16_t dim_kernel_y, uint16_t dim_kernel_x, uint16_t pad_top,
                           uint16_t pad_bottom, uint16_t pad_left, uint16_t pad_right, uint16_t stride_y,
                           uint16_t stride_x, int32_t weight_offset, uint32_t pipelined, uint32_t job_w,
-                          uint32_t in_stride) {
+                          uint32_t in_stride, int32_t input_offset) {
   (void)pad_bottom;
   (void)pad_right;
   const ne16_dev_t *dev = ne16_pulp_get_dev();
@@ -190,7 +221,7 @@ void PULP_NE16DualConv2in(const int8_t *pInP, const int8_t *pInM, const uint8_t 
   uint32_t px_begin, job_rows, job_cols;
   n16d_job_geometry(0, n_out_px, job_cols_full, &px_begin, &job_rows, &job_cols);
   n16d_col_args_t col_args = {.in = pInP, .col = col[0], .px_begin = px_begin, .px_count = job_rows * job_cols,
-                              .in_stride = in_stride, .dim_in_y = dim_in_y, .dim_in_x = dim_in_x,
+                              .in_stride = in_stride, .xor_word = input_offset ? N16D_PAD_WORD : 0u, .dim_in_y = dim_in_y, .dim_in_x = dim_in_x,
                               .ch_in = ch_in, .dim_out_x = dim_out_x, .kh = dim_kernel_y, .kw = dim_kernel_x,
                               .pad_top = pad_top, .pad_left = pad_left, .stride_y = stride_y, .stride_x = stride_x};
   ne16_task_t task;

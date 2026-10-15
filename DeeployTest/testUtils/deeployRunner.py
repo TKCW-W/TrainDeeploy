@@ -487,7 +487,10 @@ def main(default_platform: Optional[str] = None,
         if hasattr(args, 'freqPE'):
             platform_specific_cmake_args.append(f"-DFREQ_PE={args.freqPE}")
 
-    if platform == 'GAP9':
+    # if platform == 'GAP9':
+    # RW 2026-10-15: GAP9_w_NE16 too -- without SIMULATOR a '-s board' build used the gvsoc SDK config
+    # (semihosting printf) and hung on the EVK (dmstatus=0) before printing anything.
+    if platform.startswith('GAP9'):
         platform_specific_cmake_args.append("-DSIMULATOR=" + simulator)
 
     config = create_config_from_args(args, platform, simulator, tiling_enabled, platform_specific_cmake_args)

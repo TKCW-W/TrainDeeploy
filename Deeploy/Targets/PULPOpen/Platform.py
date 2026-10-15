@@ -66,7 +66,7 @@ from Deeploy.Targets.PULPOpen.Tiler import PULPAddTilingReadyBindings, PULPAvera
     PULPUniformRQSTilingReadyBindings
 from Deeploy.Targets.PULPOpen.TopologyOptimizationPasses.Passes import FoldActivationTransposeIntoGemmPass, \
     FoldDequantIntoMatMulPass, MaxPoolGradReadInputPass, PULPAddRequantMergePass, PULPConvRequantMergePass, \
-    PULPGEMMRequantMergePass, PULPMatMulRequantMergePass, SwapReluMaxPoolPass, TransposeGemmSquashPass
+    PULPGEMMRequantMergePass, PULPMatMulRequantMergePass, SwapReluMaxPoolPass, FoldDequantIntoFrozenBNPass, TransposeGemmSquashPass
 from Deeploy.Targets.PULPOpen.TopologyOptimizationPasses.SplitConvGradPass import SplitConvGradPass
 
 RQAddMapper = NodeMapper(RQAddParser(), PULPRQAddTilingReadyBindings)
@@ -361,6 +361,7 @@ PULPOptimizer = TopologyOptimizer(
         RemoveEmptyConvBiasPass(),
         RemoveOnlySingletonReduceMeanPass(),
         SwapReluMaxPoolPass(),  # RW 2026-10-13
+        FoldDequantIntoFrozenBNPass(),  # RW 2026-10-15: frozen-stat BN reads the int8 tensor
     ],
     name = "PULPOptimizer")
 

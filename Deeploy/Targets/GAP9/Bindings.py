@@ -582,7 +582,10 @@ GAP9GlobalAveragePoolGrad2DBindings = [
 
 GAP9BatchNormInternalBindings = [
     NodeBinding(BatchNormInternalChecker([PointerClass(float32_t)] * 5, [PointerClass(float32_t)] * 5),
-                FloatBatchNormTemplate.batchNormInternalTemplate, GAP9Transformer)
+                FloatBatchNormTemplate.batchNormInternalTemplate, GAP9Transformer),
+    # RW 2026-10-15: int8 input = a Dequant folded in by FoldDequantIntoFrozenBNPass
+    NodeBinding(BatchNormInternalChecker([PointerClass(int8_t)] + [PointerClass(float32_t)] * 4, [PointerClass(float32_t)] * 5),
+                FloatBatchNormTemplate.batchNormInternalTemplate, GAP9Transformer),
 ]
 
 GAP9BatchNormalizationGradBindings = [

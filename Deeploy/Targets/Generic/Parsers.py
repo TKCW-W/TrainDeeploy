@@ -3195,6 +3195,10 @@ class BatchNormInternalParser(NodeParser):
         self.operatorRepresentation['momentum'] = float(node.attrs.get('momentum', 0.9))
         self.operatorRepresentation['training_mode'] = int(node.attrs.get('training_mode', 1))
         self.operatorRepresentation['nhwc'] = int(node.attrs.get('bn_nhwc', 0))  # RW 2026-10-13: frozen-stat NHWC
+        # RW 2026-10-15: folded Dequant (FoldDequantIntoFrozenBNPass): int8 input, dequantized inside the kernel
+        self.operatorRepresentation['dq'] = int('dq_scale' in node.attrs)
+        self.operatorRepresentation['dq_scale'] = float(node.attrs.get('dq_scale', 1.0))
+        self.operatorRepresentation['dq_zero_point'] = float(node.attrs.get('dq_zero_point', 0.0))
         return True
 
     def parseNodeCtxt(self,

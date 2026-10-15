@@ -9,7 +9,14 @@ from Deeploy.DeeployTypes import NodeTemplate
 # Outputs: Y, saved_mean, saved_inv_std  (updated_running_mean/var have no consumers)
 batchNormInternalTemplate = NodeTemplate("""
 // BatchNormInternal (Name: ${nodeName}, Op: ${nodeOp})
-% if nhwc:
+% if dq and not nhwc:
+#error "BatchNormInternal with a folded Dequant needs the channels-last frozen-stat form"
+% elif nhwc and dq:
+// RW 2026-10-15: channels-last frozen-stat BN reading the int8 tensor of a folded Dequant (FoldDequantIntoFrozenBNPass)
+PULP_BatchNormInternalHWC_i8_fp32(${data_in}, ${scale}, ${bias}, ${running_mean}, ${running_var}, ${data_out},
+                                  ${saved_mean}, ${saved_inv_std}, ${N} * ${H_in} * ${W_in}, ${C}, ${epsilon}f,
+                                  (float32_t)${dq_scale}, (float32_t)${dq_zero_point});
+% elif nhwc:
 // RW 2026-10-13: channels-last frozen-stat BN (NCHWtoNHWCBatchNormInternalPass)
 PULP_BatchNormInternalHWC_fp32(${data_in}, ${scale}, ${bias}, ${running_mean}, ${running_var}, ${data_out},
                                ${saved_mean}, ${saved_inv_std}, ${N} * ${H_in} * ${W_in}, ${C}, ${epsilon}f);

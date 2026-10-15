@@ -67,7 +67,7 @@ void PULP_NE16DualConv2in(const int8_t *pInP, const int8_t *pInM, const uint8_t 
                           uint16_t ch_out, uint16_t dim_kernel_y, uint16_t dim_kernel_x, uint16_t pad_top,
                           uint16_t pad_bottom, uint16_t pad_left, uint16_t pad_right, uint16_t stride_y,
                           uint16_t stride_x, int32_t weight_offset, uint32_t pipelined, uint32_t job_w,
-                          uint32_t in_stride); /* exp8: ch_in, or 2*ch_in for a stacked [x+ | x-] input (pInM = pInP + ch_in) */
+                          uint32_t in_stride, int32_t input_offset); /* exp8: ch_in, or 2*ch_in for a stacked [x+ | x-] input (pInM = pInP + ch_in) */
 
 /* -- QW (exp16c / blocker 1b): device-side NE16 bit-serial weight encoder. Declared here (rather
  * than in a pulp-nnx header) so TargetLibraries/third_party/pulp-nnx stays pristine -- this is a

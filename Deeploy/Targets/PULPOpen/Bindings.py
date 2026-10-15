@@ -394,7 +394,10 @@ PULPGlobalAveragePoolGrad2DBindings = [
 # 5 inputs (X, gamma, beta, running_mean, running_var), 5 outputs (Y, urm, urv, saved_mean, saved_inv_std)
 PULPBatchNormInternalBindings = [
     NodeBinding(BatchNormInternalChecker([PointerClass(float32_t)] * 5, [PointerClass(float32_t)] * 5),
-                FloatBatchNormTemplate.batchNormInternalTemplate, ForkTransformer)
+                FloatBatchNormTemplate.batchNormInternalTemplate, ForkTransformer),
+    # RW 2026-10-15: int8 input = a Dequant folded in by FoldDequantIntoFrozenBNPass
+    NodeBinding(BatchNormInternalChecker([PointerClass(int8_t)] + [PointerClass(float32_t)] * 4, [PointerClass(float32_t)] * 5),
+                FloatBatchNormTemplate.batchNormInternalTemplate, ForkTransformer),
 ]
 
 # 5 inputs (dY, X, gamma, saved_mean, saved_inv_std), 3 outputs (dX, dgamma, dbeta)

@@ -442,3 +442,44 @@ void PULP_BatchNormInternalHWC_fp32(const float32_t *X, const float32_t *gamma, 
 #endif
   }
 }
+
+/*
+ * RW 2026-10-15: channels-last frozen-stat BatchNormInternal on an int8 tile (a Dequant folded in by
+ * FoldDequantIntoFrozenBNPass). Each element is dequantized with the Dequant kernel's own expression,
+ *   dq = ((float)q - zero_point) * scale,
+ * and the empty asm makes dq a rounded fp32 value in a register before BN uses it -- without it the compiler may fuse
+ * the multiply with BN's subtraction (fmsub), which rounds once instead of twice and changes the bits. Then BN as in
+ * PULP_BatchNormInternalHWC_fp32. Bit-identical to Dequant followed by that kernel; the fp32 tensor between them is
+ * never materialised.
+ */
+void PULP_BatchNormInternalHWC_i8_fp32(const int8_t *X, const float32_t *gamma, const float32_t *beta,
+                                       const float32_t *running_mean, const float32_t *running_var, float32_t *Y,
+                                       float32_t *saved_mean, float32_t *saved_inv_std, uint32_t P, uint32_t C,
+                                       float32_t epsilon, float32_t dq_scale, float32_t dq_zero_point) {
+  const int32_t core_id = pi_core_id();
+  const uint32_t chunk = (P + NUM_CORES - 1) / NUM_CORES;
+  const uint32_t p0 = MIN(chunk * (uint32_t)core_id, P), p1 = MIN(p0 + chunk, P);
+  for (uint32_t c = 0; c < C; c++) {
+    /* frozen statistics only: the pass folds the Dequant only for -D BN_FROZEN_STATS=ON builds */
+    const float32_t mean = running_mean[c];
+    const float32_t inv_std = 1.0f / sqrtf(running_var[c] + epsilon);
+    const float32_t g = gamma[c], b = beta[c];
+    const int8_t *x = X + p0 * C + c;
+    float32_t *y = Y + p0 * C + c;
+    for (uint32_t p = p0; p < p1; p++) {
+      float32_t dq = ((float32_t)(int32_t)*x - dq_zero_point) * dq_scale;
+#if defined(__riscv_flen) && !defined(__riscv_zfinx)
+      __asm__ volatile("" : "+f"(dq));
+#else
+      __asm__ volatile("" : "+r"(dq));
+#endif
+      *y = (dq - mean) * inv_std * g + b;
+      x += C;
+      y += C;
+    }
+    if ((uint32_t)core_id == c % NUM_CORES) {
+      saved_mean[c] = mean;
+      saved_inv_std[c] = inv_std;
+    }
+  }
+}
